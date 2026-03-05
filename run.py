@@ -70,8 +70,7 @@ from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
 _LOG_FILE = None
-# When set in the main process, writes to _LOG_FILE are serialized with this lock.
-# Spawned workers do not use it; each opens its own handle to the same log file.
+# Lock for serializing log writes in the main process; unused in spawned workers (each opens its own log handle).
 _LOG_LOCK = None
 # Stdout/stderr before wrapping; restored on exit.
 _pipeline_real_stdout = None
@@ -1525,15 +1524,13 @@ def _worker(
     device_id: int,
     task_list: list,
     log_path: str,
-    log_lock,
     shared_args: dict,
 ) -> None:
     """Worker entry: set device, open log, load data, run each (seed, DistMap group) task.
     When invoked from multi-GPU, the launcher sets CUDA_VISIBLE_DEVICES so this process sees a single device as cuda:0."""
     global _LOG_FILE, _LOG_LOCK
     device = torch.device(f"cuda:{device_id}")
-    # Workers do not use the shared lock (unsafe across process boundaries); each worker is the only writer to the log during its run.
-    _LOG_LOCK = None
+    _LOG_LOCK = None  # Workers use their own log handle; no cross-process lock.
     _LOG_FILE = open(log_path, "a", encoding="utf-8")
     worker_start = time.time()
     try:
@@ -1700,7 +1697,6 @@ def _run_multi_gpu_tasks(
     for i, t in enumerate(tasks):
         tasks_by_device[i % n_gpus].append(t)
     log_path = os.path.join(base_output_dir, PIPELINE_LOG_FILENAME)
-    log_lock = multiprocessing.Lock()
     shared_args = {
         "cfg": cfg,
         "base_output_dir": base_output_dir,
@@ -1760,7 +1756,7 @@ def _run_multi_gpu_tasks(
             "assemble_video_fn": None,
         }
     for device_id in range(n_workers):
-        args = (device_id, tasks_by_device[device_id], log_path, log_lock, shared_args)
+        args = (device_id, tasks_by_device[device_id], log_path, shared_args)
         p = multiprocessing.Process(target=worker_target, args=args)
         processes.append(p)
     for p in processes:
