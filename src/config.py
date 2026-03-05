@@ -126,7 +126,8 @@ def expand_distmap_grid(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def expand_euclideanizer_grid(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return list of Euclideanizer configs (one per combination; every key can be single or list)."""
+    """Return list of Euclideanizer configs (one per combination; every key can be single or list).
+    All euclideanizer keys (including num_diags) participate in the grid; use e.g. num_diags: [50, 100] for multiple runs."""
     section = cfg["euclideanizer"]
     return _expand_grid(section, list(section.keys()))
 

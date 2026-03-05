@@ -36,7 +36,7 @@ euclideanizer:
   lambda_w_gen: [3.0]
   lambda_w_diag_recon: [2.0]
   lambda_w_diag_gen: [2.0]
-  num_diags: 50   # number of diagonals (genomic separations) used for diagonal Wasserstein loss (1..num_diags)
+  num_diags: [50]   # number of diagonals (genomic separations) used for diagonal Wasserstein loss (1..num_diags)
   memory_efficient: false   # if true, save best model to disk on each new best (no extra copy in memory)
   save_final_models_per_stretch: true   # if true, keep euclideanizer_last.pt for each epoch segment; if false, delete previous segment's last after resume
 

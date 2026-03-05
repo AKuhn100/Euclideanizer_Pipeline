@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 import torch
 
-from src.config import config_diff, configs_match_exactly, expand_distmap_grid, load_config
+from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
 from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
 from src.min_rmsd import _rmsd_matrix_batch
 from src.utils import (
@@ -65,6 +65,19 @@ def test_expand_distmap_grid_combinations():
     configs = expand_distmap_grid(cfg)
     assert len(configs) == 2
     assert [c["epochs"] for c in configs] == [1, 2]
+
+
+def test_expand_euclideanizer_grid_num_diags():
+    """expand_euclideanizer_grid includes num_diags in the grid; multiple values yield multiple configs."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    cfg = load_config(cfg_path)
+    # config_test has num_diags: 50 (single value). Override to two values.
+    cfg["euclideanizer"] = dict(cfg["euclideanizer"])
+    cfg["euclideanizer"]["num_diags"] = [50, 100]
+    configs = expand_euclideanizer_grid(cfg)
+    assert len(configs) >= 2
+    num_diags_vals = [c["num_diags"] for c in configs]
+    assert 50 in num_diags_vals and 100 in num_diags_vals
 
 
 def test_configs_match_exactly_equal():
