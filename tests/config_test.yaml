@@ -1,0 +1,68 @@
+# Minimal test config for pipeline behavior tests.
+# Used only to load a valid config and get distmap/euclideanizer groups; the tests do not run
+# training, plotting, or analysis, so save_plot_data / save_data / save_structures_gro can stay false.
+# Exercises: 1 seed, 2 DistMap runs (epochs 1 and 2), 2 Euclideanizer runs (epochs 1 and 2).
+
+resume: true
+
+data:
+  path: null
+  split_seed: 0
+  training_split: 0.8
+
+output_dir: "./test_output"
+
+distmap:
+  latent_dim: 4
+  beta_kl: 0.01
+  epochs: [1, 2]
+  batch_size: 8
+  learning_rate: 1.0e-4
+  lambda_mse: 1.0
+  lambda_w_recon: 1.0
+  lambda_w_gen: 1.0
+  memory_efficient: false
+  save_final_models_per_stretch: false
+
+euclideanizer:
+  epochs: [1, 2]
+  batch_size: 8
+  learning_rate: 1.0e-4
+  lambda_mse: 1.0
+  lambda_w_recon: 1.0
+  lambda_w_gen: 1.0
+  lambda_w_diag_recon: 1.0
+  lambda_w_diag_gen: 1.0
+  memory_efficient: false
+  save_final_models_per_stretch: false
+
+plotting:
+  enabled: true
+  reconstruction: true
+  bond_rg_scaling: true
+  avg_gen_vs_exp: true
+  num_samples: 10
+  gen_decode_batch_size: 8
+  sample_variance: [1.0]
+  num_reconstruction_samples: 2
+  plot_dpi: 72
+  save_pdf_copy: false
+  save_plot_data: false
+  save_structures_gro: false
+
+training_visualization:
+  enabled: false
+  n_probe: 6
+  n_quick: 500
+  fps: 12
+  frame_width: 16
+  frame_height: 14
+  frame_dpi: 90
+
+analysis:
+  min_rmsd: true
+  min_rmsd_num_samples: 10
+  min_rmsd_sample_variance: [1.0]
+  min_rmsd_query_batch_size: 8
+  save_data: false
+  save_structures_gro: false

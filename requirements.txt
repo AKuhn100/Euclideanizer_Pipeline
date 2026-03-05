@@ -1,0 +1,16 @@
+# Euclideanizer pipeline dependencies
+# Install with: pip install -r requirements.txt
+
+# Core
+numpy>=1.24.0
+torch>=2.0.0
+
+# Config
+pyyaml>=6.0
+
+# Plotting and progress
+matplotlib>=3.7.0
+tqdm>=4.65.0
+
+# Tests (optional)
+pytest>=7.0.0

@@ -1,0 +1,75 @@
+# Sample config for Euclideanizer pipeline.
+# Every key can be a single value or a list; lists create a grid (train/plot once per combination).
+# CLI flags override these. Dataset path is required for training: set --data or data.path here.
+
+resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
+
+data:
+  path: "/scratch/amk19/ChromVAE/Euclideanizer_Pipeline/test_data/spheres.gro"   # set here (e.g. "./Data/chromosome21.gro") or via --data; required for training
+  split_seed: [0, 42]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
+  training_split: 0.8   # fraction for training; same for both models, plotting, and analysis
+
+output_dir: "./3-3/test_5"
+
+# DistMap (distance-map VAE). Any key can be single or list; full product is run.
+distmap:
+  latent_dim: [256]
+  beta_kl: [0.01, 0.05]
+  epochs: [50, 100]
+  batch_size: [128]
+  learning_rate: [1.0e-4]
+  lambda_mse: [1.0]
+  lambda_w_recon: [3.0]
+  lambda_w_gen: [3.0]
+  memory_efficient: false   # if true, save best model to disk on each new best (no extra copy in memory)
+  save_final_models_per_stretch: true   # if true, keep model_last.pt for each epoch segment (e.g. 100, 300); if false, delete previous segment's last after resume
+
+# Euclideanizer. One run per (DistMap run × euclideanizer hyperparameter combination).
+# Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
+euclideanizer:
+  epochs: [100,200]
+  batch_size: [256]
+  learning_rate: [1.0e-4]
+  lambda_mse: [1.0]
+  lambda_w_recon: [3.0]
+  lambda_w_gen: [3.0]
+  lambda_w_diag_recon: [2.0]
+  lambda_w_diag_gen: [2.0]
+  memory_efficient: false   # if true, save best model to disk on each new best (no extra copy in memory)
+  save_final_models_per_stretch: true   # if true, keep euclideanizer_last.pt for each epoch segment; if false, delete previous segment's last after resume
+
+# Plotting and generation (per trained model). Disable all with --no-plots.
+plotting:
+  enabled: true
+  reconstruction: true
+  bond_rg_scaling: true
+  avg_gen_vs_exp: true
+  num_samples: 10              # samples per variance for gen plots (scalar in current pipeline)
+  gen_decode_batch_size: 128     # batch size when decoding for gen plots;
+  sample_variance: [0.5, 1, 2]  # list -> one plot set per value
+  num_reconstruction_samples: 5
+  plot_dpi: 150
+  save_pdf_copy: true
+  save_plot_data: true   # if true, save NumPy .npz data for each plot (e.g. reconstruction_data.npz, loss_curves_data.npz)
+  save_structures_gro: true   # if true, save generated structures used for gen_variance plots in GRO format (Euclideanizer only; in plots/.../structures/)
+
+# Training videos: one MP4 per DistMap and per Euclideanizer (generated during/after each training run). Requires ffmpeg.
+training_visualization:
+  enabled: true
+  n_probe: 6                     # number of probe structures shown per frame
+  n_quick: 500                   # samples per epoch for Rg/scaling curves
+  fps: 12
+  frame_width: 16
+  frame_height: 14
+  frame_dpi: 90
+  delete_frames_after_video: true   # if true, remove frame PNGs after successful MP4 creation
+
+# Analysis: full-pipeline metrics (e.g. min-RMSD) run after plotting for each Euclideanizer.
+# Each analysis run gets its own subdir (e.g. analysis/min_rmsd/<run>/ with figure, data/, structures/).
+analysis:
+  min_rmsd: true                 # min-RMSD distributions per (DistMap, Euclideanizer) pair
+  min_rmsd_num_samples: [50, 100]   # int or list -> one figure per value
+  min_rmsd_sample_variance: [1, 2]   # float or list -> one figure per value
+  min_rmsd_query_batch_size: 128     # scalar only (batch size for min-RMSD queries)
+  save_data: true                 # if true, save .npz data for analysis (e.g. min_rmsd run)
+  save_structures_gro: true      # if true, save generated structures used in analysis in GRO format (in analysis/.../structures/)
