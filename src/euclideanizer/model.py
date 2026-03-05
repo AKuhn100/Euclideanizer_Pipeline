@@ -105,4 +105,4 @@ class Euclideanizer(nn.Module):
 
     def forward_to_distmap(self, D_log):
         coords = self.forward(D_log)
-        return torch.log1p(utils.Get_Distmaps(coords))
+        return torch.log1p(utils.get_distmaps(coords))

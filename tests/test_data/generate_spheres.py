@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-Generate a small multi-frame GRO file for pipeline testing: 10 structures,
-100 beads each, each structure a sphere of a different size.
+Generate the pipeline's bundled dataset: a multi-frame GRO file of sphere structures.
+
+This is the only data shipped with the project. All data-dependent usage (smoke test,
+sample config, demos) uses this sphere data. Large chromosome GRO files are not
+included; use your own data path for production runs.
 
 Usage:
-  python generate_small_spheres.py [--output PATH] [--num-structures N] [--beads B]
-  Default: writes test_data/small_spheres.gro with 10 structures, 100 beads each.
+  python tests/test_data/generate_spheres.py [--output PATH] [--num-structures N] [--beads B] ...
+  Default: writes tests/test_data/spheres.gro with 10 structures, 100 beads each.
 
-Pipeline loader (utils.Load_Data) expects title lines to start with "Chromosome",
-so we use that prefix for compatibility.
+The pipeline loader (utils.load_data) expects frame title lines to start with
+"Chromosome", so this script uses that prefix for compatibility.
 """
 from __future__ import annotations
 
@@ -48,8 +51,8 @@ def write_gro(path: str, coords: np.ndarray, title_prefix: str = "Chromosome") -
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Generate small sphere GRO for pipeline testing.")
-    p.add_argument("--output", "-o", default=None, help="Output GRO path (default: test_data/small_spheres.gro)")
+    p = argparse.ArgumentParser(description="Generate sphere GRO dataset for pipeline testing and demos.")
+    p.add_argument("--output", "-o", default=None, help="Output GRO path (default: tests/test_data/spheres.gro)")
     p.add_argument("--num-structures", "-n", type=int, default=10, help="Number of structures (default: 10)")
     p.add_argument("--beads", "-b", type=int, default=100, help="Beads per structure (default: 100)")
     p.add_argument("--radius-min", type=float, default=1.0, help="Min sphere radius (nm) (default: 1.0)")

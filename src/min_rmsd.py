@@ -7,11 +7,12 @@ from __future__ import annotations
 import os
 import numpy as np
 import torch
-from torch.utils.data import random_split
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+
+from .utils import display_path, get_train_test_split
 
 
 def _rmsd_matrix_batch(queries: np.ndarray, ref_coords: np.ndarray) -> np.ndarray:
@@ -31,7 +32,8 @@ def _rmsd_matrix_batch(queries: np.ndarray, ref_coords: np.ndarray) -> np.ndarra
     d = np.linalg.det(U @ Vt)
     S_diag = np.ones((B * M, 3), dtype=H_flat.dtype)
     S_diag[:, 2] = np.sign(d)
-    R = np.einsum("mki,mk,mjl->mij", Vt, S_diag, U)
+    # Kabsch: R = V @ diag(1,1,d) @ U^T so that aligned = q_c @ R = ref_centered (align query to ref)
+    R = np.einsum("mki,mk,mkj->mij", Vt, S_diag, np.transpose(U, (0, 2, 1)))
 
     rmsd_out = np.empty((B, M), dtype=queries.dtype)
     for b in range(B):
@@ -84,19 +86,13 @@ def get_or_compute_test_to_train_rmsd(
                 np.asarray(loaded["test_coords_np"], dtype=np.float32),
             )
             loaded.close()
-            if display_root:
-                try:
-                    print(f"  Loaded seed-level test→train RMSD cache: {os.path.relpath(cache_path, display_root)}")
-                except ValueError:
-                    print(f"  Loaded seed-level test→train RMSD cache: {cache_path}")
+            if display_root is not None:
+                print(f"  Loaded seed-level test→train RMSD cache: {display_path(cache_path, display_root)}")
             return out
         except Exception:
             pass
     coords = coords_tensor
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    generator = torch.Generator().manual_seed(split_seed)
-    train_ds, test_ds = random_split(coords, [train_size, test_size], generator=generator)
+    train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
     tr_idx = train_ds.indices
     te_idx = test_ds.indices
     if hasattr(tr_idx, "tolist"):
@@ -113,11 +109,8 @@ def get_or_compute_test_to_train_rmsd(
         train_coords_np=train_coords_np,
         test_coords_np=test_coords_np,
     )
-    if display_root:
-        try:
-            print(f"  Saved seed-level test→train RMSD cache: {os.path.relpath(cache_path, display_root)}")
-        except ValueError:
-            print(f"  Saved seed-level test→train RMSD cache: {cache_path}")
+    if display_root is not None:
+        print(f"  Saved seed-level test→train RMSD cache: {display_path(cache_path, display_root)}")
     return test_to_train, train_coords_np, test_coords_np
 
 
@@ -133,7 +126,7 @@ def _run_one_min_rmsd(
     save_structures_gro: bool,
 ) -> str:
     """Write figure, optional data/, optional structures/ for one run. Returns path to figure."""
-    dpi = plot_cfg.get("plot_dpi", 150)
+    dpi = plot_cfg["plot_dpi"]
     all_vals = np.concatenate([test_to_train, gen_to_train, gen_to_test])
     x_min = max(0.0, np.percentile(all_vals, 0.5) - 0.5)
     x_max = np.percentile(all_vals, 99.5) + 0.5
@@ -175,20 +168,14 @@ def _run_one_min_rmsd(
         if gen_coords_np is not None and plot_cfg.get("save_gen_coords_in_npz", False):
             save_kw["gen_coords"] = gen_coords_np
         np.savez_compressed(data_path, **save_kw)
-        try:
-            print(f"  Saved: {os.path.relpath(data_path, display_root) if display_root else data_path}")
-        except ValueError:
-            print(f"  Saved: {data_path}")
+        print(f"  Saved: {display_path(data_path, display_root)}")
 
     if save_structures_gro and gen_coords_np is not None:
         from .gro_io import write_structures_gro
         structures_dir = os.path.join(run_dir_this, "structures")
         write_structures_gro(gen_coords_np, structures_dir, display_root=display_root)
 
-    try:
-        print(f"  Saved: {os.path.relpath(out_path, display_root) if display_root else out_path}")
-    except ValueError:
-        print(f"  Saved: {out_path}")
+    print(f"  Saved: {display_path(out_path, display_root)}")
     return out_path
 
 
@@ -220,22 +207,21 @@ def run_min_rmsd_analysis(
     """
     run_name = output_suffix.lstrip("_") if output_suffix else "default"
     run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", run_name)
-    save_data = plot_cfg.get("save_data", plot_cfg.get("save_plot_data", False))
-    save_structures_gro = plot_cfg.get("save_structures_gro", False)
+    save_data = plot_cfg["save_data"]
+    save_structures_gro = plot_cfg["save_structures_gro"]
 
-    n_gen = num_samples if num_samples is not None else plot_cfg.get("min_rmsd_num_samples", 500)
-    variance = sample_variance if sample_variance is not None else plot_cfg.get("min_rmsd_sample_variance", 1.0)
-    batch_size = query_batch_size if query_batch_size is not None else plot_cfg.get("min_rmsd_query_batch_size", 128)
+    _n = plot_cfg["min_rmsd_num_samples"]
+    n_gen = num_samples if num_samples is not None else (_n[0] if isinstance(_n, list) else _n)
+    _v = plot_cfg["min_rmsd_sample_variance"]
+    variance = sample_variance if sample_variance is not None else (_v[0] if isinstance(_v, list) else _v)
+    batch_size = query_batch_size if query_batch_size is not None else plot_cfg["min_rmsd_query_batch_size"]
     print(f"  Min-RMSD: n_gen={n_gen}, variance={variance} (test→train, gen→train, gen→test)...")
 
     if precomputed_test_to_train is not None and train_coords_np is not None and test_coords_np is not None:
         test_to_train = precomputed_test_to_train
     else:
         coords = coords_tensor
-        train_size = int(training_split * len(coords))
-        test_size = len(coords) - train_size
-        generator = torch.Generator().manual_seed(split_seed)
-        train_ds, test_ds = random_split(coords, [train_size, test_size], generator=generator)
+        train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
         tr_idx = train_ds.indices
         te_idx = test_ds.indices
         if hasattr(tr_idx, "tolist"):
@@ -297,9 +283,9 @@ def run_min_rmsd_analysis_multi(
     from .distmap.sample import generate_samples
     import shutil
 
-    batch_size = query_batch_size or plot_cfg.get("min_rmsd_query_batch_size", 128)
-    save_data = plot_cfg.get("save_data", plot_cfg.get("save_plot_data", False))
-    save_structures_gro = plot_cfg.get("save_structures_gro", False)
+    batch_size = query_batch_size or plot_cfg["min_rmsd_query_batch_size"]
+    save_data = plot_cfg["save_data"]
+    save_structures_gro = plot_cfg["save_structures_gro"]
     sorted_n = sorted(set(num_samples_list))
     if not sorted_n:
         return []
@@ -311,10 +297,7 @@ def run_min_rmsd_analysis_multi(
         test_to_train = precomputed_test_to_train
     else:
         coords = coords_tensor
-        train_size = int(training_split * len(coords))
-        test_size = len(coords) - train_size
-        generator = torch.Generator().manual_seed(split_seed)
-        train_ds, test_ds = random_split(coords, [train_size, test_size], generator=generator)
+        train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
         tr_idx = train_ds.indices
         te_idx = test_ds.indices
         if hasattr(tr_idx, "tolist"):

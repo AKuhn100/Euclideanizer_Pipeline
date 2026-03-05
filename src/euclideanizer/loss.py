@@ -1,6 +1,8 @@
 import torch
 import torch.nn.functional as F
 
+DEFAULT_NUM_DIAGS = 50
+
 
 def calc_MSE_loss_full(gts, reconstructions):
     return F.mse_loss(reconstructions, gts, reduction="mean")
@@ -16,7 +18,7 @@ def calc_positionwise_wasserstein(gts, generated):
     return torch.mean(torch.abs(gt_sorted - gen_sorted))
 
 
-def calc_diagonal_wasserstein(gts, generated, num_diags=50):
+def calc_diagonal_wasserstein(gts, generated, num_diags=DEFAULT_NUM_DIAGS):
     """W1 loss computed per genomic separation (diagonal), then averaged.
 
     For each separation k = 1..num_diags, we sort the k-th diagonal
@@ -48,11 +50,13 @@ def euclideanizer_loss(
     lambda_w_gen,
     lambda_w_diag_recon,
     lambda_w_diag_gen,
+    num_diags,
 ):
-    """Distributional loss for the Euclideanizer. All weights from config.
+    """Distributional loss for the Euclideanizer. All weights and num_diags from config.
 
     Components: MSE(recon, GT) + λ_w_recon * W1(recon, GT) + λ_w_gen * W1(gen, GT)
     + λ_w_diag_recon * DiagW1(recon, GT) + λ_w_diag_gen * DiagW1(gen, GT).
+    num_diags: number of diagonals (genomic separations) used for diagonal Wasserstein.
     No KL (latent is frozen VAE). Returns (loss, mse, recon_w, gen_w, diag_recon_w, diag_gen_w).
     """
     mse = calc_MSE_loss_full(gts, D_euclid_recon)
@@ -62,9 +66,9 @@ def euclideanizer_loss(
     diag_recon_w = torch.tensor(0.0, device=gts.device)
     diag_gen_w = torch.tensor(0.0, device=gts.device)
     if lambda_w_diag_recon != 0:
-        diag_recon_w = calc_diagonal_wasserstein(gts, D_euclid_recon)
+        diag_recon_w = calc_diagonal_wasserstein(gts, D_euclid_recon, num_diags=num_diags)
     if lambda_w_diag_gen != 0:
-        diag_gen_w = calc_diagonal_wasserstein(gts, D_euclid_gen)
+        diag_gen_w = calc_diagonal_wasserstein(gts, D_euclid_gen, num_diags=num_diags)
 
     loss = (lambda_mse * mse
             + lambda_w_recon * recon_w

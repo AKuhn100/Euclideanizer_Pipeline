@@ -6,8 +6,6 @@ from __future__ import annotations
 import os
 import time
 import torch
-from torch.utils.data import random_split
-
 import shutil
 
 from . import utils
@@ -15,15 +13,6 @@ from .config import load_run_config, save_run_config
 from .euclideanizer.model import Euclideanizer, load_frozen_vae
 from .euclideanizer.loss import euclideanizer_loss
 from .plotting import plot_loss_curves
-
-
-def _display_path(path: str, root: str | None) -> str:
-    if not root:
-        return path
-    try:
-        return os.path.relpath(path, root)
-    except ValueError:
-        return path
 
 
 def train_euclideanizer(
@@ -63,6 +52,7 @@ def train_euclideanizer(
     lambda_w_gen = eu_cfg["lambda_w_gen"]
     lambda_w_diag_recon = eu_cfg["lambda_w_diag_recon"]
     lambda_w_diag_gen = eu_cfg["lambda_w_diag_gen"]
+    num_diags = eu_cfg["num_diags"]
     is_resume = resume_from_path is not None and additional_epochs is not None
 
     if is_resume:
@@ -79,10 +69,7 @@ def train_euclideanizer(
         optimizer, T_max=epochs, eta_min=1e-6
     )
 
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    generator = torch.Generator().manual_seed(split_seed)
-    train_ds, test_ds = random_split(coords, [train_size, test_size], generator=generator)
+    train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
     train_dl = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     test_dl = torch.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
@@ -92,6 +79,7 @@ def train_euclideanizer(
         lambda_w_gen=lambda_w_gen,
         lambda_w_diag_recon=lambda_w_diag_recon,
         lambda_w_diag_gen=lambda_w_diag_gen,
+        num_diags=num_diags,
     )
     train_loss_hist, val_loss_hist = [], []
     best_val = float("inf")
@@ -124,7 +112,7 @@ def train_euclideanizer(
         ep_loss, n_b = 0.0, 0
         for batch in train_dl:
             B = batch.shape[0]
-            batch_dm = utils.Get_Distmaps(batch)
+            batch_dm = utils.get_distmaps(batch)
             gt_log = torch.log1p(batch_dm)
             with torch.no_grad():
                 mu = frozen_vae.encode(gt_log)
@@ -149,7 +137,7 @@ def train_euclideanizer(
         with torch.no_grad():
             for batch in test_dl:
                 B = batch.shape[0]
-                batch_dm = utils.Get_Distmaps(batch)
+                batch_dm = utils.get_distmaps(batch)
                 gt_log = torch.log1p(batch_dm)
                 mu = frozen_vae.encode(gt_log)
                 D_noneuclid = frozen_vae._decode_to_matrix(mu)
@@ -192,7 +180,7 @@ def train_euclideanizer(
         {"euclideanizer": eu_cfg}, model_dir,
         last_epoch_trained=eu_cfg["epochs"], best_epoch=best_epoch, best_val=best_val,
     )
-    print(f"  Saved: {_display_path(model_path, display_root)}")
+    print(f"  Saved: {utils.display_path(model_path, display_root)}")
     if save_last and is_resume and prev_run_dir is not None and not save_final_models_per_stretch:
         prev_last = os.path.join(prev_run_dir, "model", "euclideanizer_last.pt")
         if os.path.isfile(prev_last):

@@ -6,6 +6,9 @@ from typing import Optional, Tuple
 import numpy as np
 import torch
 
+EXP_STATS_CHUNK_SIZE = 100
+EXP_STATS_AVG_MAP_SAMPLE = 100
+
 
 def distmap_bond_lengths(distmaps: np.ndarray) -> np.ndarray:
     """(B, N, N) -> bond lengths d(i, i+1) flattened."""
@@ -45,14 +48,13 @@ def compute_exp_statistics(
     if indices is not None:
         coords_np = np.asarray(coords_np)[np.asarray(indices)]
     coords_tensor = torch.tensor(coords_np, dtype=torch.float32).to(device)
-    chunk_size = 100
     all_dm = []
-    for start in range(0, len(coords_tensor), chunk_size):
-        chunk = coords_tensor[start : start + chunk_size]
+    for start in range(0, len(coords_tensor), EXP_STATS_CHUNK_SIZE):
+        chunk = coords_tensor[start : start + EXP_STATS_CHUNK_SIZE]
         all_dm.append(get_distmaps_fn(chunk).cpu().numpy())
     exp_dm = np.concatenate(all_dm, axis=0)
     s, exp_sc = distmap_scaling(exp_dm)
-    n_sample = min(100, len(exp_dm))
+    n_sample = min(EXP_STATS_AVG_MAP_SAMPLE, len(exp_dm))
     return {
         "exp_distmaps": exp_dm,
         "exp_bonds": distmap_bond_lengths(exp_dm),

@@ -8,7 +8,6 @@ import os
 import subprocess
 import numpy as np
 import torch
-from torch.utils.data import random_split
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -325,15 +324,13 @@ def make_distmap_epoch_hook(coords, dm_cfg, run_dir, device, utils_mod, vis_cfg,
     frames_dir = os.path.join(run_dir, "plots", "training_video", "frames")
     total_epochs = int(total_epochs_display) if total_epochs_display is not None else dm_cfg["epochs"]
 
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    gen = torch.Generator().manual_seed(split_seed)
-    train_ds, test_ds = random_split(coords, [train_size, test_size], generator=gen)
+    from . import utils
+    train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
     probe_idx = _select_probes(train_ds, n=n_probe, seed=42)
     probe_ref_coords = torch.stack([train_ds[i] for i in probe_idx]).cpu().numpy().astype(np.float32)
     probe_ref_coords -= probe_ref_coords.mean(1, keepdims=True)
     sample_batch = torch.stack([train_ds[i] for i in probe_idx]).to(device)
-    probe_input_dms = utils_mod.Get_Distmaps(sample_batch).cpu().numpy().astype(np.float32)
+    probe_input_dms = utils_mod.get_distmaps(sample_batch).cpu().numpy().astype(np.float32)
     dm_vmax = float(np.percentile(probe_input_dms, 97))
     axis_lim = float(np.abs(probe_ref_coords).max()) * 1.15
 
@@ -362,7 +359,7 @@ def make_distmap_epoch_hook(coords, dm_cfg, run_dir, device, utils_mod, vis_cfg,
     def on_epoch(epoch, model, train_losses, val_losses, run_dirs=None):
         model.eval()
         with torch.no_grad():
-            dm_p = utils_mod.Get_Distmaps(sample_batch)
+            dm_p = utils_mod.get_distmaps(sample_batch)
             _, _, _, recon_p = model(dm_p)
             recon_sym = utils_mod.upper_tri_to_symmetric(recon_p, coords.size(1))
             probe_recon_dms = torch.expm1(recon_sym).cpu().numpy().astype(np.float32)
@@ -413,20 +410,18 @@ def make_euclideanizer_epoch_hook(coords, eu_cfg, frozen_vae_path, frozen_latent
     total_epochs = int(total_epochs_display) if total_epochs_display is not None else eu_cfg["epochs"]
     frames_dir = os.path.join(run_dir, "plots", "training_video", "frames")
 
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    gen = torch.Generator().manual_seed(split_seed)
-    train_ds, test_ds = random_split(coords, [train_size, test_size], generator=gen)
+    from . import utils
+    train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
     probe_idx = _select_probes(train_ds, n=n_probe, seed=42)
     probe_ref_coords = torch.stack([train_ds[i] for i in probe_idx]).cpu().numpy().astype(np.float32)
     probe_ref_coords -= probe_ref_coords.mean(1, keepdims=True)
     sample_batch = torch.stack([train_ds[i] for i in probe_idx]).to(device)
-    probe_input_dms = utils_mod.Get_Distmaps(sample_batch).cpu().numpy().astype(np.float32)
+    probe_input_dms = utils_mod.get_distmaps(sample_batch).cpu().numpy().astype(np.float32)
     dm_vmax = float(np.percentile(probe_input_dms, 97))
     axis_lim = float(np.abs(probe_ref_coords).max()) * 1.15
 
     with torch.no_grad():
-        dm_p = utils_mod.Get_Distmaps(sample_batch)
+        dm_p = utils_mod.get_distmaps(sample_batch)
         gt_log_p = torch.log1p(dm_p)
         mu_p = frozen_vae.encode(gt_log_p)
         D_ne_p = frozen_vae._decode_to_matrix(mu_p)

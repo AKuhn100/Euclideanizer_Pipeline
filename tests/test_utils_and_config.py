@@ -1,0 +1,281 @@
+"""
+Unit tests for config helpers, utils, metrics, and min_rmsd pure functions.
+
+No dataset or GPU; fast. Run from pipeline root: pytest tests/test_utils_and_config.py -v
+"""
+from __future__ import annotations
+
+import os
+
+import numpy as np
+import pytest
+import torch
+
+from src.config import config_diff, configs_match_exactly, expand_distmap_grid, load_config
+from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
+from src.min_rmsd import _rmsd_matrix_batch
+from src.utils import (
+    display_path,
+    get_train_test_split,
+    get_upper_tri,
+    load_data,
+    upper_tri_to_symmetric,
+    validate_dataset_for_pipeline,
+)
+
+_TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+_PIPELINE_ROOT = os.path.dirname(_TEST_DIR)
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+
+def test_config_diff_equal():
+    """config_diff returns empty list when configs are identical."""
+    cfg = {"data": {"path": "x", "split_seed": 0}, "a": 1}
+    assert config_diff(cfg, cfg) == []
+
+
+def test_config_diff_differ():
+    """config_diff returns paths where configs differ."""
+    a = {"data": {"path": "x", "split_seed": 0}, "x": 1}
+    b = {"data": {"path": "y", "split_seed": 0}, "x": 1}
+    diffs = config_diff(a, b)
+    assert any("path" in d and "data" in d for d in diffs)
+    assert len(diffs) >= 1
+
+
+def test_config_diff_missing_key():
+    """config_diff reports missing key in one config."""
+    a = {"data": {"path": "x", "split_seed": 0}}
+    b = {"data": {"path": "x", "split_seed": 0, "extra": 1}}
+    diffs = config_diff(a, b)
+    assert any("extra" in d for d in diffs)
+
+
+def test_expand_distmap_grid_combinations():
+    """expand_distmap_grid expands lists into one config per combination."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    cfg = load_config(cfg_path)
+    # config_test distmap has epochs: [1, 2] -> 2 combinations
+    configs = expand_distmap_grid(cfg)
+    assert len(configs) == 2
+    assert [c["epochs"] for c in configs] == [1, 2]
+
+
+def test_configs_match_exactly_equal():
+    """configs_match_exactly True when configs are equal."""
+    cfg = {"a": 1, "b": {"c": 2}}
+    assert configs_match_exactly(cfg, cfg) is True
+
+
+def test_configs_match_exactly_unequal():
+    """configs_match_exactly False when configs differ."""
+    a = {"a": 1, "b": 2}
+    b = {"a": 1, "b": 3}
+    assert configs_match_exactly(a, b) is False
+
+
+# ---------------------------------------------------------------------------
+# Utils
+# ---------------------------------------------------------------------------
+
+
+def test_get_upper_tri_upper_tri_to_symmetric_roundtrip():
+    """get_upper_tri and upper_tri_to_symmetric round-trip (off-diagonal only; diagonal is not stored)."""
+    B, N = 2, 4
+    distmaps = torch.rand(B, N, N)
+    distmaps = (distmaps + distmaps.transpose(1, 2)) / 2
+    distmaps[:, range(N), range(N)] = 0  # get_upper_tri(offset=1) does not include diagonal
+    flat = get_upper_tri(distmaps)
+    back = upper_tri_to_symmetric(flat, N)
+    torch.testing.assert_close(back, distmaps)
+
+
+def test_load_data_valid_gro(tmp_path):
+    """load_data reads a minimal valid GRO and returns (n_frames, n_atoms, 3)."""
+    gro = tmp_path / "tiny.gro"
+    gro.write_text(
+        "Chromosome frame 0\n"
+        "2\n"
+        "    1STRUC  CA    1   0.1  0.2  0.3\n"
+        "    2STRUC  CA    2   0.4  0.5  0.6\n"
+        "   0.0   0.0   0.0\n"
+    )
+    out = load_data(str(gro))
+    assert out.shape == (1, 2, 3)
+    assert np.allclose(out[0, 0], [0.1, 0.2, 0.3])
+    assert np.allclose(out[0, 1], [0.4, 0.5, 0.6])
+
+
+def test_load_data_raises_atom_line_too_few_columns(tmp_path):
+    """load_data raises ValueError when an atom line has fewer than 6 columns."""
+    gro = tmp_path / "bad.gro"
+    gro.write_text(
+        "Chromosome frame 0\n"
+        "1\n"
+        " 1  a  b\n"  # only 3 columns
+    )
+    with pytest.raises(ValueError, match="at least 6 columns"):
+        load_data(str(gro))
+
+
+def test_load_data_raises_non_numeric_xyz(tmp_path):
+    """load_data raises ValueError when x,y,z columns are not numeric."""
+    gro = tmp_path / "bad.gro"
+    gro.write_text(
+        "Chromosome frame 0\n"
+        "1\n"
+        "    1STRUC  CA    1   x   y   z\n"
+    )
+    with pytest.raises(ValueError, match="numeric"):
+        load_data(str(gro))
+
+
+def test_load_data_raises_n_atoms_non_positive(tmp_path):
+    """load_data raises ValueError when atom count is 0 or negative."""
+    gro = tmp_path / "bad.gro"
+    gro.write_text(
+        "Chromosome frame 0\n"
+        "0\n"
+    )
+    with pytest.raises(ValueError, match="positive"):
+        load_data(str(gro))
+
+
+def test_display_path_with_root():
+    """display_path with root returns path relative to root when possible."""
+    root = "/foo/bar"
+    path = "/foo/bar/baz/qux"
+    out = display_path(path, root)
+    assert "baz" in out and "qux" in out
+    assert not out.startswith("/foo/bar")
+
+
+def test_display_path_no_root():
+    """display_path with root=None returns path unchanged."""
+    path = "/some/abs/path"
+    assert display_path(path, None) == path
+
+
+def test_get_train_test_split_shape():
+    """get_train_test_split returns train and test subsets with correct total size."""
+    coords = torch.randn(100, 10, 3)
+    train_ds, test_ds = get_train_test_split(coords, training_split=0.8, split_seed=42)
+    assert len(train_ds) + len(test_ds) == 100
+    assert len(train_ds) == 80
+    assert len(test_ds) == 20
+
+
+def test_get_train_test_split_reproducible():
+    """get_train_test_split is reproducible with same seed."""
+    coords = torch.randn(50, 5, 3)
+    t1, s1 = get_train_test_split(coords, 0.7, split_seed=123)
+    t2, s2 = get_train_test_split(coords, 0.7, split_seed=123)
+    assert t1.indices == t2.indices
+    assert s1.indices == s2.indices
+
+
+def test_validate_dataset_for_pipeline_ok():
+    """validate_dataset_for_pipeline does not raise for valid dataset."""
+    validate_dataset_for_pipeline(10, 0.8)
+    validate_dataset_for_pipeline(2, 0.5)
+
+
+def test_validate_dataset_for_pipeline_too_few_structures():
+    """validate_dataset_for_pipeline raises when num_structures < 2."""
+    with pytest.raises(ValueError, match="At least 2 structures"):
+        validate_dataset_for_pipeline(1, 0.8)
+
+
+def test_validate_dataset_for_pipeline_split_imbalance():
+    """validate_dataset_for_pipeline raises when train or test size is 0."""
+    with pytest.raises(ValueError, match="train_size=0|At least one"):
+        validate_dataset_for_pipeline(5, 0.0)
+    with pytest.raises(ValueError, match="test_size=0|At least one"):
+        validate_dataset_for_pipeline(5, 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+
+def test_distmap_bond_lengths_shape():
+    """distmap_bond_lengths returns flat bond lengths (N-1) per structure."""
+    B, N = 3, 5
+    dm = np.random.rand(B, N, N).astype(np.float32)
+    dm = (dm + dm.transpose(0, 2, 1)) / 2
+    bonds = distmap_bond_lengths(dm)
+    assert bonds.shape == (B * (N - 1),)
+    assert np.all(bonds >= 0)
+
+
+def test_distmap_rg_shape_and_nonneg():
+    """distmap_rg returns one Rg per structure, non-negative."""
+    B, N = 4, 6
+    dm = np.random.rand(B, N, N).astype(np.float32)
+    dm = (dm + dm.transpose(0, 2, 1)) / 2
+    rg = distmap_rg(dm)
+    assert rg.shape == (B,)
+    assert np.all(rg >= 0)
+
+
+def test_distmap_scaling_shape():
+    """distmap_scaling returns genomic_distances and mean_spatial_distances."""
+    B, N = 2, 10
+    dm = np.random.rand(B, N, N).astype(np.float32)
+    dm = (dm + dm.transpose(0, 2, 1)) / 2
+    gen_d, mean_d = distmap_scaling(dm, max_sep=5)
+    assert gen_d.shape == (5,)
+    assert mean_d.shape == (5,)
+    assert np.all(mean_d >= 0)
+
+
+# ---------------------------------------------------------------------------
+# Min-RMSD
+# ---------------------------------------------------------------------------
+
+
+def test_rmsd_matrix_batch_shape():
+    """_rmsd_matrix_batch returns (B, M) for (B, N, 3) queries and (M, N, 3) refs."""
+    B, M, N = 2, 3, 4
+    queries = np.random.randn(B, N, 3).astype(np.float32)
+    refs = np.random.randn(M, N, 3).astype(np.float32)
+    rmsd = _rmsd_matrix_batch(queries, refs)
+    assert rmsd.shape == (B, M)
+    assert np.all(rmsd >= 0)
+
+
+def test_rmsd_matrix_batch_identical_coords_zero():
+    """When query and ref are identical copies, Kabsch-aligned RMSD should be zero."""
+    N = 5
+    coords = np.random.randn(1, N, 3).astype(np.float32)
+    refs = np.copy(coords)
+    rmsd = _rmsd_matrix_batch(coords, refs)
+    assert rmsd.shape == (1, 1)
+    assert np.isclose(rmsd[0, 0], 0.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Plot paths (run.PLOT_TYPES / _plot_path)
+# ---------------------------------------------------------------------------
+
+
+def test_plot_path_from_plottypes():
+    """_plot_path builds paths from PLOT_TYPES for reconstruction, recon_statistics, gen_variance."""
+    from run import PLOT_TYPES, _plot_path
+
+    run_root = "/out/seed_0/distmap/0"
+    assert _plot_path(run_root, "reconstruction") == os.path.join(
+        run_root, "plots", "reconstruction", "reconstruction.png"
+    )
+    assert _plot_path(run_root, "recon_statistics", subset="test") == os.path.join(
+        run_root, "plots", "recon_statistics", "recon_statistics_test.png"
+    )
+    assert _plot_path(run_root, "gen_variance", var="1") == os.path.join(
+        run_root, "plots", "gen_variance", "gen_variance_1.png"
+    )
+    assert set(PLOT_TYPES.keys()) == {"reconstruction", "recon_statistics", "gen_variance"}

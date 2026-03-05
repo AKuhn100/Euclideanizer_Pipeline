@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 import numpy as np
 
+from .utils import display_path
+
 DEFAULT_STRUCTURES_FILENAME = "structures.gro"
 
 
@@ -42,10 +44,6 @@ def write_structures_gro(
                 # GRO: %5d resnum, %-5s resname, %5s atomname, %5d atomnum, %8.3f %8.3f %8.3f x y z
                 f.write(f"{a + 1:5d}{residue_name:<5s}{atom_name:>5s}{a + 1:5d}{x:8.3f}{y:8.3f}{z:8.3f}\n")
             f.write(f"{0:10.5f}{0:10.5f}{0:10.5f}\n")
-    if display_root:
-        try:
-            rel = os.path.relpath(path, display_root)
-            print(f"  Saved: {rel} ({n_structures} frames)")
-        except ValueError:
-            print(f"  Saved: {path} ({n_structures} frames)")
+    if display_root is not None:
+        print(f"  Saved: {display_path(path, display_root)} ({n_structures} frames)")
     return [path]

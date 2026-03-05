@@ -7,22 +7,11 @@ import os
 import shutil
 import time
 import torch
-from torch.utils.data import random_split
-
 from . import utils
 from .config import load_run_config, save_run_config
 from .distmap.model import ChromVAE_Conv
 from .distmap.loss import distmap_vae_loss
 from .plotting import plot_loss_curves
-
-
-def _display_path(path: str, root: str | None) -> str:
-    if not root:
-        return path
-    try:
-        return os.path.relpath(path, root)
-    except ValueError:
-        return path
 
 
 def train_distmap(
@@ -73,10 +62,7 @@ def train_distmap(
         optimizer, T_max=epochs, eta_min=1e-6
     )
 
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    generator = torch.Generator().manual_seed(split_seed)
-    train_ds, test_ds = random_split(coords, [train_size, test_size], generator=generator)
+    train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
     train_dl = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     test_dl = torch.utils.data.DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
@@ -111,7 +97,7 @@ def train_distmap(
         model.train()
         ep_loss, ep_kl, ep_recon, n_b = 0.0, 0.0, 0.0, 0
         for batch in train_dl:
-            batch_dm = utils.Get_Distmaps(batch)
+            batch_dm = utils.get_distmaps(batch)
             mu, logvar, z, recon_tri = model(batch_dm)
             gt_full = torch.log1p(batch_dm)
             recon_full = utils.upper_tri_to_symmetric(recon_tri, num_atoms)
@@ -134,7 +120,7 @@ def train_distmap(
         val_sum, val_n = 0.0, 0
         with torch.no_grad():
             for batch in test_dl:
-                batch_dm = utils.Get_Distmaps(batch)
+                batch_dm = utils.get_distmaps(batch)
                 mu, logvar, z, recon_tri = model(batch_dm)
                 gt_full = torch.log1p(batch_dm)
                 recon_full = utils.upper_tri_to_symmetric(recon_tri, num_atoms)
@@ -176,7 +162,7 @@ def train_distmap(
         {"distmap": dm_cfg}, model_dir,
         last_epoch_trained=dm_cfg["epochs"], best_epoch=best_epoch, best_val=best_val,
     )
-    print(f"  Saved: {_display_path(model_path, display_root)}")
+    print(f"  Saved: {utils.display_path(model_path, display_root)}")
     # Delete previous segment's last only after we have written current last (fallback in case best save was interrupted)
     if save_last and is_resume and prev_run_dir is not None and not save_final_models_per_stretch:
         prev_last = os.path.join(prev_run_dir, "model", "model_last.pt")

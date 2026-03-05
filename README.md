@@ -42,7 +42,7 @@ The pipeline expects coordinate data as a **GRO-style text file**: one or more f
 - Interpreted as: `(n_structures, n_atoms, 3)` array of coordinates.
 - The same train/test split (by `data.split_seed` and `data.training_split`) is used for training, validation, plotting, and analysis.
 
-**Toy dataset:** A small test set (10 structures, 100 beads each — spheres of different sizes) is provided under `test_data/` as `small_spheres.gro`. Use it to quickly sanity-check the pipeline with real data (e.g. `--data test_data/small_spheres.gro`). Regenerate or customize it with `python test_data/generate_small_spheres.py` (optional args: `--num-structures`, `--beads`, `--output`).
+**Bundled dataset:** The project does not include large chromosome GRO files. All data-dependent use (smoke test, sample config, demos) relies on the **sphere dataset**: run `python tests/test_data/generate_spheres.py` to create `tests/test_data/spheres.gro`, then use it with the sample config or `--data tests/test_data/spheres.gro`. Regenerate or customize with optional args: `--num-structures`, `--beads`, `--output`.
 
 ---
 
@@ -70,6 +70,9 @@ Training requires a dataset path: set it with `--data` or in the config under `d
 | Custom output directory  | `--output-dir /path/to/output`                               |
 | Override hyperparameters | `--distmap.beta_kl 0.01 0.05 --euclideanizer.epochs 150 300` |
 
+### Running on a cluster (SLURM)
+
+An example SLURM job script is provided as `run.sh`. Use it as a template: activate your environment, load any required modules (e.g. ffmpeg for training videos), and run the pipeline from the **project root** with `python Euclideanizer_Pipeline/run.py --config ... --data ...`. Paths in `run.sh` (venv, output dir, partition) are examples; edit them for your setup.
 
 ---
 
@@ -97,6 +100,16 @@ pytest tests/test_pipeline_behavior.py -v
 
 No dataset or GPU is required; tests use `tmp_path` and dummy checkpoints.
 
+**Smoke test (full pipeline run)**
+
+A single end-to-end smoke test runs the pipeline with a minimal config (1 seed, 1 DistMap epoch, 1 Euclideanizer epoch) using `tests/test_data/spheres.gro` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). It is marked as slow and is **skipped by default**.
+
+- Run all tests **except** smoke: `pytest tests/ -v -m "not slow"`
+- Run **only** the smoke test: `pytest tests/test_smoke.py -v` or `pytest tests/test_smoke.py -v -m slow`
+- Run **all** tests including smoke: `pytest tests/ -v`
+
+The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/test_data/generate_spheres.py`).
+
 
 ---
 
@@ -105,7 +118,7 @@ No dataset or GPU is required; tests use `tmp_path` and dummy checkpoints.
 ### Config file
 
 - **Path**: Required. Pass with `--config path/to/config.yaml` (no default; you must specify the config file and know where it is).
-- **Content**: All required keys (data, output_dir, distmap, euclideanizer, plotting, analysis, training_visualization) must be present; see `config_sample.yaml` and the **Config reference** below. There are no code-side defaults for these.
+- **Content**: Every config key is required (no code-side defaults). All top-level sections and their keys must be present; see `config_sample.yaml` and the **Config reference** below. Missing keys cause a clear error at load time.
 - **Overrides**: CLI flags are merged over the config (e.g. `--distmap.epochs 100` replaces the config value).
 
 ### Key options (summary)
@@ -115,11 +128,11 @@ No dataset or GPU is required; tests use `tmp_path` and dummy checkpoints.
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **data**                   | `path`, `split_seed` (int or list for multiple seeds), `training_split`                                                |
 | **output_dir**             | Base directory for all outputs (each seed: `output_dir/seed_<n>/`)                                                     |
-| **distmap**                | VAE: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, lambda weights, optional `memory_efficient`     |
-| **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights.                 |
-| **plotting**               | `enabled`, reconstruction / bond_rg_scaling / avg_gen_vs_exp, `num_samples`, `sample_variance`, `save_plot_data`, etc. |
+| **distmap**                | VAE: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, lambda weights, `memory_efficient`, `save_final_models_per_stretch` |
+| **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights and `num_diags`. |
+| **plotting**               | `enabled`, reconstruction / bond_rg_scaling / avg_gen_vs_exp, `num_samples`, `sample_variance`, `save_plot_data`, `save_structures_gro`, etc. |
 | **training_visualization** | `enabled`, `n_probe`, `n_quick`, `fps`, frame size/dpi, `delete_frames_after_video`                                    |
-| **analysis**               | `min_rmsd`; optional `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`                   |
+| **analysis**               | `min_rmsd`, `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`, `save_data`, `save_structures_gro` |
 
 
 - **Lists in config**: Any distmap or euclideanizer key can be a list; the pipeline runs one job per element of the Cartesian product (e.g. `beta_kl: [0.01, 0.05]` and `epochs: [100, 300]` → 4 DistMap runs).
@@ -204,13 +217,19 @@ output_dir/
 ```
 Euclideanizer_Pipeline/
   run.py                 # Single entrypoint: training, plotting, analysis
+  run.sh                 # Example SLURM job script (edit paths for your cluster)
   config_sample.yaml     # Example config (all required keys)
   PIPELINE_FLOWCHART.md  # Flow diagrams and config/options reference (Mermaid)
   requirements.txt
   README.md
   tests/
     test_pipeline_behavior.py  # Behavior tests (run completion, need_data, resume, config)
-    config_test.yaml           # Minimal config for tests (no dataset required)
+    test_utils_and_config.py  # Config, utils, metrics, min_rmsd, plot paths
+    test_smoke.py             # Full pipeline smoke run (slow; requires tests/test_data/spheres.gro)
+    conftest.py               # Pytest markers (e.g. slow)
+    config_test.yaml          # Minimal config for behavior tests (no dataset required)
+    config_smoke.yaml         # Minimal config for smoke test (1 seed, 1 epoch each)
+    test_data/                # Bundled sphere dataset: generate_spheres.py, spheres.gro (after generation)
   src/
     config.py            # Config load, validation, grid expansion
     utils.py             # Data loading (GRO-style), device, distance maps, tri/symmetric helpers
@@ -260,11 +279,14 @@ With `plotting.save_plot_data: true`, many plots write a `data/` subdir with `*_
 
 ## Config reference (condensed)
 
+All keys below are **required** (no defaults in code). Omit any and the pipeline raises at load time.
+
+- **resume**: `true` (skip complete runs) or `false` (overwrite after confirmation).
 - **data**: `path` (dataset file), `split_seed` (int or list of ints), `training_split` (e.g. 0.8).
-- **distmap**: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, `lambda_mse`, `lambda_w_recon`, `lambda_w_gen`; optional `memory_efficient`.
-- **euclideanizer**: `epochs`, `batch_size`, `learning_rate`, same lambdas plus `lambda_w_diag_recon`, `lambda_w_diag_gen`; optional `memory_efficient`.
-- **plotting**: `enabled`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `plot_dpi`, `save_pdf_copy`, `save_plot_data`; optional `save_structures_gro` (save generated structures as one multi-frame GRO file per set under `plots/.../structures/<variance>/structures.gro`, Euclideanizer gen_variance only).
+- **distmap**: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, `lambda_mse`, `lambda_w_recon`, `lambda_w_gen`, `memory_efficient`, `save_final_models_per_stretch`.
+- **euclideanizer**: `epochs`, `batch_size`, `learning_rate`, same lambdas plus `lambda_w_diag_recon`, `lambda_w_diag_gen`, `num_diags` (diagonals for diagonal Wasserstein), `memory_efficient`, `save_final_models_per_stretch`.
+- **plotting**: `enabled`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `plot_dpi`, `save_pdf_copy`, `save_plot_data`, `save_structures_gro`.
 - **training_visualization**: `enabled`, `n_probe`, `n_quick`, `fps`, `frame_width`, `frame_height`, `frame_dpi`, `delete_frames_after_video`.
-- **analysis**: `min_rmsd`; optional `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`, `save_data` (save `.npz` per run), `save_structures_gro` (save generated structures as one multi-frame GRO file per run: `structures/structures.gro`).
+- **analysis**: `min_rmsd`, `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`, `save_data`, `save_structures_gro`.
 
 For full structure and comments, use `config_sample.yaml` as the template.

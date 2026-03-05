@@ -56,6 +56,8 @@ flowchart TB
 
 ## 2. Config and CLI reference
 
+For the full list of config keys and defaults, see the **Config reference** in README.md.
+
 | Source | Effect |
 |--------|--------|
 | **data.split_seed** | Single int → one run under `output_dir`. List → one full pipeline per seed under `base_output_dir/seed_<n>/`. |

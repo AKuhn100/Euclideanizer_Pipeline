@@ -1,21 +1,19 @@
-# Minimal test config for pipeline behavior tests.
-# Used only to load a valid config and get distmap/euclideanizer groups; the tests do not run
-# training, plotting, or analysis, so save_plot_data / save_data / save_structures_gro can stay false.
-# Exercises: 1 seed, 2 DistMap runs (epochs 1 and 2), 2 Euclideanizer runs (epochs 1 and 2).
+# Minimal config for smoke test: 1 seed, 1 DistMap epoch, 1 Euclideanizer epoch.
+# Uses tests/test_data/spheres.gro; data.path and output_dir are overridden by the test.
 
-resume: true
+resume: false
 
 data:
   path: null
   split_seed: 0
   training_split: 0.8
 
-output_dir: "./test_output"
+output_dir: "./smoke_out"
 
 distmap:
   latent_dim: 4
   beta_kl: 0.01
-  epochs: [1, 2]
+  epochs: [1]
   batch_size: 8
   learning_rate: 1.0e-4
   lambda_mse: 1.0
@@ -25,7 +23,7 @@ distmap:
   save_final_models_per_stretch: false
 
 euclideanizer:
-  epochs: [1, 2]
+  epochs: [1]
   batch_size: 8
   learning_rate: 1.0e-4
   lambda_mse: 1.0
@@ -42,7 +40,7 @@ plotting:
   reconstruction: true
   bond_rg_scaling: true
   avg_gen_vs_exp: true
-  num_samples: 10
+  num_samples: 2
   gen_decode_batch_size: 8
   sample_variance: [1.0]
   num_reconstruction_samples: 2
@@ -63,7 +61,7 @@ training_visualization:
 
 analysis:
   min_rmsd: true
-  min_rmsd_num_samples: 10
+  min_rmsd_num_samples: [1]
   min_rmsd_sample_variance: [1.0]
   min_rmsd_query_batch_size: 8
   save_data: false

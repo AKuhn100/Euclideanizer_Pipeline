@@ -20,28 +20,34 @@ REQUIRED_KEYS = {
         "latent_dim", "beta_kl",
         "epochs", "batch_size", "learning_rate",
         "lambda_mse", "lambda_w_recon", "lambda_w_gen",
+        "memory_efficient", "save_final_models_per_stretch",
     ],
     "euclideanizer": [
         "epochs", "batch_size", "learning_rate",
         "lambda_mse", "lambda_w_recon", "lambda_w_gen",
         "lambda_w_diag_recon", "lambda_w_diag_gen",
+        "num_diags",
+        "memory_efficient", "save_final_models_per_stretch",
     ],
     "plotting": [
         "enabled", "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp",
         "num_samples", "gen_decode_batch_size", "sample_variance",
         "num_reconstruction_samples", "plot_dpi", "save_pdf_copy",
+        "save_plot_data", "save_structures_gro",
     ],
     "analysis": [
         "min_rmsd",
-        # Optional keys in analysis: min_rmsd_num_samples, min_rmsd_sample_variance, min_rmsd_query_batch_size
+        "min_rmsd_num_samples", "min_rmsd_sample_variance", "min_rmsd_query_batch_size",
+        "save_data", "save_structures_gro",
     ],
     "training_visualization": [
         "enabled",
         "n_probe", "n_quick",
         "fps", "frame_width", "frame_height", "frame_dpi",
+        "delete_frames_after_video",
     ],
 }
-REQUIRED_TOP_LEVEL = ["data", "output_dir", "distmap", "euclideanizer", "plotting", "analysis", "training_visualization"]
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "plotting", "analysis", "training_visualization"]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

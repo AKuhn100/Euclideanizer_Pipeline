@@ -13,16 +13,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
-
-
-def _display_path(path: str, root: str | None) -> str:
-    """Return path relative to root for display, or path unchanged if root is None."""
-    if not root:
-        return path
-    try:
-        return os.path.relpath(path, root)
-    except ValueError:
-        return path
+from .utils import display_path, get_train_test_split
 
 
 def _save_pdf_copy(fig, png_path: str, save_pdf: bool = True, display_root: str | None = None) -> None:
@@ -33,7 +24,7 @@ def _save_pdf_copy(fig, png_path: str, save_pdf: bool = True, display_root: str 
     os.makedirs(pdf_dir, exist_ok=True)
     pdf_path = os.path.join(pdf_dir, os.path.splitext(os.path.basename(png_path))[0] + ".pdf")
     fig.savefig(pdf_path)
-    print(f"  Saved: {_display_path(pdf_path, display_root)}")
+    print(f"  Saved: {display_path(pdf_path, display_root)}")
 
 
 def _save_plot_data_npz(output_path: str, display_root: str | None = None, **arrays: np.ndarray) -> None:
@@ -44,7 +35,7 @@ def _save_plot_data_npz(output_path: str, display_root: str | None = None, **arr
     data_path = os.path.join(data_dir, stem + "_data.npz")
     os.makedirs(data_dir, exist_ok=True)
     np.savez_compressed(data_path, **{k: np.asarray(v) for k, v in arrays.items()})
-    print(f"  Saved: {_display_path(data_path, display_root)}")
+    print(f"  Saved: {display_path(data_path, display_root)}")
 
 
 # -------- DistMap: reconstruction (test set) --------
@@ -65,11 +56,7 @@ def plot_distmap_reconstruction(
     display_root: str | None = None,
 ) -> None:
     """Original vs reconstructed distance maps (test set)."""
-    from torch.utils.data import random_split
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    generator = torch.Generator().manual_seed(split_seed)
-    _, test_dataset = random_split(coords, [train_size, test_size], generator=generator)
+    _, test_dataset = get_train_test_split(coords, training_split, split_seed)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     num_atoms = coords.size(1)
     model.eval()
@@ -79,7 +66,7 @@ def plot_distmap_reconstruction(
         for batch in test_dl:
             if count >= num_to_plot:
                 break
-            batch_dm = utils_mod.Get_Distmaps(batch)
+            batch_dm = utils_mod.get_distmaps(batch)
             mu, logvar, z, recon_tri = model(batch_dm)
             recon_tri = torch.expm1(recon_tri)
             recon_full = utils_mod.upper_tri_to_symmetric(recon_tri, num_atoms)
@@ -108,7 +95,7 @@ def plot_distmap_reconstruction(
     if save_plot_data:
         _save_plot_data_npz(output_path, display_root=display_root, original_dms=np.array(original_dms), recon_dms=np.array(recon_dms))
     plt.close()
-    print(f"  Saved: {_display_path(output_path, display_root)}")
+    print(f"  Saved: {display_path(output_path, display_root)}")
 
 
 # -------- Euclideanizer: reconstruction (test set) --------
@@ -130,11 +117,7 @@ def plot_euclideanizer_reconstruction(
     display_root: str | None = None,
 ) -> None:
     """Original, VAE (non-Eucl.), Euclideanizer (test set)."""
-    from torch.utils.data import random_split
-    train_size = int(training_split * len(coords))
-    test_size = len(coords) - train_size
-    generator = torch.Generator().manual_seed(split_seed)
-    _, test_dataset = random_split(coords, [train_size, test_size], generator=generator)
+    _, test_dataset = get_train_test_split(coords, training_split, split_seed)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     embed.eval()
     orig_list, vae_list, euclid_list = [], [], []
@@ -143,7 +126,7 @@ def plot_euclideanizer_reconstruction(
         for batch in test_dl:
             if count >= num_to_plot:
                 break
-            batch_dm = utils_mod.Get_Distmaps(batch)
+            batch_dm = utils_mod.get_distmaps(batch)
             gt_log = torch.log1p(batch_dm)
             mu = frozen_vae.encode(gt_log)
             D_noneuclid = frozen_vae._decode_to_matrix(mu)
@@ -179,7 +162,7 @@ def plot_euclideanizer_reconstruction(
     if save_plot_data:
         _save_plot_data_npz(output_path, display_root=display_root, original=np.array(orig_list), vae=np.array(vae_list), euclideanizer=np.array(euclid_list))
     plt.close()
-    print(f"  Saved: {_display_path(output_path, display_root)}")
+    print(f"  Saved: {display_path(output_path, display_root)}")
 
 
 # -------- Bond length, Rg, scaling (reconstruction statistics) --------
@@ -232,7 +215,7 @@ def plot_recon_statistics(
             recon_bonds=recon_bonds, recon_rg=recon_rg, recon_scaling=recon_sc,
         )
     plt.close()
-    print(f"  Saved: {_display_path(output_path, display_root)}")
+    print(f"  Saved: {display_path(output_path, display_root)}")
 
 
 # -------- Generation: bond, Rg, scaling; avg maps (train, test, gen); difference row --------
@@ -343,7 +326,7 @@ def plot_gen_analysis(
             diff_test_train=diff_tt, diff_train_gen=diff_tg, diff_test_gen=diff_test_gen,
         )
     plt.close()
-    print(f"  Saved: {_display_path(output_path, display_root)}")
+    print(f"  Saved: {display_path(output_path, display_root)}")
 
 
 def plot_loss_curves(
@@ -381,4 +364,4 @@ def plot_loss_curves(
             val_loss=np.array(val_loss),
         )
     plt.close()
-    print(f"  Saved: {_display_path(output_path, display_root)}")
+    print(f"  Saved: {display_path(output_path, display_root)}")
