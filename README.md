@@ -106,11 +106,11 @@ No dataset or GPU is required; tests use `tmp_path` and dummy checkpoints.
 
 **Smoke test (full pipeline run)**
 
-A single end-to-end smoke test runs the pipeline with a minimal config using `tests/test_data/spheres.gro` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). **With one GPU** it runs one seed (single task) for a faster check; **with two or more GPUs** it runs two seeds so both devices are used and the multi-GPU path is exercised. The test is marked as slow and is **skipped by default**.
+A single end-to-end smoke test runs the pipeline with a minimal config using `tests/test_data/spheres.gro` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). It is **included in default pytest runs** (`pytest tests/ -v`). **On one or zero GPUs** the test uses single-task (one seed); **on two or more GPUs** it uses multi-task (two seeds) so both devices are used and the multi-GPU path is exercised. The test is marked slow; to skip it for a quicker run, use `pytest -m "not slow"`.
 
-- Run all tests **except** smoke: `pytest tests/ -v -m "not slow"`
-- Run **only** the smoke test: `pytest tests/test_smoke.py -v` or `pytest tests/test_smoke.py -v -m slow`
-- Run **all** tests including smoke: `pytest tests/ -v`
+- Run **all** tests including smoke (default): `pytest tests/ -v`
+- Run all tests **except** smoke (quicker): `pytest tests/ -v -m "not slow"`
+- Run **only** the smoke test: `pytest tests/test_smoke.py -v`
 
 The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/test_data/generate_spheres.py`).
 

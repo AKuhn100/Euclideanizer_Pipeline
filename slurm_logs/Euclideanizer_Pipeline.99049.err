@@ -1,2 +1,0 @@
-mkdir: cannot create directory ‘slurm_logs’: Permission denied
-python: can't open file '/var/spool/slurmd/job99049/run.py': [Errno 2] No such file or directory

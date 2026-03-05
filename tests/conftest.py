@@ -11,4 +11,4 @@ if _root not in sys.path:
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "slow: marks tests as slow (e.g. smoke run); skip with -m 'not slow'")
+    config.addinivalue_line("markers", "slow: marks tests as slow (e.g. smoke run); included by default, skip with -m 'not slow'")

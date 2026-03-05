@@ -1,12 +1,12 @@
 """
 Smoke test: run the full pipeline with a minimal config and the sphere dataset; assert that key outputs exist.
 
-With one GPU: runs one seed (single task) for a faster check. With two or more GPUs: runs two seeds
-(multi-task) so both GPUs are used and the multi-GPU path is exercised.
-Slow. Skipped by default.
+Included in default pytest runs (pytest tests/ -v). On one or zero GPUs: single-task (one seed).
+On two or more GPUs: multi-task (two seeds) so both devices are used and the multi-GPU path is exercised.
+Marked slow; to skip it for a quicker run: pytest -m "not slow".
 
-  pytest -m "not slow"     # run all tests except smoke
-  pytest tests/test_smoke.py -v -m slow   # run only smoke test
+  pytest tests/ -v        # run all tests including smoke (single-task on 1 GPU, multi-task on 2+ GPUs)
+  pytest -m "not slow"    # run all tests except smoke
 """
 from __future__ import annotations
 
