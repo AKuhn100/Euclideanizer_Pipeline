@@ -1,5 +1,5 @@
 # Minimal config for smoke test: 1 seed, 1 DistMap epoch, 1 Euclideanizer epoch.
-# Uses tests/test_data/spheres.gro; data.path and output_dir are overridden by the test.
+# The smoke test sets data.path and output_dir at runtime.
 
 resume: false
 

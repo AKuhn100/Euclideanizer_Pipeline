@@ -76,12 +76,15 @@ def _scaling_coords(coords, n_k=200, batch=64):
 
 
 def _kabsch(q, r):
+    """Align q to r (Kabsch). Both (N, 3). Returns centered aligned q: q_c @ R with R = V @ diag(1,1,d) @ U^T."""
     q = q - q.mean(0)
     r = r - r.mean(0)
     H = q.T @ r
     U, _, Vt = np.linalg.svd(H)
-    d = np.linalg.det(Vt.T @ U.T)
-    return q @ (Vt.T @ np.diag([1.0, 1.0, d]) @ U.T).T
+    d = np.linalg.det(U @ Vt)
+    S = np.array([1.0, 1.0, np.sign(d)], dtype=q.dtype)
+    R = Vt.T @ (S[:, np.newaxis] * U.T)
+    return q @ R
 
 
 def _coord_to_dm(c):

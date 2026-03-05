@@ -1,15 +1,27 @@
 #!/bin/bash
-#SBATCH --job-name=ChromVAE_DistMap
+# Example SLURM job script for the Euclideanizer pipeline.
+# Edit partition, resources, and paths for your cluster and environment.
+
+#SBATCH --job-name=Euclideanizer_Pipeline
 #SBATCH --partition=commons
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
-#SBATCH --output=/scratch/amk19/slurm_outputs/%x.%j.out
-#SBATCH --error=/scratch/amk19/slurm_outputs/%x.%j.err
+#SBATCH --output=slurm_logs/%x.%j.out
+#SBATCH --error=slurm_logs/%x.%j.err
 
-source /scratch/amk19/ChromVAE/.venv/bin/activate
+# Activate your Python environment (venv, conda, or module).
+# source /path/to/your/venv/bin/activate
+# module load Python/3.9  # example; adjust for your cluster
 
-module load GCCcore/13.3.0 FFmpeg/7.0.2
+# Optional: load GCC, FFmpeg (needed for training videos).
+# module load GCCcore/13.3.0 FFmpeg/7.0.2
 
-python Euclideanizer_Pipeline/run.py --config Euclideanizer_Pipeline/config_sample.yaml 
+# Run from the pipeline directory so relative paths in config resolve correctly.
+PIPELINE_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$PIPELINE_DIR"
+mkdir -p slurm_logs
+
+# Overwrite existing run: add --no-resume --yes-overwrite
+python run.py --config config_sample.yaml

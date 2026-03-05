@@ -65,9 +65,9 @@ from src.euclideanizer.model import Euclideanizer, load_frozen_vae
 from src.min_rmsd import run_min_rmsd_analysis, run_min_rmsd_analysis_multi, get_or_compute_test_to_train_rmsd
 from src.gro_io import write_structures_gro
 
-# Log file in output root (set in main(); writes to stdout + file in real time)
+# Log file in output root; also mirrored to stdout (set in main).
 _LOG_FILE = None
-# Real stdout/stderr before wrapping (for submodule coloring); restored on exit
+# Stdout/stderr before wrapping; restored on exit.
 _pipeline_real_stdout = None
 _pipeline_real_stderr = None
 PIPELINE_LOG_FILENAME = "pipeline.log"
@@ -508,7 +508,7 @@ def _euclideanizer_training_action(
     }
 
 
-# Single source of truth: plot type -> (subdir, filename pattern). Use _plot_path(run_root, type) or _plot_path(run_root, type, subset=..., var=...).
+# Plot type -> (subdir, filename pattern). Use _plot_path(run_root, type) or _plot_path(run_root, type, subset=..., var=...).
 PLOT_TYPES = {
     "reconstruction": ("reconstruction", "reconstruction.png"),
     "recon_statistics": ("recon_statistics", "recon_statistics_{subset}.png"),
@@ -680,6 +680,7 @@ def _parse_args():
     p.add_argument("--config", type=str, required=True, help="Path to YAML config (e.g. Euclideanizer_Pipeline/config_sample.yaml)")
     p.add_argument("--no-plots", action="store_true", help="Disable all plotting")
     p.add_argument("--no-resume", action="store_true", help="Do not resume; overwrite existing run outputs")
+    p.add_argument("--yes-overwrite", action="store_true", help="With --no-resume: skip confirmation prompt (use for SLURM/scripted runs)")
     p.add_argument("--output-dir", type=str, default=None, dest="output_dir", help="Output directory")
     # DistMap
     p.add_argument("--distmap.beta_kl", type=float, nargs="*", default=None, dest="distmap_beta_kl")
@@ -1326,7 +1327,8 @@ def main():
     base_output_dir = get_output_dir(cfg)
     resume = cfg["resume"]
     if not resume and os.path.isdir(base_output_dir):
-        _confirm_overwrite(base_output_dir)
+        if not getattr(args, "yes_overwrite", False):
+            _confirm_overwrite(base_output_dir)
         shutil.rmtree(base_output_dir)
     _init_log_file(base_output_dir)
     _pipeline_real_stdout = sys.stdout
@@ -1386,7 +1388,7 @@ def main():
                     )
                 effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed}}
                 saved_cfg = load_pipeline_config(output_dir)
-                # Compare ignoring 'resume' so toggling resume true/false does not trigger a config mismatch
+                # Ignore 'resume' when comparing configs (so toggling resume does not cause mismatch)
                 def _cfg_for_compare(c):
                     d = dict(c)
                     d.pop("resume", None)
@@ -1405,7 +1407,7 @@ def main():
                         f"Use a different output_dir to keep existing runs, or run with --no-resume to overwrite (this will overwrite existing checkpoints and outputs in that directory)."
                     )
 
-    # Load data only when we will use it: not resuming, or something is incomplete/missing (training or plot/analysis)
+    # Load data only when needed: not resuming, or something is incomplete/missing (training or plot/analysis)
     need_data = (need_train or do_plot or do_min_rmsd) and data_path
     if need_data and resume:
         need_data = _pipeline_need_data(

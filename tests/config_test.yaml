@@ -1,7 +1,5 @@
-# Minimal test config for pipeline behavior tests.
-# Used only to load a valid config and get distmap/euclideanizer groups; the tests do not run
-# training, plotting, or analysis, so save_plot_data / save_data / save_structures_gro can stay false.
-# Exercises: 1 seed, 2 DistMap runs (epochs 1 and 2), 2 Euclideanizer runs (epochs 1 and 2).
+# Minimal config for pipeline behavior tests (no dataset required).
+# 1 seed, 2 DistMap runs (epochs 1 and 2), 2 Euclideanizer runs (epochs 1 and 2).
 
 resume: true
 

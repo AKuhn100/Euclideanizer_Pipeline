@@ -163,7 +163,7 @@ def train_distmap(
         last_epoch_trained=dm_cfg["epochs"], best_epoch=best_epoch, best_val=best_val,
     )
     print(f"  Saved: {utils.display_path(model_path, display_root)}")
-    # Delete previous segment's last only after we have written current last (fallback in case best save was interrupted)
+    # Delete previous segment's last only after writing current last (fallback if best save was interrupted)
     if save_last and is_resume and prev_run_dir is not None and not save_final_models_per_stretch:
         prev_last = os.path.join(prev_run_dir, "model", "model_last.pt")
         if os.path.isfile(prev_last):

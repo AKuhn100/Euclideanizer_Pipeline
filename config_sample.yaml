@@ -10,7 +10,7 @@ data:
   split_seed: [0, 42]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
   training_split: 0.8   # fraction for training; same for both models, plotting, and analysis
 
-output_dir: "./3-3/test_7"
+output_dir: "./output"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
@@ -46,7 +46,7 @@ plotting:
   reconstruction: true
   bond_rg_scaling: true
   avg_gen_vs_exp: true
-  num_samples: 10              # samples per variance for gen plots (scalar in current pipeline)
+  num_samples: 10              # samples per variance for gen plots
   gen_decode_batch_size: 128     # batch size when decoding for gen plots;
   sample_variance: [1]  # list -> one plot set per value
   num_reconstruction_samples: 5
