@@ -160,12 +160,3 @@ base_output_dir/
                 ├── data/            # if save_data
                 └── structures/      # if save_structures_gro
 ```
-
----
-
-## Viewing and exporting
-
-- **Preview**: Mermaid blocks render in GitHub, GitLab, and in VS Code/Cursor with a Mermaid extension. For an editor, paste a block into [Mermaid Live](https://mermaid.live/).
-- **Export**: In Mermaid Live use Export → PNG/SVG, or from the repo: `npx -y @mermaid-js/mermaid-cli -i PIPELINE_FLOWCHART.md -o pipeline_flowchart.png` (requires Node).
-
-When you add analysis features or seed-level parallelization, update this document so the flow and options stay accurate.
