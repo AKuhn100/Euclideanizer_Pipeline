@@ -1,16 +1,18 @@
 """
-Pipeline behavior tests: run completion, need_data, resume logic, config match, and skip logic.
+Pipeline behavior tests: run completion, need_data / data needs, resume logic, config match, and skip logic.
 
 These tests exercise the pipeline's control flow and resume decisions without running training,
 plotting, or analysis. They use a minimal config (tests/config_test.yaml), fake checkpoint
 dirs (tmp_path), and the same helpers the main loop uses (_run_completed, _pipeline_need_data,
-_distmap_training_action, _euclideanizer_training_action, etc.).
+_pipeline_data_needs, PipelineDataNeeds, _distmap_training_action, _euclideanizer_training_action, etc.).
 
 Sections:
   - Run completion: when a run is considered "complete" (best checkpoint, last_epoch_trained,
     optional last checkpoint for multi-segment).
-  - need_data: when the pipeline must load the dataset vs can skip (all runs complete, no
-    missing plots/analysis).
+  - need_data: when the pipeline must load something vs can skip (all runs complete, no
+    missing plots/analysis). _pipeline_need_data() is need_any() from _pipeline_data_needs().
+  - Data needs (structured): need_coords (training, reconstruction, recon_statistics, min_rmsd),
+    need_exp_stats (gen_variance), need_train_test_stats (recon_statistics, gen_variance).
   - Resume logic (DistMap / Euclideanizer): skip, from_scratch, resume_from_best (first or
     later segment), resume_from_prev_last.
   - Config: load config_test.yaml, produce training groups; config mismatch raises before
@@ -45,6 +47,8 @@ from src.config import (
 from run import (
     _run_completed,
     _pipeline_need_data,
+    _pipeline_data_needs,
+    PipelineDataNeeds,
     _distmap_plotting_all_present,
     _euclideanizer_analysis_all_present,
     _distmap_training_action,
@@ -195,6 +199,140 @@ def test_pipeline_need_data_true_when_plot_missing(tmp_path, cfg):
     assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
         plot_variances=[1.0], variance_list=[], num_samples_list=[]) is True
+
+
+def _all_runs_complete_layout(tmp_path, cfg):
+    """Create seed_0 with all DistMap and Euclideanizer runs complete; return dm_groups, eu_groups."""
+    dm_groups, eu_groups = _get_dm_eu_groups(cfg)
+    (tmp_path / "seed_0").mkdir()
+    for ri, ev in [(0, 1), (1, 2)]:
+        d = tmp_path / "seed_0" / "distmap" / str(ri) / "model"
+        d.mkdir(parents=True)
+        save_run_config({"distmap": {"epochs": ev}}, str(d), last_epoch_trained=ev, best_epoch=1, best_val=0.5)
+        (d / "model.pt").write_bytes(b"x")
+        if ev == 1:
+            (d / "model_last.pt").write_bytes(b"x")
+    for ri in (0, 1):
+        for euri, eu_ev in [(0, 1), (1, 2)]:
+            d = tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model"
+            d.mkdir(parents=True)
+            save_run_config({"euclideanizer": {"epochs": eu_ev}}, str(d), last_epoch_trained=eu_ev, best_epoch=1, best_val=0.5)
+            (d / "euclideanizer.pt").write_bytes(b"x")
+            if eu_ev == 1:
+                (d / "euclideanizer_last.pt").write_bytes(b"x")
+    return dm_groups, eu_groups
+
+
+def test_pipeline_data_needs_need_any_matches_need_data(tmp_path, cfg):
+    """_pipeline_data_needs(...).need_any() equals _pipeline_need_data(...) for the same args."""
+    dm_groups, eu_groups = _get_dm_eu_groups(cfg)
+    (tmp_path / "seed_0").mkdir()
+    for ri in (0, 1):
+        (tmp_path / "seed_0" / "distmap" / str(ri) / "model").mkdir(parents=True)
+        save_run_config({"distmap": {"epochs": 1}}, str(tmp_path / "seed_0" / "distmap" / str(ri) / "model"), last_epoch_trained=1, best_epoch=1, best_val=0.5)
+        (tmp_path / "seed_0" / "distmap" / str(ri) / "model" / "model.pt").write_bytes(b"x")
+        (tmp_path / "seed_0" / "distmap" / str(ri) / "model" / "model_last.pt").write_bytes(b"x")
+    for ri in (0, 1):
+        for euri in (0, 1):
+            (tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model").mkdir(parents=True)
+            save_run_config({"euclideanizer": {"epochs": 1}}, str(tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model"), last_epoch_trained=1, best_epoch=1, best_val=0.5)
+            (tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model" / "euclideanizer.pt").write_bytes(b"x")
+            (tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model" / "euclideanizer_last.pt").write_bytes(b"x")
+    base = str(tmp_path)
+    seeds = [0]
+    kwargs = dict(resume=True, do_plot=True, do_min_rmsd=True, do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, plot_variances=[1.0], variance_list=[1.0], num_samples_list=[10])
+    assert _pipeline_data_needs(base, seeds, dm_groups, eu_groups, **kwargs).need_any() is _pipeline_need_data(base, seeds, dm_groups, eu_groups, **kwargs)
+
+
+def test_pipeline_data_needs_only_reconstruction_missing(tmp_path, cfg):
+    """When only reconstruction plot is missing, need_coords is True, need_exp_stats is False."""
+    dm_groups, eu_groups = _all_runs_complete_layout(tmp_path, cfg)
+    run_dir_dm = tmp_path / "seed_0" / "distmap" / "0"
+    (run_dir_dm / "plots" / "recon_statistics").mkdir(parents=True)
+    (run_dir_dm / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
+    (run_dir_dm / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
+    (run_dir_dm / "plots" / "gen_variance").mkdir(parents=True)
+    (run_dir_dm / "plots" / "gen_variance" / "gen_variance_1.0.png").write_bytes(b"x")
+    for ri in (0, 1):
+        for euri in (0, 1):
+            eu_run = tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri)
+            (eu_run / "plots" / "reconstruction").mkdir(parents=True)
+            (eu_run / "plots" / "reconstruction" / "reconstruction.png").write_bytes(b"x")
+            (eu_run / "plots" / "recon_statistics").mkdir(parents=True)
+            (eu_run / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
+            (eu_run / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
+            (eu_run / "plots" / "gen_variance").mkdir(parents=True)
+            (eu_run / "plots" / "gen_variance" / "gen_variance_1.0.png").write_bytes(b"x")
+    run_dir_dm_1 = tmp_path / "seed_0" / "distmap" / "1"
+    (run_dir_dm_1 / "plots" / "recon_statistics").mkdir(parents=True)
+    (run_dir_dm_1 / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
+    (run_dir_dm_1 / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
+    (run_dir_dm_1 / "plots" / "gen_variance").mkdir(parents=True)
+    (run_dir_dm_1 / "plots" / "gen_variance" / "gen_variance_1.0.png").write_bytes(b"x")
+    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=False,
+        do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
+        plot_variances=[1.0], variance_list=[], num_samples_list=[])
+    assert needs.need_coords is True
+    assert needs.need_exp_stats is False
+    assert needs.need_train_test_stats is False
+
+
+def test_pipeline_data_needs_only_gen_variance_missing(tmp_path, cfg):
+    """When only gen_variance plot is missing, need_coords is False, need_exp_stats is True."""
+    dm_groups, eu_groups = _all_runs_complete_layout(tmp_path, cfg)
+    for ri in (0, 1):
+        run_dir_dm = tmp_path / "seed_0" / "distmap" / str(ri)
+        (run_dir_dm / "plots" / "reconstruction").mkdir(parents=True)
+        (run_dir_dm / "plots" / "reconstruction" / "reconstruction.png").write_bytes(b"x")
+        (run_dir_dm / "plots" / "recon_statistics").mkdir(parents=True)
+        (run_dir_dm / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
+        (run_dir_dm / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
+        for euri in (0, 1):
+            eu_run = tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri)
+            (eu_run / "plots" / "reconstruction").mkdir(parents=True)
+            (eu_run / "plots" / "reconstruction" / "reconstruction.png").write_bytes(b"x")
+            (eu_run / "plots" / "recon_statistics").mkdir(parents=True)
+            (eu_run / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
+            (eu_run / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
+    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=False,
+        do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
+        plot_variances=[1.0], variance_list=[], num_samples_list=[])
+    assert needs.need_coords is False
+    assert needs.need_exp_stats is True
+    assert needs.need_train_test_stats is True
+
+
+def test_pipeline_data_needs_run_incomplete_sets_need_coords(tmp_path, cfg):
+    """When any run is incomplete, need_coords is True."""
+    dm_groups, eu_groups = _get_dm_eu_groups(cfg)
+    (tmp_path / "seed_0").mkdir()
+    d = tmp_path / "seed_0" / "distmap" / "0" / "model"
+    d.mkdir(parents=True)
+    save_run_config({"distmap": {"epochs": 1}}, str(d), last_epoch_trained=0, best_epoch=0, best_val=0.5)
+    (d / "model.pt").write_bytes(b"x")
+    for euri in (0, 1):
+        ed = tmp_path / "seed_0" / "distmap" / "0" / "euclideanizer" / str(euri) / "model"
+        ed.mkdir(parents=True)
+        save_run_config({"euclideanizer": {"epochs": 1}}, str(ed), last_epoch_trained=1, best_epoch=1, best_val=0.5)
+        (ed / "euclideanizer.pt").write_bytes(b"x")
+        (ed / "euclideanizer_last.pt").write_bytes(b"x")
+    d1 = tmp_path / "seed_0" / "distmap" / "1" / "model"
+    d1.mkdir(parents=True)
+    save_run_config({"distmap": {"epochs": 2}}, str(d1), last_epoch_trained=2, best_epoch=1, best_val=0.5)
+    (d1 / "model.pt").write_bytes(b"x")
+    (d1 / "model_last.pt").write_bytes(b"x")
+    for euri in (0, 1):
+        ed = tmp_path / "seed_0" / "distmap" / "1" / "euclideanizer" / str(euri) / "model"
+        ed.mkdir(parents=True)
+        save_run_config({"euclideanizer": {"epochs": 1}}, str(ed), last_epoch_trained=1, best_epoch=1, best_val=0.5)
+        (ed / "euclideanizer.pt").write_bytes(b"x")
+        (ed / "euclideanizer_last.pt").write_bytes(b"x")
+    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_min_rmsd=False,
+        do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
+        plot_variances=[], variance_list=[], num_samples_list=[])
+    assert needs.need_coords is True
+    assert needs.need_exp_stats is False
+    assert needs.need_train_test_stats is False
 
 
 # ---------------------------------------------------------------------------

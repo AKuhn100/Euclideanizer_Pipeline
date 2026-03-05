@@ -74,15 +74,27 @@ def load_data(gro_file: str) -> np.ndarray:
     return out
 
 
-def get_device() -> torch.device:
-    """Return the best available device: MPS, CUDA, or CPU."""
+def get_available_cuda_count() -> int:
+    """Return the number of available CUDA devices (0 if CUDA not available)."""
+    return torch.cuda.device_count() if torch.cuda.is_available() else 0
+
+
+def get_device(device_index: int | None = None) -> torch.device:
+    """Return the best available device: MPS, CUDA, or CPU.
+    If device_index is not None and CUDA is available, return cuda:device_index (must be < device_count).
+    """
+    if device_index is not None:
+        if not torch.cuda.is_available():
+            return torch.device("cpu")
+        n = torch.cuda.device_count()
+        if device_index < 0 or device_index >= n:
+            raise ValueError(f"device_index must be in [0, {n}), got {device_index}")
+        return torch.device(f"cuda:{device_index}")
     if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
-    return device
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
 def get_distmaps(coords: torch.Tensor) -> torch.Tensor:

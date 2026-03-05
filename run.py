@@ -14,12 +14,15 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import multiprocessing
 import os
 import shutil
 import sys
 import traceback
+import zipfile
 import zlib
 import time
+from dataclasses import dataclass
 from datetime import datetime
 import numpy as np
 
@@ -67,6 +70,9 @@ from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
 _LOG_FILE = None
+# When set in the main process, writes to _LOG_FILE are serialized with this lock.
+# Spawned workers do not use it; each opens its own handle to the same log file.
+_LOG_LOCK = None
 # Stdout/stderr before wrapping; restored on exit.
 _pipeline_real_stdout = None
 _pipeline_real_stderr = None
@@ -225,16 +231,28 @@ def _log(msg: str, since_start: float | None = None, since_phase: float | None =
         line = "        " + msg
     print(_style(line, style))
     if _LOG_FILE is not None:
-        _LOG_FILE.write(line + "\n")
-        _LOG_FILE.flush()
+        if _LOG_LOCK is not None:
+            _LOG_LOCK.acquire()
+        try:
+            _LOG_FILE.write(line + "\n")
+            _LOG_FILE.flush()
+        finally:
+            if _LOG_LOCK is not None:
+                _LOG_LOCK.release()
 
 
 def _log_raw(line: str, style: str | None = None) -> None:
     """Write a raw line (e.g. separator) to stdout (styled when TTY) and log file (plain)."""
     print(_style(line, style))
     if _LOG_FILE is not None:
-        _LOG_FILE.write(line + "\n")
-        _LOG_FILE.flush()
+        if _LOG_LOCK is not None:
+            _LOG_LOCK.acquire()
+        try:
+            _LOG_FILE.write(line + "\n")
+            _LOG_FILE.flush()
+        finally:
+            if _LOG_LOCK is not None:
+                _LOG_LOCK.release()
 
 
 # Output layout: run_root/model/ (model.pt or euclideanizer.pt), run_root/plots/<type>/ (PNG and optional data/*.npz)
@@ -263,6 +281,24 @@ def _base_has_any_seed_pipeline_content(base_output_dir: str, seeds: list) -> bo
     return False
 
 
+def _load_exp_stats_cache_meta(base_output_dir: str, data_path: str) -> dict | None:
+    """Load base exp_stats cache meta; validate against data_path. Returns meta dict (num_structures, num_atoms, data_path) or None."""
+    cache_dir = _exp_stats_cache_dir(base_output_dir)
+    meta_path = os.path.join(cache_dir, EXP_STATS_META)
+    if not os.path.isfile(meta_path):
+        return None
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        if meta.get("data_path") != os.path.abspath(data_path):
+            return None
+        if "num_structures" not in meta or "num_atoms" not in meta:
+            return None
+        return meta
+    except (json.JSONDecodeError, OSError, KeyError):
+        return None
+
+
 def _load_exp_stats_cache(output_dir: str, data_path: str, num_structures: int, num_atoms: int) -> dict | None:
     """Load experimental statistics from cache if present and valid for this dataset."""
     cache_dir = _exp_stats_cache_dir(output_dir)
@@ -279,8 +315,43 @@ def _load_exp_stats_cache(output_dir: str, data_path: str, num_structures: int, 
             return None
         with np.load(npz_path, allow_pickle=False) as data:
             return {k: data[k] for k in data.files}
-    except (json.JSONDecodeError, OSError, KeyError, zlib.error):
+    except (json.JSONDecodeError, OSError, KeyError, zlib.error, zipfile.BadZipFile):
         return None
+
+
+def _try_load_stats_only(
+    base_output_dir: str,
+    data_path: str,
+    seeds: list,
+    training_split: float,
+) -> tuple[dict | None, int | None, int | None]:
+    """
+    Load exp_stats and train/test caches without loading coords.
+    Requires base cache meta to match data_path and all seeds to have valid train/test cache.
+    Returns (exp_stats, num_atoms, num_structures) or (None, None, None) if stats-only load is not possible.
+    """
+    meta = _load_exp_stats_cache_meta(base_output_dir, data_path)
+    if meta is None:
+        return None, None, None
+    num_structures = int(meta["num_structures"])
+    num_atoms = int(meta["num_atoms"])
+    cache_dir = _exp_stats_cache_dir(base_output_dir)
+    npz_path = os.path.join(cache_dir, EXP_STATS_NPZ)
+    if not os.path.isfile(npz_path):
+        return None, None, None
+    try:
+        with np.load(npz_path, allow_pickle=False) as data:
+            exp_stats = {k: data[k] for k in data.files}
+    except (OSError, zlib.error, zipfile.BadZipFile):
+        return None, None, None
+    for seed in seeds:
+        output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        train_s, test_s = _load_exp_stats_split_cache(
+            output_dir, data_path, num_structures, num_atoms, seed, training_split
+        )
+        if train_s is None or test_s is None:
+            return None, None, None
+    return exp_stats, num_atoms, num_structures
 
 
 def _save_exp_stats_cache(output_dir: str, data_path: str, num_structures: int, num_atoms: int, exp_stats: dict) -> None:
@@ -328,7 +399,7 @@ def _load_exp_stats_split_cache(
         with np.load(test_path, allow_pickle=False) as data:
             test_stats = {k: data[k] for k in data.files}
         return train_stats, test_stats
-    except (json.JSONDecodeError, OSError, KeyError, zlib.error):
+    except (json.JSONDecodeError, OSError, KeyError, zlib.error, zipfile.BadZipFile):
         return None, None
 
 
@@ -609,11 +680,57 @@ def _pipeline_need_data(
     variance_list: list,
     num_samples_list: list,
 ) -> bool:
-    """True if any run is incomplete or any plot/analysis output is missing (so we must load data). Uses completion check without section match so older run_configs (e.g. missing optional keys) still count as complete."""
+    """True if any run is incomplete or any plot/analysis output is missing (so we must load something)."""
+    return _pipeline_data_needs(
+        base_output_dir, seeds, dm_groups, eu_groups,
+        resume, do_plot, do_min_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen,
+        plot_variances, variance_list, num_samples_list,
+    ).need_any()
+
+
+@dataclass(frozen=True)
+class PipelineDataNeeds:
+    """What the pipeline must load for resume: only coords, only stats from cache, or both."""
+
+    need_coords: bool  # training, reconstruction, recon_statistics, min_rmsd, or video frames
+    need_exp_stats: bool  # gen_variance (full exp_stats)
+    need_train_test_stats: bool  # recon_statistics or gen_variance (train/test split stats)
+
+    def need_any(self) -> bool:
+        return self.need_coords or self.need_exp_stats or self.need_train_test_stats
+
+
+def _pipeline_data_needs(
+    base_output_dir: str,
+    seeds: list,
+    dm_groups: list,
+    eu_groups: list,
+    resume: bool,
+    do_plot: bool,
+    do_min_rmsd: bool,
+    do_recon_plot: bool,
+    do_bond_rg_scaling: bool,
+    do_avg_gen: bool,
+    plot_variances: list,
+    variance_list: list,
+    num_samples_list: list,
+) -> PipelineDataNeeds:
+    """
+    Scan pipeline outputs and return which data is required.
+    - need_coords: any run incomplete, or any reconstruction / recon_statistics / min_rmsd missing.
+    - need_exp_stats: any gen_variance plot missing.
+    - need_train_test_stats: any recon_statistics or gen_variance missing.
+    """
+    need_coords = False
+    need_exp_stats = False
+    need_train_test_stats = False
     for seed in seeds:
         output_dir = os.path.join(base_output_dir, f"seed_{seed}")
         if not os.path.isdir(output_dir):
-            return True
+            need_coords = True
+            need_exp_stats = need_exp_stats or do_plot and do_avg_gen
+            need_train_test_stats = need_train_test_stats or (do_plot and (do_bond_rg_scaling or do_avg_gen))
+            continue
         for group in dm_groups:
             base_config, checkpoints = group["base_config"], group["checkpoints"]
             checkpoint_dirs = [os.path.join(output_dir, "distmap", str(ri)) for ri, _ in checkpoints]
@@ -631,11 +748,20 @@ def _pipeline_need_data(
                     is_last_segment=dm_last,
                     save_final_models_per_stretch=dm_save_final,
                 ):
-                    return True
-                if do_plot and not _distmap_plotting_all_present(
-                    run_dir_dm, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, plot_variances
-                ):
-                    return True
+                    need_coords = True
+                if do_plot:
+                    if do_recon_plot and (not resume or not os.path.isfile(_plot_path(run_dir_dm, "reconstruction"))):
+                        need_coords = True
+                    if do_bond_rg_scaling:
+                        for name in ("test", "train"):
+                            if not resume or not os.path.isfile(_plot_path(run_dir_dm, "recon_statistics", subset=name)):
+                                need_coords = True
+                                need_train_test_stats = True
+                    if do_avg_gen:
+                        for var in plot_variances:
+                            if not resume or not os.path.isfile(_plot_path(run_dir_dm, "gen_variance", var=str(var))):
+                                need_exp_stats = True
+                                need_train_test_stats = True
             for egidx, eu_group in enumerate(eu_groups):
                 eu_base = eu_group["base_config"]
                 eu_checkpoints = eu_group["checkpoints"]
@@ -655,14 +781,23 @@ def _pipeline_need_data(
                             is_last_segment=eu_last,
                             save_final_models_per_stretch=eu_save_final,
                         ):
-                            return True
-                        if do_plot and not _euclideanizer_plotting_all_present(
-                            eu_run_dir, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, plot_variances
-                        ):
-                            return True
-                        if not _euclideanizer_analysis_all_present(eu_run_dir, resume, do_min_rmsd, variance_list, num_samples_list):
-                            return True
-    return False
+                            need_coords = True
+                        if do_plot:
+                            if do_recon_plot and (not resume or not os.path.isfile(_plot_path(eu_run_dir, "reconstruction"))):
+                                need_coords = True
+                            if do_bond_rg_scaling:
+                                for name in ("test", "train"):
+                                    if not resume or not os.path.isfile(_plot_path(eu_run_dir, "recon_statistics", subset=name)):
+                                        need_coords = True
+                                        need_train_test_stats = True
+                            if do_avg_gen:
+                                for var in plot_variances:
+                                    if not resume or not os.path.isfile(_plot_path(eu_run_dir, "gen_variance", var=str(var))):
+                                        need_exp_stats = True
+                                        need_train_test_stats = True
+                        if do_min_rmsd and not _euclideanizer_analysis_all_present(eu_run_dir, resume, do_min_rmsd, variance_list, num_samples_list):
+                            need_coords = True
+    return PipelineDataNeeds(need_coords=need_coords, need_exp_stats=need_exp_stats, need_train_test_stats=need_train_test_stats)
 
 
 def _video_frames_dir(run_root: str) -> str:
@@ -681,6 +816,8 @@ def _parse_args():
     p.add_argument("--no-plots", action="store_true", help="Disable all plotting")
     p.add_argument("--no-resume", action="store_true", help="Do not resume; overwrite existing run outputs")
     p.add_argument("--yes-overwrite", action="store_true", help="With --no-resume: skip confirmation prompt (use for SLURM/scripted runs)")
+    p.add_argument("--no-multi-gpu", action="store_true", dest="no_multi_gpu", help="Disable multi-GPU parallelization even when 2+ CUDA devices are available")
+    p.add_argument("--gpus", type=int, default=None, metavar="N", help="Use at most N CUDA devices for multi-GPU (default: use all available)")
     p.add_argument("--output-dir", type=str, default=None, dest="output_dir", help="Output directory")
     # DistMap
     p.add_argument("--distmap.beta_kl", type=float, nargs="*", default=None, dest="distmap_beta_kl")
@@ -803,6 +940,452 @@ def _force_gpu_cleanup(device: torch.device) -> None:
         torch.cuda.empty_cache()
 
 
+def _run_one_distmap_group(
+    seed: int,
+    gidx: int,
+    device,
+    cfg: dict,
+    base_output_dir: str,
+    dm_groups: list,
+    eu_groups: list,
+    dm_configs: list,
+    eu_configs: list,
+    coords,
+    coords_np,
+    num_atoms: int | None,
+    num_structures: int | None,
+    exp_stats,
+    data_path: str | None,
+    need_train: bool,
+    pipeline_start: float,
+    training_split: float,
+    do_plot: bool,
+    do_recon_plot: bool,
+    do_bond_rg_scaling: bool,
+    do_avg_gen: bool,
+    do_min_rmsd: bool,
+    resume: bool,
+    sample_variances: list,
+    gen_num_samples: int,
+    gen_decode_batch_size: int,
+    need_plot_or_rmsd: bool,
+    save_structures_gro_plot: bool,
+    analysis_save_data: bool,
+    analysis_save_structures_gro: bool,
+    plot_dpi: int,
+    save_pdf: bool,
+    save_plot_data: bool,
+    num_recon_samples: int,
+    analysis_cfg: dict,
+    variance_list: list,
+    num_samples_list: list,
+    vis_enabled: bool,
+    vis_cfg: dict,
+    plot_cfg: dict,
+    train_stats,
+    test_stats,
+    seed_test_to_train_holder: list,
+    make_distmap_epoch_hook=None,
+    make_euclideanizer_epoch_hook=None,
+    assemble_video_fn=None,
+) -> None:
+    """Run one (seed, DistMap group): that group's segments, plotting, and all Euclideanizer runs for that DistMap."""
+    output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+    split_seed = seed
+    group = dm_groups[gidx]
+    base_config = group["base_config"]
+    checkpoints = group["checkpoints"]
+    checkpoint_dirs = [os.path.join(output_dir, "distmap", str(ri)) for ri, _ in checkpoints]
+    dm_max_epoch = max(ev for _, ev in checkpoints)
+    prev_dm_path = None
+    prev_dm_ev = None
+    
+    for seg_idx, (ri, ev) in enumerate(checkpoints):
+        run_dir_dm = checkpoint_dirs[seg_idx]
+        dm_path = _dm_path(run_dir_dm)
+        dm_cfg = {**base_config, "epochs": ev}
+    
+        phase_start = time.time()
+        dm_multi = len(checkpoints) > 1
+        dm_save_final = base_config["save_final_models_per_stretch"]
+        dm_last_segment = seg_idx == len(checkpoints) - 1
+        dm_act = _distmap_training_action(
+            run_dir_dm, ev, dm_cfg,
+            prev_dm_path, prev_dm_ev,
+            checkpoint_dirs[seg_idx - 1] if seg_idx > 0 else None,
+            resume, dm_multi, dm_last_segment, dm_save_final,
+        )
+        if dm_act["action"] == "skip":
+            _log(f"DistMap run {ri} (epochs={ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
+            prev_dm_path = dm_path
+            prev_dm_ev = ev
+        else:
+            if vis_enabled:
+                fd_dm = _video_frames_dir(run_dir_dm)
+                if os.path.isdir(fd_dm):
+                    shutil.rmtree(fd_dm)
+            if dm_act["action"] == "from_scratch":
+                _log(f"DistMap run {ri}: training from scratch to {ev} epochs...", since_start=time.time() - pipeline_start, style="info")
+                epoch_cb = None
+                if vis_enabled and make_distmap_epoch_hook is not None:
+                    epoch_cb, _ = make_distmap_epoch_hook(
+                        coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, total_epochs_display=dm_max_epoch
+                    )
+                else:
+                    epoch_cb = None
+                train_distmap(
+                    dm_cfg, device, coords, run_dir_dm,
+                    split_seed=split_seed, training_split=training_split,
+                    epoch_callback=epoch_cb,
+                    plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    memory_efficient=dm_cfg["memory_efficient"],
+                    is_last_segment=dm_last_segment,
+                    display_root=base_output_dir,
+                )
+            elif dm_act["action"] == "resume_from_best":
+                _log(f"DistMap run {ri}: resuming from best (epoch {dm_act['best_epoch']}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
+                epoch_cb = None
+                if vis_enabled and make_distmap_epoch_hook is not None:
+                    epoch_cb, _ = make_distmap_epoch_hook(
+                        coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=dm_act["best_epoch"], total_epochs_display=dm_max_epoch
+                    )
+                train_distmap(
+                    dm_cfg, device, coords, run_dir_dm,
+                    split_seed=split_seed, training_split=training_split,
+                    epoch_callback=epoch_cb,
+                    plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    resume_from_path=dm_act["resume_from_path"], additional_epochs=dm_act["additional_epochs"],
+                    prev_run_dir=dm_act["prev_run_dir"],
+                    save_final_models_per_stretch=dm_save_final,
+                    is_last_segment=dm_last_segment,
+                    memory_efficient=dm_cfg["memory_efficient"],
+                    display_root=base_output_dir,
+                )
+            else:
+                _log(f"DistMap run {ri}: resuming from run (epochs={prev_dm_ev}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
+                epoch_cb = None
+                if vis_enabled and make_distmap_epoch_hook is not None:
+                    epoch_cb, _ = make_distmap_epoch_hook(
+                        coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=prev_dm_ev, total_epochs_display=dm_max_epoch
+                    )
+                train_distmap(
+                    dm_cfg, device, coords, run_dir_dm,
+                    split_seed=split_seed, training_split=training_split,
+                    epoch_callback=epoch_cb,
+                    plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    resume_from_path=dm_act["resume_from_path"], additional_epochs=dm_act["additional_epochs"],
+                    prev_run_dir=dm_act["prev_run_dir"],
+                    save_final_models_per_stretch=dm_save_final,
+                    is_last_segment=dm_last_segment,
+                    memory_efficient=dm_cfg["memory_efficient"],
+                    display_root=base_output_dir,
+                )
+            prev_dm_path = dm_path
+            prev_dm_ev = ev
+            _log(f"DistMap {ri}: training done in {(time.time() - phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    
+        if vis_enabled:
+            fd_dm = _video_frames_dir(run_dir_dm)
+            if os.path.isdir(fd_dm):
+                _log(f"Assembling video for DistMap {ri}...", since_start=time.time() - pipeline_start, style="info")
+                ok, fail_reason = assemble_video_fn(fd_dm, _video_mp4_path(run_dir_dm), vis_cfg["fps"])
+                if ok:
+                    if vis_cfg["delete_frames_after_video"]:
+                        shutil.rmtree(fd_dm)
+                    _log(f"DistMap {ri}: video saved.", since_start=time.time() - pipeline_start, style="success")
+                else:
+                    _log(f"DistMap {ri}: video assembly failed — {fail_reason}. Frames kept in {fd_dm}.", since_start=time.time() - pipeline_start, style="error")
+            else:
+                _log(f"DistMap {ri}: no frames dir (video skipped).", since_start=time.time() - pipeline_start, style="skip")
+    
+        if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
+            if _distmap_plotting_all_present(
+                run_dir_dm, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
+            ):
+                _log(f"DistMap {ri}: [skip] plotting (all present)", since_start=time.time() - pipeline_start, style="skip")
+            else:
+                _force_gpu_cleanup(device)
+                phase_start = time.time()
+                _log(f"DistMap {ri}: plotting (recon, stats, gen)...", since_start=time.time() - pipeline_start, style="info")
+                model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=dm_cfg["latent_dim"]).to(device)
+                model.load_state_dict(torch.load(dm_path, map_location=device))
+                if do_recon_plot and coords is not None:
+                    p = _plot_path(run_dir_dm, "reconstruction")
+                    if not (resume and os.path.isfile(p)):
+                        plot_distmap_reconstruction(
+                            model, device, coords, utils, p,
+                            training_split=training_split, split_seed=split_seed,
+                            batch_size=dm_cfg["batch_size"], num_to_plot=num_recon_samples, dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                            display_root=base_output_dir,
+                        )
+                    elif resume:
+                        _log("  [skip] reconstruction", since_start=time.time() - pipeline_start, style="skip")
+                if do_bond_rg_scaling and train_stats is not None and test_stats is not None and coords is not None:
+                    for subset_name, use_train, stats in [("test", False, test_stats), ("train", True, train_stats)]:
+                        p = _plot_path(run_dir_dm, "recon_statistics", subset=subset_name)
+                        if not (resume and os.path.isfile(p)):
+                            recon_dm = _get_recon_dm_distmap(model, device, coords, dm_cfg, training_split, split_seed, utils, use_train=use_train)
+                            plot_recon_statistics(
+                                recon_dm, stats, p,
+                                label_recon="VAE Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                subset_label=subset_name,
+                                display_root=base_output_dir,
+                            )
+                        elif resume:
+                            _log(f"  [skip] recon_statistics_{subset_name}", since_start=time.time() - pipeline_start, style="skip")
+                if do_avg_gen and train_stats is not None and test_stats is not None:
+                    for var in sample_variances:
+                        p = _plot_path(run_dir_dm, "gen_variance", var=str(var))
+                        if not (resume and os.path.isfile(p)):
+                            gen_dm = _get_gen_dm_distmap(model, device, gen_num_samples, dm_cfg["latent_dim"], var, gen_decode_batch_size)
+                            plot_gen_analysis(
+                                exp_stats, train_stats, test_stats, gen_dm, p,
+                                sample_variance=var, label_gen="VAE Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                display_root=base_output_dir,
+                            )
+                        elif resume:
+                            _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
+                del model
+                torch.cuda.empty_cache()
+                _log(f"DistMap {ri}: plotting done in {(time.time() - phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    
+        _log(f"DistMap {ri}: starting Euclideanizer runs", since_start=time.time() - pipeline_start, style="info")
+        for egidx, eu_group in enumerate(eu_groups):
+            eu_base = eu_group["base_config"]
+            eu_checkpoints = eu_group["checkpoints"]
+            eu_checkpoint_dirs = [os.path.join(output_dir, "distmap", str(ri), "euclideanizer", str(euri)) for euri, _ in eu_checkpoints]
+            eu_max_epoch = max(ev for _, ev in eu_checkpoints)
+            prev_eu_path = None
+            prev_eu_ev = None
+            for eu_seg_idx, (euri, eu_ev) in enumerate(eu_checkpoints):
+                eu_run_dir = eu_checkpoint_dirs[eu_seg_idx]
+                eu_path_seg = _eu_path(eu_run_dir)
+                eu_cfg_seg = {**eu_base, "epochs": eu_ev}
+                eu_multi = len(eu_checkpoints) > 1
+                eu_save_final = eu_base["save_final_models_per_stretch"]
+                eu_last_segment = eu_seg_idx == len(eu_checkpoints) - 1
+                eu_act = _euclideanizer_training_action(
+                    eu_run_dir, eu_ev, eu_cfg_seg,
+                    prev_eu_path, prev_eu_ev,
+                    eu_checkpoint_dirs[eu_seg_idx - 1] if eu_seg_idx > 0 else None,
+                    resume, eu_multi, eu_last_segment, eu_save_final,
+                )
+                if eu_act["action"] == "skip":
+                    _log(f"Euclideanizer run {euri} (DistMap {ri}, epochs={eu_ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
+                    prev_eu_path = eu_path_seg
+                    prev_eu_ev = eu_ev
+                else:
+                    if vis_enabled:
+                        fd_eu_pre = _video_frames_dir(eu_run_dir)
+                        if os.path.isdir(fd_eu_pre):
+                            shutil.rmtree(fd_eu_pre)
+                    if eu_act["action"] == "from_scratch":
+                        _log(f"Euclideanizer run {euri} (DistMap {ri}): training from scratch to {eu_ev} epochs...", since_start=time.time() - pipeline_start, style="info")
+                        epoch_cb = None
+                        if vis_enabled:
+                            epoch_cb, _ = make_euclideanizer_epoch_hook(
+                                coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, total_epochs_display=eu_max_epoch
+                            )
+                        train_euclideanizer(
+                            eu_cfg_seg, device, coords, dm_path, eu_run_dir,
+                            split_seed=split_seed, training_split=training_split,
+                            frozen_latent_dim=dm_cfg["latent_dim"],
+                            epoch_callback=epoch_cb,
+                            plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                            memory_efficient=eu_cfg_seg["memory_efficient"],
+                            is_last_segment=eu_last_segment,
+                            display_root=base_output_dir,
+                        )
+                    elif eu_act["action"] == "resume_from_best":
+                        _log(f"Euclideanizer run {euri} (DistMap {ri}): resuming from best (epoch {eu_act['best_epoch']}), training {eu_act['additional_epochs']} more → {eu_ev} total...", since_start=time.time() - pipeline_start, style="info")
+                        epoch_cb = None
+                        if vis_enabled:
+                            epoch_cb, _ = make_euclideanizer_epoch_hook(
+                                coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=eu_act["best_epoch"], total_epochs_display=eu_max_epoch
+                            )
+                        train_euclideanizer(
+                            eu_cfg_seg, device, coords, dm_path, eu_run_dir,
+                            split_seed=split_seed, training_split=training_split,
+                            frozen_latent_dim=dm_cfg["latent_dim"],
+                            epoch_callback=epoch_cb,
+                            plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                            resume_from_path=eu_act["resume_from_path"], additional_epochs=eu_act["additional_epochs"],
+                            prev_run_dir=eu_act["prev_run_dir"],
+                            save_final_models_per_stretch=eu_save_final,
+                            is_last_segment=eu_last_segment,
+                            memory_efficient=eu_cfg_seg["memory_efficient"],
+                            display_root=base_output_dir,
+                        )
+                    else:
+                        _log(f"Euclideanizer run {euri} (DistMap {ri}): resuming from {prev_eu_ev} epochs, training {eu_act['additional_epochs']} more → {eu_ev} total...", since_start=time.time() - pipeline_start, style="info")
+                        epoch_cb = None
+                        if vis_enabled:
+                            epoch_cb, _ = make_euclideanizer_epoch_hook(
+                                coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=prev_eu_ev, total_epochs_display=eu_max_epoch
+                            )
+                        train_euclideanizer(
+                            eu_cfg_seg, device, coords, dm_path, eu_run_dir,
+                            split_seed=split_seed, training_split=training_split,
+                            frozen_latent_dim=dm_cfg["latent_dim"],
+                            epoch_callback=epoch_cb,
+                            plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                            resume_from_path=eu_act["resume_from_path"], additional_epochs=eu_act["additional_epochs"],
+                            prev_run_dir=eu_act["prev_run_dir"],
+                            save_final_models_per_stretch=eu_save_final,
+                            is_last_segment=eu_last_segment,
+                            memory_efficient=eu_cfg_seg["memory_efficient"],
+                            display_root=base_output_dir,
+                        )
+                    prev_eu_path = eu_path_seg
+                    prev_eu_ev = eu_ev
+    
+                if vis_enabled:
+                    fd_eu = _video_frames_dir(eu_run_dir)
+                    if os.path.isdir(fd_eu):
+                        _log(f"Assembling video for Euclideanizer {euri} (DistMap {ri}, epochs={eu_ev})...", since_start=time.time() - pipeline_start, style="info")
+                        ok, fail_reason = assemble_video_fn(fd_eu, _video_mp4_path(eu_run_dir), vis_cfg["fps"])
+                        if ok:
+                            if vis_cfg["delete_frames_after_video"]:
+                                shutil.rmtree(fd_eu)
+                            _log(f"Euclideanizer {euri} (DistMap {ri}): video saved.", since_start=time.time() - pipeline_start, style="success")
+                        else:
+                            _log(f"Euclideanizer {euri} (DistMap {ri}): video assembly failed — {fail_reason}.", since_start=time.time() - pipeline_start, style="error")
+    
+                if need_plot_or_rmsd:
+                    run_dir_eu = eu_run_dir
+                    eu_cfg = eu_configs[euri]
+                    eu_path = eu_path_seg
+                    all_plots = _euclideanizer_plotting_all_present(
+                        run_dir_eu, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
+                    )
+                    all_analysis = _euclideanizer_analysis_all_present(
+                        run_dir_eu, resume, do_min_rmsd, variance_list, num_samples_list
+                    )
+                    if resume and all_plots and all_analysis:
+                        _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): [skip] plotting and analysis (all present)", since_start=time.time() - pipeline_start, style="skip")
+                    else:
+                        _force_gpu_cleanup(device)
+                        phase_start_eu = time.time()
+                        frozen_vae = load_frozen_vae(dm_path, num_atoms, dm_cfg["latent_dim"], device)
+                        embed = Euclideanizer(num_atoms=num_atoms).to(device)
+                        embed.load_state_dict(torch.load(eu_path, map_location=device))
+    
+                        if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
+                            plot_phase_start = time.time()
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting (diagnostics)...", since_start=time.time() - pipeline_start, style="info")
+                            if do_recon_plot and coords is not None:
+                                p = _plot_path(run_dir_eu, "reconstruction")
+                                if not (resume and os.path.isfile(p)):
+                                    plot_euclideanizer_reconstruction(
+                                        embed, frozen_vae, device, coords, utils, p,
+                                        training_split=training_split, split_seed=split_seed,
+                                        batch_size=eu_cfg["batch_size"], num_to_plot=num_recon_samples, dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                        display_root=base_output_dir,
+                                    )
+                                elif resume:
+                                    _log("  [skip] reconstruction", since_start=time.time() - pipeline_start, style="skip")
+                            if do_bond_rg_scaling and train_stats is not None and test_stats is not None and coords is not None:
+                                for subset_name, use_train, stats in [("test", False, test_stats), ("train", True, train_stats)]:
+                                    p = _plot_path(run_dir_eu, "recon_statistics", subset=subset_name)
+                                    if not (resume and os.path.isfile(p)):
+                                        recon_dm = _get_recon_dm_euclideanizer(embed, frozen_vae, device, coords, eu_cfg, training_split, split_seed, utils, use_train=use_train)
+                                        plot_recon_statistics(
+                                            recon_dm, stats, p,
+                                            label_recon="Eucl. Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                            subset_label=subset_name,
+                                            display_root=base_output_dir,
+                                        )
+                                    elif resume:
+                                        _log(f"  [skip] recon_statistics_{subset_name}", since_start=time.time() - pipeline_start, style="skip")
+                            if do_avg_gen and train_stats is not None and test_stats is not None:
+                                for var in sample_variances:
+                                    p = _plot_path(run_dir_eu, "gen_variance", var=str(var))
+                                    if not (resume and os.path.isfile(p)):
+                                        if save_structures_gro_plot:
+                                            gen_dm, gen_coords_np = _get_gen_dm_euclideanizer(
+                                                embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], var, utils, gen_decode_batch_size,
+                                                return_coords=True,
+                                            )
+                                            structures_dir = os.path.join(run_dir_eu, "plots", "gen_variance", "structures", str(var))
+                                            write_structures_gro(gen_coords_np, structures_dir, display_root=base_output_dir)
+                                        else:
+                                            gen_dm = _get_gen_dm_euclideanizer(
+                                                embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], var, utils, gen_decode_batch_size
+                                            )
+                                        plot_gen_analysis(
+                                            exp_stats, train_stats, test_stats, gen_dm, p,
+                                            sample_variance=var, label_gen="Euclideanizer", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                            display_root=base_output_dir,
+                                        )
+                                    elif resume:
+                                        _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    
+                        if do_min_rmsd and coords is not None:
+                            if seed_test_to_train_holder[0] is None:
+                                _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
+                                seed_test_to_train_holder[0] = get_or_compute_test_to_train_rmsd(
+                                    coords_np, coords, training_split, split_seed,
+                                    _cache_path,
+                                    query_batch_size=analysis_cfg["min_rmsd_query_batch_size"],
+                                    display_root=base_output_dir,
+                                )
+                            _tt, _train_c, _test_c = seed_test_to_train_holder[0]
+                            analysis_phase_start = time.time()
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD)...", since_start=time.time() - pipeline_start, style="info")
+                            plot_cfg_analysis = {
+                                **analysis_cfg,
+                                "plot_dpi": plot_dpi,
+                                "save_plot_data": save_plot_data,
+                                "save_data": analysis_save_data,
+                                "save_structures_gro": analysis_save_structures_gro,
+                            }
+                            for var in variance_list:
+                                variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
+                                any_missing = False
+                                for n in num_samples_list:
+                                    run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
+                                    fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"{run_name}/min_rmsd_distributions.png")
+                                    if not (resume and os.path.isfile(fig_path)):
+                                        any_missing = True
+                                        break
+                                if any_missing:
+                                    if len(num_samples_list) > 1:
+                                        run_min_rmsd_analysis_multi(
+                                            coords_np, coords, training_split, split_seed,
+                                            frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                            plot_cfg_analysis,
+                                            num_samples_list=num_samples_list,
+                                            sample_variance=var,
+                                            variance_suffix=variance_suffix,
+                                            display_root=base_output_dir,
+                                            precomputed_test_to_train=_tt,
+                                            train_coords_np=_train_c,
+                                            test_coords_np=_test_c,
+                                        )
+                                    else:
+                                        n = num_samples_list[0]
+                                        run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(num_samples_list) > 1) else "default"
+                                        output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
+                                        run_min_rmsd_analysis(
+                                            coords_np, coords, training_split, split_seed,
+                                            frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                            plot_cfg_analysis,
+                                            num_samples=n, sample_variance=var, output_suffix=output_suffix,
+                                            display_root=base_output_dir,
+                                            precomputed_test_to_train=_tt,
+                                            train_coords_np=_train_c,
+                                            test_coords_np=_test_c,
+                                        )
+                                else:
+                                    _log(f"  [skip] min_rmsd variance={var}", since_start=time.time() - pipeline_start, style="skip")
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    
+                        del embed, frozen_vae
+                        torch.cuda.empty_cache()
+                        _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+
+
 def _run_one_seed(
     seed: int,
     cfg: dict,
@@ -862,423 +1445,45 @@ def _run_one_seed(
     _log(f"Seed {seed}  output_dir={output_dir}", since_start=time.time() - pipeline_start, style="info")
 
     train_stats = test_stats = None
-    if data_path and coords is not None and (do_plot or do_min_rmsd):
+    if data_path and (do_plot or do_min_rmsd) and (coords is not None or (num_structures is not None and num_atoms is not None)):
         train_stats, test_stats = _load_exp_stats_split_cache(
             output_dir, data_path, num_structures, num_atoms, split_seed, training_split
         )
         if train_stats is None or test_stats is None:
-            train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
-            train_indices = np.array(train_ds.indices)
-            test_indices = np.array(test_ds.indices)
-            _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
-            train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
-            test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
-            _save_exp_stats_split_cache(
-                output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
-                train_stats, test_stats,
-            )
+            if coords is not None:
+                train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
+                train_indices = np.array(train_ds.indices)
+                test_indices = np.array(test_ds.indices)
+                _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
+                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
+                _save_exp_stats_split_cache(
+                    output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
+                    train_stats, test_stats,
+                )
+            else:
+                _log("Train/test statistics not in cache (stats-only run); skipping recon_statistics/gen_variance for this seed.", since_start=time.time() - pipeline_start, style="skip")
         else:
             _log("Reused train/test experimental statistics from cache.", since_start=time.time() - pipeline_start, style="skip")
 
-    seed_test_to_train_cache = None
-    distmap_runs = [None] * len(dm_configs)
+    seed_test_to_train_holder = [None]
+    for gidx in range(len(dm_groups)):
+        _run_one_distmap_group(
+            seed, gidx, device,
+            cfg, base_output_dir, dm_groups, eu_groups, dm_configs, eu_configs,
+            coords, coords_np, num_atoms, num_structures, exp_stats, data_path, need_train, pipeline_start,
+            training_split, do_plot, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_min_rmsd, resume,
+            sample_variances, gen_num_samples, gen_decode_batch_size, need_plot_or_rmsd,
+            save_structures_gro_plot, analysis_save_data, analysis_save_structures_gro,
+            plot_dpi, save_pdf, save_plot_data, num_recon_samples, analysis_cfg, variance_list, num_samples_list,
+            vis_enabled, vis_cfg, plot_cfg,
+            train_stats, test_stats, seed_test_to_train_holder,
+            make_distmap_epoch_hook=make_distmap_epoch_hook,
+            make_euclideanizer_epoch_hook=make_euclideanizer_epoch_hook,
+            assemble_video_fn=assemble_video_fn,
+        )
 
-    for gidx, group in enumerate(dm_groups):
-        base_config = group["base_config"]
-        checkpoints = group["checkpoints"]
-        checkpoint_dirs = [os.path.join(output_dir, "distmap", str(ri)) for ri, _ in checkpoints]
-        dm_max_epoch = max(ev for _, ev in checkpoints)
-        prev_dm_path = None
-        prev_dm_ev = None
-
-        for seg_idx, (ri, ev) in enumerate(checkpoints):
-            run_dir_dm = checkpoint_dirs[seg_idx]
-            dm_path = _dm_path(run_dir_dm)
-            dm_cfg = {**base_config, "epochs": ev}
-
-            phase_start = time.time()
-            dm_multi = len(checkpoints) > 1
-            dm_save_final = base_config["save_final_models_per_stretch"]
-            dm_last_segment = seg_idx == len(checkpoints) - 1
-            dm_act = _distmap_training_action(
-                run_dir_dm, ev, dm_cfg,
-                prev_dm_path, prev_dm_ev,
-                checkpoint_dirs[seg_idx - 1] if seg_idx > 0 else None,
-                resume, dm_multi, dm_last_segment, dm_save_final,
-            )
-            if dm_act["action"] == "skip":
-                _log(f"DistMap run {ri} (epochs={ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
-                prev_dm_path = dm_path
-                prev_dm_ev = ev
-            else:
-                if vis_enabled:
-                    fd_dm = _video_frames_dir(run_dir_dm)
-                    if os.path.isdir(fd_dm):
-                        shutil.rmtree(fd_dm)
-                if dm_act["action"] == "from_scratch":
-                    _log(f"DistMap run {ri}: training from scratch to {ev} epochs...", since_start=time.time() - pipeline_start, style="info")
-                    epoch_cb = None
-                    if vis_enabled and make_distmap_epoch_hook is not None:
-                        epoch_cb, _ = make_distmap_epoch_hook(
-                            coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, total_epochs_display=dm_max_epoch
-                        )
-                    else:
-                        epoch_cb = None
-                    train_distmap(
-                        dm_cfg, device, coords, run_dir_dm,
-                        split_seed=split_seed, training_split=training_split,
-                        epoch_callback=epoch_cb,
-                        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                        memory_efficient=dm_cfg["memory_efficient"],
-                        is_last_segment=dm_last_segment,
-                        display_root=base_output_dir,
-                    )
-                elif dm_act["action"] == "resume_from_best":
-                    _log(f"DistMap run {ri}: resuming from best (epoch {dm_act['best_epoch']}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
-                    epoch_cb = None
-                    if vis_enabled and make_distmap_epoch_hook is not None:
-                        epoch_cb, _ = make_distmap_epoch_hook(
-                            coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=dm_act["best_epoch"], total_epochs_display=dm_max_epoch
-                        )
-                    train_distmap(
-                        dm_cfg, device, coords, run_dir_dm,
-                        split_seed=split_seed, training_split=training_split,
-                        epoch_callback=epoch_cb,
-                        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                        resume_from_path=dm_act["resume_from_path"], additional_epochs=dm_act["additional_epochs"],
-                        prev_run_dir=dm_act["prev_run_dir"],
-                        save_final_models_per_stretch=dm_save_final,
-                        is_last_segment=dm_last_segment,
-                        memory_efficient=dm_cfg["memory_efficient"],
-                        display_root=base_output_dir,
-                    )
-                else:
-                    _log(f"DistMap run {ri}: resuming from run (epochs={prev_dm_ev}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
-                    epoch_cb = None
-                    if vis_enabled and make_distmap_epoch_hook is not None:
-                        epoch_cb, _ = make_distmap_epoch_hook(
-                            coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=prev_dm_ev, total_epochs_display=dm_max_epoch
-                        )
-                    train_distmap(
-                        dm_cfg, device, coords, run_dir_dm,
-                        split_seed=split_seed, training_split=training_split,
-                        epoch_callback=epoch_cb,
-                        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                        resume_from_path=dm_act["resume_from_path"], additional_epochs=dm_act["additional_epochs"],
-                        prev_run_dir=dm_act["prev_run_dir"],
-                        save_final_models_per_stretch=dm_save_final,
-                        is_last_segment=dm_last_segment,
-                        memory_efficient=dm_cfg["memory_efficient"],
-                        display_root=base_output_dir,
-                    )
-                prev_dm_path = dm_path
-                prev_dm_ev = ev
-                _log(f"DistMap {ri}: training done in {(time.time() - phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-
-            if vis_enabled:
-                fd_dm = _video_frames_dir(run_dir_dm)
-                if os.path.isdir(fd_dm):
-                    _log(f"Assembling video for DistMap {ri}...", since_start=time.time() - pipeline_start, style="info")
-                    ok, fail_reason = assemble_video_fn(fd_dm, _video_mp4_path(run_dir_dm), vis_cfg["fps"])
-                    if ok:
-                        if vis_cfg["delete_frames_after_video"]:
-                            shutil.rmtree(fd_dm)
-                        _log(f"DistMap {ri}: video saved.", since_start=time.time() - pipeline_start, style="success")
-                    else:
-                        _log(f"DistMap {ri}: video assembly failed — {fail_reason}. Frames kept in {fd_dm}.", since_start=time.time() - pipeline_start, style="error")
-                else:
-                    _log(f"DistMap {ri}: no frames dir (video skipped).", since_start=time.time() - pipeline_start, style="skip")
-
-            distmap_runs[ri] = (ri, dm_path, dm_cfg)
-
-            if do_plot and coords is not None and exp_stats is not None:
-                if _distmap_plotting_all_present(
-                    run_dir_dm, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
-                ):
-                    _log(f"DistMap {ri}: [skip] plotting (all present)", since_start=time.time() - pipeline_start, style="skip")
-                else:
-                    _force_gpu_cleanup(device)
-                    phase_start = time.time()
-                    _log(f"DistMap {ri}: plotting (recon, stats, gen)...", since_start=time.time() - pipeline_start, style="info")
-                    model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=dm_cfg["latent_dim"]).to(device)
-                    model.load_state_dict(torch.load(dm_path, map_location=device))
-                    if do_recon_plot:
-                        p = _plot_path(run_dir_dm, "reconstruction")
-                        if not (resume and os.path.isfile(p)):
-                            plot_distmap_reconstruction(
-                                model, device, coords, utils, p,
-                                training_split=training_split, split_seed=split_seed,
-                                batch_size=dm_cfg["batch_size"], num_to_plot=num_recon_samples, dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                display_root=base_output_dir,
-                            )
-                        elif resume:
-                            _log("  [skip] reconstruction", since_start=time.time() - pipeline_start, style="skip")
-                    if do_bond_rg_scaling and train_stats is not None and test_stats is not None:
-                        for subset_name, use_train, stats in [("test", False, test_stats), ("train", True, train_stats)]:
-                            p = _plot_path(run_dir_dm, "recon_statistics", subset=subset_name)
-                            if not (resume and os.path.isfile(p)):
-                                recon_dm = _get_recon_dm_distmap(model, device, coords, dm_cfg, training_split, split_seed, utils, use_train=use_train)
-                                plot_recon_statistics(
-                                    recon_dm, stats, p,
-                                    label_recon="VAE Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                    subset_label=subset_name,
-                                    display_root=base_output_dir,
-                                )
-                            elif resume:
-                                _log(f"  [skip] recon_statistics_{subset_name}", since_start=time.time() - pipeline_start, style="skip")
-                    if do_avg_gen and train_stats is not None and test_stats is not None:
-                        for var in sample_variances:
-                            p = _plot_path(run_dir_dm, "gen_variance", var=str(var))
-                            if not (resume and os.path.isfile(p)):
-                                gen_dm = _get_gen_dm_distmap(model, device, gen_num_samples, dm_cfg["latent_dim"], var, gen_decode_batch_size)
-                                plot_gen_analysis(
-                                    exp_stats, train_stats, test_stats, gen_dm, p,
-                                    sample_variance=var, label_gen="VAE Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                    display_root=base_output_dir,
-                                )
-                            elif resume:
-                                _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
-                    del model
-                    torch.cuda.empty_cache()
-                    _log(f"DistMap {ri}: plotting done in {(time.time() - phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-
-            _log(f"DistMap {ri}: starting Euclideanizer runs", since_start=time.time() - pipeline_start, style="info")
-            for egidx, eu_group in enumerate(eu_groups):
-                eu_base = eu_group["base_config"]
-                eu_checkpoints = eu_group["checkpoints"]
-                eu_checkpoint_dirs = [os.path.join(output_dir, "distmap", str(ri), "euclideanizer", str(euri)) for euri, _ in eu_checkpoints]
-                eu_max_epoch = max(ev for _, ev in eu_checkpoints)
-                prev_eu_path = None
-                prev_eu_ev = None
-                for eu_seg_idx, (euri, eu_ev) in enumerate(eu_checkpoints):
-                    eu_run_dir = eu_checkpoint_dirs[eu_seg_idx]
-                    eu_path_seg = _eu_path(eu_run_dir)
-                    eu_cfg_seg = {**eu_base, "epochs": eu_ev}
-                    eu_multi = len(eu_checkpoints) > 1
-                    eu_save_final = eu_base["save_final_models_per_stretch"]
-                    eu_last_segment = eu_seg_idx == len(eu_checkpoints) - 1
-                    eu_act = _euclideanizer_training_action(
-                        eu_run_dir, eu_ev, eu_cfg_seg,
-                        prev_eu_path, prev_eu_ev,
-                        eu_checkpoint_dirs[eu_seg_idx - 1] if eu_seg_idx > 0 else None,
-                        resume, eu_multi, eu_last_segment, eu_save_final,
-                    )
-                    if eu_act["action"] == "skip":
-                        _log(f"Euclideanizer run {euri} (DistMap {ri}, epochs={eu_ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
-                        prev_eu_path = eu_path_seg
-                        prev_eu_ev = eu_ev
-                    else:
-                        if vis_enabled:
-                            fd_eu_pre = _video_frames_dir(eu_run_dir)
-                            if os.path.isdir(fd_eu_pre):
-                                shutil.rmtree(fd_eu_pre)
-                        if eu_act["action"] == "from_scratch":
-                            _log(f"Euclideanizer run {euri} (DistMap {ri}): training from scratch to {eu_ev} epochs...", since_start=time.time() - pipeline_start, style="info")
-                            epoch_cb = None
-                            if vis_enabled:
-                                epoch_cb, _ = make_euclideanizer_epoch_hook(
-                                    coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, total_epochs_display=eu_max_epoch
-                                )
-                            train_euclideanizer(
-                                eu_cfg_seg, device, coords, dm_path, eu_run_dir,
-                                split_seed=split_seed, training_split=training_split,
-                                frozen_latent_dim=dm_cfg["latent_dim"],
-                                epoch_callback=epoch_cb,
-                                plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                memory_efficient=eu_cfg_seg["memory_efficient"],
-                                is_last_segment=eu_last_segment,
-                                display_root=base_output_dir,
-                            )
-                        elif eu_act["action"] == "resume_from_best":
-                            _log(f"Euclideanizer run {euri} (DistMap {ri}): resuming from best (epoch {eu_act['best_epoch']}), training {eu_act['additional_epochs']} more → {eu_ev} total...", since_start=time.time() - pipeline_start, style="info")
-                            epoch_cb = None
-                            if vis_enabled:
-                                epoch_cb, _ = make_euclideanizer_epoch_hook(
-                                    coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=eu_act["best_epoch"], total_epochs_display=eu_max_epoch
-                                )
-                            train_euclideanizer(
-                                eu_cfg_seg, device, coords, dm_path, eu_run_dir,
-                                split_seed=split_seed, training_split=training_split,
-                                frozen_latent_dim=dm_cfg["latent_dim"],
-                                epoch_callback=epoch_cb,
-                                plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                resume_from_path=eu_act["resume_from_path"], additional_epochs=eu_act["additional_epochs"],
-                                prev_run_dir=eu_act["prev_run_dir"],
-                                save_final_models_per_stretch=eu_save_final,
-                                is_last_segment=eu_last_segment,
-                                memory_efficient=eu_cfg_seg["memory_efficient"],
-                                display_root=base_output_dir,
-                            )
-                        else:
-                            _log(f"Euclideanizer run {euri} (DistMap {ri}): resuming from {prev_eu_ev} epochs, training {eu_act['additional_epochs']} more → {eu_ev} total...", since_start=time.time() - pipeline_start, style="info")
-                            epoch_cb = None
-                            if vis_enabled:
-                                epoch_cb, _ = make_euclideanizer_epoch_hook(
-                                    coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=prev_eu_ev, total_epochs_display=eu_max_epoch
-                                )
-                            train_euclideanizer(
-                                eu_cfg_seg, device, coords, dm_path, eu_run_dir,
-                                split_seed=split_seed, training_split=training_split,
-                                frozen_latent_dim=dm_cfg["latent_dim"],
-                                epoch_callback=epoch_cb,
-                                plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                resume_from_path=eu_act["resume_from_path"], additional_epochs=eu_act["additional_epochs"],
-                                prev_run_dir=eu_act["prev_run_dir"],
-                                save_final_models_per_stretch=eu_save_final,
-                                is_last_segment=eu_last_segment,
-                                memory_efficient=eu_cfg_seg["memory_efficient"],
-                                display_root=base_output_dir,
-                            )
-                        prev_eu_path = eu_path_seg
-                        prev_eu_ev = eu_ev
-
-                    if vis_enabled:
-                        fd_eu = _video_frames_dir(eu_run_dir)
-                        if os.path.isdir(fd_eu):
-                            _log(f"Assembling video for Euclideanizer {euri} (DistMap {ri}, epochs={eu_ev})...", since_start=time.time() - pipeline_start, style="info")
-                            ok, fail_reason = assemble_video_fn(fd_eu, _video_mp4_path(eu_run_dir), vis_cfg["fps"])
-                            if ok:
-                                if vis_cfg["delete_frames_after_video"]:
-                                    shutil.rmtree(fd_eu)
-                                _log(f"Euclideanizer {euri} (DistMap {ri}): video saved.", since_start=time.time() - pipeline_start, style="success")
-                            else:
-                                _log(f"Euclideanizer {euri} (DistMap {ri}): video assembly failed — {fail_reason}.", since_start=time.time() - pipeline_start, style="error")
-
-                    if need_plot_or_rmsd:
-                        run_dir_eu = eu_run_dir
-                        eu_cfg = eu_configs[euri]
-                        eu_path = eu_path_seg
-                        all_plots = _euclideanizer_plotting_all_present(
-                            run_dir_eu, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
-                        )
-                        all_analysis = _euclideanizer_analysis_all_present(
-                            run_dir_eu, resume, do_min_rmsd, variance_list, num_samples_list
-                        )
-                        if resume and all_plots and all_analysis:
-                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): [skip] plotting and analysis (all present)", since_start=time.time() - pipeline_start, style="skip")
-                        else:
-                            _force_gpu_cleanup(device)
-                            phase_start_eu = time.time()
-                            frozen_vae = load_frozen_vae(dm_path, num_atoms, dm_cfg["latent_dim"], device)
-                            embed = Euclideanizer(num_atoms=num_atoms).to(device)
-                            embed.load_state_dict(torch.load(eu_path, map_location=device))
-
-                            if do_plot and coords is not None and exp_stats is not None:
-                                plot_phase_start = time.time()
-                                _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting (diagnostics)...", since_start=time.time() - pipeline_start, style="info")
-                                if do_recon_plot:
-                                    p = _plot_path(run_dir_eu, "reconstruction")
-                                    if not (resume and os.path.isfile(p)):
-                                        plot_euclideanizer_reconstruction(
-                                            embed, frozen_vae, device, coords, utils, p,
-                                            training_split=training_split, split_seed=split_seed,
-                                            batch_size=eu_cfg["batch_size"], num_to_plot=num_recon_samples, dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                            display_root=base_output_dir,
-                                        )
-                                    elif resume:
-                                        _log("  [skip] reconstruction", since_start=time.time() - pipeline_start, style="skip")
-                                if do_bond_rg_scaling and train_stats is not None and test_stats is not None:
-                                    for subset_name, use_train, stats in [("test", False, test_stats), ("train", True, train_stats)]:
-                                        p = _plot_path(run_dir_eu, "recon_statistics", subset=subset_name)
-                                        if not (resume and os.path.isfile(p)):
-                                            recon_dm = _get_recon_dm_euclideanizer(embed, frozen_vae, device, coords, eu_cfg, training_split, split_seed, utils, use_train=use_train)
-                                            plot_recon_statistics(
-                                                recon_dm, stats, p,
-                                                label_recon="Eucl. Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                                subset_label=subset_name,
-                                                display_root=base_output_dir,
-                                            )
-                                        elif resume:
-                                            _log(f"  [skip] recon_statistics_{subset_name}", since_start=time.time() - pipeline_start, style="skip")
-                                if do_avg_gen and train_stats is not None and test_stats is not None:
-                                    for var in sample_variances:
-                                        p = _plot_path(run_dir_eu, "gen_variance", var=str(var))
-                                        if not (resume and os.path.isfile(p)):
-                                            if save_structures_gro_plot:
-                                                gen_dm, gen_coords_np = _get_gen_dm_euclideanizer(
-                                                    embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], var, utils, gen_decode_batch_size,
-                                                    return_coords=True,
-                                                )
-                                                structures_dir = os.path.join(run_dir_eu, "plots", "gen_variance", "structures", str(var))
-                                                write_structures_gro(gen_coords_np, structures_dir, display_root=base_output_dir)
-                                            else:
-                                                gen_dm = _get_gen_dm_euclideanizer(
-                                                    embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], var, utils, gen_decode_batch_size
-                                                )
-                                            plot_gen_analysis(
-                                                exp_stats, train_stats, test_stats, gen_dm, p,
-                                                sample_variance=var, label_gen="Euclideanizer", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-                                                display_root=base_output_dir,
-                                            )
-                                        elif resume:
-                                            _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
-                                _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-
-                            if do_min_rmsd and coords is not None:
-                                if seed_test_to_train_cache is None:
-                                    _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
-                                    seed_test_to_train_cache = get_or_compute_test_to_train_rmsd(
-                                        coords_np, coords, training_split, split_seed,
-                                        _cache_path,
-                                        query_batch_size=analysis_cfg["min_rmsd_query_batch_size"],
-                                        display_root=base_output_dir,
-                                    )
-                                _tt, _train_c, _test_c = seed_test_to_train_cache
-                                analysis_phase_start = time.time()
-                                _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD)...", since_start=time.time() - pipeline_start, style="info")
-                                plot_cfg_analysis = {
-                                    **analysis_cfg,
-                                    "plot_dpi": plot_dpi,
-                                    "save_plot_data": save_plot_data,
-                                    "save_data": analysis_save_data,
-                                    "save_structures_gro": analysis_save_structures_gro,
-                                }
-                                for var in variance_list:
-                                    variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
-                                    any_missing = False
-                                    for n in num_samples_list:
-                                        run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
-                                        fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"{run_name}/min_rmsd_distributions.png")
-                                        if not (resume and os.path.isfile(fig_path)):
-                                            any_missing = True
-                                            break
-                                    if any_missing:
-                                        if len(num_samples_list) > 1:
-                                            run_min_rmsd_analysis_multi(
-                                                coords_np, coords, training_split, split_seed,
-                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                                plot_cfg_analysis,
-                                                num_samples_list=num_samples_list,
-                                                sample_variance=var,
-                                                variance_suffix=variance_suffix,
-                                                display_root=base_output_dir,
-                                                precomputed_test_to_train=_tt,
-                                                train_coords_np=_train_c,
-                                                test_coords_np=_test_c,
-                                            )
-                                        else:
-                                            n = num_samples_list[0]
-                                            run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(num_samples_list) > 1) else "default"
-                                            output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
-                                            run_min_rmsd_analysis(
-                                                coords_np, coords, training_split, split_seed,
-                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                                plot_cfg_analysis,
-                                                num_samples=n, sample_variance=var, output_suffix=output_suffix,
-                                                display_root=base_output_dir,
-                                                precomputed_test_to_train=_tt,
-                                                train_coords_np=_train_c,
-                                                test_coords_np=_test_c,
-                                            )
-                                    else:
-                                        _log(f"  [skip] min_rmsd variance={var}", since_start=time.time() - pipeline_start, style="skip")
-                                _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-
-                            del embed, frozen_vae
-                            torch.cuda.empty_cache()
-                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-
-    if do_min_rmsd and not analysis_save_data and seed_test_to_train_cache is not None:
+    if do_min_rmsd and not analysis_save_data and seed_test_to_train_holder[0] is not None:
         _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
         if os.path.isfile(_cache_path):
             try:
@@ -1314,6 +1519,265 @@ def _get_gen_dm_euclideanizer(embed, frozen_vae, device, num_samples, latent_dim
     if return_coords:
         return gen_dm, np.concatenate(out_coords, axis=0)
     return gen_dm
+
+
+def _worker(
+    device_id: int,
+    task_list: list,
+    log_path: str,
+    log_lock,
+    shared_args: dict,
+) -> None:
+    """Worker entry: set device, open log, load data, run each (seed, DistMap group) task.
+    When invoked from multi-GPU, the launcher sets CUDA_VISIBLE_DEVICES so this process sees a single device as cuda:0."""
+    global _LOG_FILE, _LOG_LOCK
+    device = torch.device(f"cuda:{device_id}")
+    # Workers do not use the shared lock (unsafe across process boundaries); each worker is the only writer to the log during its run.
+    _LOG_LOCK = None
+    _LOG_FILE = open(log_path, "a", encoding="utf-8")
+    worker_start = time.time()
+    try:
+        data_path = shared_args["data_path"]
+        base_output_dir = shared_args["base_output_dir"]
+        if not task_list or not data_path:
+            return
+        if shared_args.get("vis_enabled") and shared_args.get("make_distmap_epoch_hook") is None:
+            from src.training_visualization import (
+                make_distmap_epoch_hook,
+                make_euclideanizer_epoch_hook,
+                assemble_video,
+            )
+            shared_args["make_distmap_epoch_hook"] = make_distmap_epoch_hook
+            shared_args["make_euclideanizer_epoch_hook"] = make_euclideanizer_epoch_hook
+            shared_args["assemble_video_fn"] = assemble_video
+        coords_np = utils.load_data(data_path)
+        coords = torch.tensor(coords_np, dtype=torch.float32).to(device)
+        num_atoms = coords.size(1)
+        num_structures = len(coords_np)
+        utils.validate_dataset_for_pipeline(num_structures, shared_args["training_split"])
+        exp_stats = _load_exp_stats_cache(
+            base_output_dir, data_path, num_structures, num_atoms
+        )
+        if exp_stats is None and (shared_args["do_plot"] or shared_args["do_min_rmsd"]):
+            exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
+        for seed, gidx in task_list:
+            output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+            train_stats = test_stats = None
+            if data_path and (shared_args["do_plot"] or shared_args["do_min_rmsd"]):
+                train_stats, test_stats = _load_exp_stats_split_cache(
+                    output_dir, data_path, num_structures, num_atoms,
+                    seed, shared_args["training_split"],
+                )
+                if train_stats is None or test_stats is None:
+                    train_ds, test_ds = utils.get_train_test_split(
+                        coords.cpu(), shared_args["training_split"], seed
+                    )
+                    train_indices = np.array(train_ds.indices)
+                    test_indices = np.array(test_ds.indices)
+                    train_stats = compute_exp_statistics(
+                        coords_np, device, utils.get_distmaps, indices=train_indices
+                    )
+                    test_stats = compute_exp_statistics(
+                        coords_np, device, utils.get_distmaps, indices=test_indices
+                    )
+                    _save_exp_stats_split_cache(
+                        output_dir, data_path, num_structures, num_atoms,
+                        seed, shared_args["training_split"],
+                        train_stats, test_stats,
+                    )
+            seed_test_to_train_holder = [None]
+            _run_one_distmap_group(
+                seed, gidx, device,
+                shared_args["cfg"], base_output_dir, shared_args["dm_groups"],
+                shared_args["eu_groups"], shared_args["dm_configs"], shared_args["eu_configs"],
+                coords, coords_np, num_atoms, num_structures, exp_stats, data_path,
+                shared_args["need_train"], worker_start, shared_args["training_split"],
+                shared_args["do_plot"], shared_args["do_recon_plot"],
+                shared_args["do_bond_rg_scaling"], shared_args["do_avg_gen"],
+                shared_args["do_min_rmsd"], shared_args["resume"],
+                shared_args["sample_variances"], shared_args["gen_num_samples"],
+                shared_args["gen_decode_batch_size"], shared_args["need_plot_or_rmsd"],
+                shared_args["save_structures_gro_plot"], shared_args["analysis_save_data"],
+                shared_args["analysis_save_structures_gro"],
+                shared_args["plot_dpi"], shared_args["save_pdf"], shared_args["save_plot_data"],
+                shared_args["num_recon_samples"], shared_args["analysis_cfg"],
+                shared_args["variance_list"], shared_args["num_samples_list"],
+                shared_args["vis_enabled"], shared_args["vis_cfg"], shared_args["plot_cfg"],
+                train_stats, test_stats, seed_test_to_train_holder,
+                make_distmap_epoch_hook=shared_args.get("make_distmap_epoch_hook"),
+                make_euclideanizer_epoch_hook=shared_args.get("make_euclideanizer_epoch_hook"),
+                assemble_video_fn=shared_args.get("assemble_video_fn"),
+            )
+    except Exception:
+        if _LOG_LOCK is not None:
+            _LOG_LOCK.acquire()
+        try:
+            _LOG_FILE.write("\n")
+            _LOG_FILE.write("WORKER ERROR\n")
+            _LOG_FILE.write(traceback.format_exc())
+            _LOG_FILE.flush()
+        finally:
+            if _LOG_LOCK is not None:
+                _LOG_LOCK.release()
+        raise
+    finally:
+        if _LOG_FILE is not None:
+            _LOG_FILE.close()
+            _LOG_FILE = None
+        _LOG_LOCK = None
+
+
+def _run_multi_gpu_tasks(
+    tasks: list,
+    n_gpus: int,
+    cfg: dict,
+    base_output_dir: str,
+    dm_groups: list,
+    eu_groups: list,
+    dm_configs: list,
+    eu_configs: list,
+    coords,
+    coords_np,
+    device,
+    num_atoms,
+    num_structures,
+    exp_stats,
+    data_path,
+    need_train: bool,
+    pipeline_start: float,
+    training_split: float,
+    do_plot: bool,
+    do_recon_plot: bool,
+    do_bond_rg_scaling: bool,
+    do_avg_gen: bool,
+    do_min_rmsd: bool,
+    resume: bool,
+    sample_variances: list,
+    gen_num_samples: int,
+    gen_decode_batch_size: int,
+    need_plot_or_rmsd: bool,
+    save_structures_gro_plot: bool,
+    analysis_save_data: bool,
+    analysis_save_structures_gro: bool,
+    plot_dpi: int,
+    save_pdf: bool,
+    save_plot_data: bool,
+    num_recon_samples: int,
+    analysis_cfg: dict,
+    variance_list: list,
+    num_samples_list: list,
+    vis_enabled: bool,
+    vis_cfg: dict,
+    plot_cfg: dict,
+    make_distmap_epoch_hook=None,
+    make_euclideanizer_epoch_hook=None,
+    assemble_video_fn=None,
+) -> None:
+    """Run tasks in parallel on multiple GPUs (one process per device)."""
+    seeds = sorted({s for s, _ in tasks})
+    # Per-seed setup: seed dirs and pipeline config. Train/test caches are precomputed in main when multi-GPU (to free data before spawn).
+    for seed in seeds:
+        output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed}}
+        if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
+            save_pipeline_config(effective_cfg, output_dir)
+        if data_path and coords is not None and (do_plot or do_min_rmsd):
+            train_stats, test_stats = _load_exp_stats_split_cache(
+                output_dir, data_path, num_structures, num_atoms, seed, training_split
+            )
+            if train_stats is None or test_stats is None:
+                train_ds, test_ds = utils.get_train_test_split(coords.cpu(), training_split, seed)
+                train_indices = np.array(train_ds.indices)
+                test_indices = np.array(test_ds.indices)
+                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
+                _save_exp_stats_split_cache(
+                    output_dir, data_path, num_structures, num_atoms,
+                    seed, training_split, train_stats, test_stats,
+                )
+    # Round-robin task assignment
+    tasks_by_device = [list() for _ in range(n_gpus)]
+    for i, t in enumerate(tasks):
+        tasks_by_device[i % n_gpus].append(t)
+    log_path = os.path.join(base_output_dir, PIPELINE_LOG_FILENAME)
+    log_lock = multiprocessing.Lock()
+    shared_args = {
+        "cfg": cfg,
+        "base_output_dir": base_output_dir,
+        "dm_groups": dm_groups,
+        "eu_groups": eu_groups,
+        "dm_configs": dm_configs,
+        "eu_configs": eu_configs,
+        "data_path": data_path,
+        "need_train": need_train,
+        "pipeline_start": pipeline_start,
+        "training_split": training_split,
+        "do_plot": do_plot,
+        "do_recon_plot": do_recon_plot,
+        "do_bond_rg_scaling": do_bond_rg_scaling,
+        "do_avg_gen": do_avg_gen,
+        "do_min_rmsd": do_min_rmsd,
+        "resume": resume,
+        "sample_variances": sample_variances,
+        "gen_num_samples": gen_num_samples,
+        "gen_decode_batch_size": gen_decode_batch_size,
+        "need_plot_or_rmsd": need_plot_or_rmsd,
+        "save_structures_gro_plot": save_structures_gro_plot,
+        "analysis_save_data": analysis_save_data,
+        "analysis_save_structures_gro": analysis_save_structures_gro,
+        "plot_dpi": plot_dpi,
+        "save_pdf": save_pdf,
+        "save_plot_data": save_plot_data,
+        "num_recon_samples": num_recon_samples,
+        "analysis_cfg": analysis_cfg,
+        "variance_list": variance_list,
+        "num_samples_list": num_samples_list,
+        "vis_enabled": vis_enabled,
+        "vis_cfg": vis_cfg,
+        "plot_cfg": plot_cfg,
+        "make_distmap_epoch_hook": make_distmap_epoch_hook,
+        "make_euclideanizer_epoch_hook": make_euclideanizer_epoch_hook,
+        "assemble_video_fn": assemble_video_fn,
+    }
+    try:
+        multiprocessing.set_start_method("spawn", force=True)
+    except RuntimeError:
+        pass
+    processes = []
+    n_workers = min(n_gpus, len(tasks)) if tasks else 0
+    try:
+        import _worker_main as _wm
+        worker_target = _wm.main
+        use_worker_wrapper = True
+    except ImportError:
+        worker_target = _worker
+        use_worker_wrapper = False
+    if use_worker_wrapper:
+        shared_args = {
+            **shared_args,
+            "make_distmap_epoch_hook": None,
+            "make_euclideanizer_epoch_hook": None,
+            "assemble_video_fn": None,
+        }
+    for device_id in range(n_workers):
+        args = (device_id, tasks_by_device[device_id], log_path, log_lock, shared_args)
+        p = multiprocessing.Process(target=worker_target, args=args)
+        processes.append(p)
+    for p in processes:
+        p.start()
+    for p in processes:
+        p.join()
+    # Propagate worker failure
+    failed = [p for p in processes if p.exitcode != 0]
+    if failed:
+        exit_codes = [p.exitcode for p in failed]
+        msg = f"Multi-GPU worker(s) exited with non-zero status: {exit_codes}"
+        if any(c in (-9, -11) for c in exit_codes):
+            msg += (
+                " (exit -9 often indicates the process was killed, e.g. out-of-memory; -11 indicates a crash). "
+                "Try reducing memory use: --gpus 2 or --no-multi-gpu."
+            )
+        raise RuntimeError(msg)
 
 
 def main():
@@ -1407,17 +1871,40 @@ def main():
                         f"Use a different output_dir to keep existing runs, or run with --no-resume to overwrite (this will overwrite existing checkpoints and outputs in that directory)."
                     )
 
-    # Load data only when needed: not resuming, or something is incomplete/missing (training or plot/analysis)
-    need_data = (need_train or do_plot or do_min_rmsd) and data_path
-    if need_data and resume:
-        need_data = _pipeline_need_data(
+    # Decide what to load from pipeline segments (resume) or from flags (no resume)
+    if not resume or not data_path:
+        needs = PipelineDataNeeds(
+            need_coords=(need_train or do_plot or do_min_rmsd),
+            need_exp_stats=do_plot,
+            need_train_test_stats=do_plot,
+        ) if data_path else PipelineDataNeeds(need_coords=False, need_exp_stats=False, need_train_test_stats=False)
+    else:
+        needs = _pipeline_data_needs(
             base_output_dir, seeds, dm_groups, eu_groups,
             resume, do_plot, do_min_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen,
             plot_variances_for_scan, variance_list, num_samples_list,
         )
-    if need_data and data_path:
+    need_any = needs.need_any() and data_path
+
+    stats_only_ok = False
+    if need_any and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):
+        exp_st, num_at, num_stru = _try_load_stats_only(base_output_dir, data_path, seeds, training_split)
+        if exp_st is not None:
+            stats_only_ok = True
+            phase_start = time.time()
+            _log("Loading experimental statistics from cache (no coordinates).", since_start=time.time() - pipeline_start, style="info")
+            coords_np = None
+            coords = None
+            device = utils.get_device()
+            num_atoms = num_at
+            num_structures = num_stru
+            exp_stats = exp_st
+            _log(f"Reused stats for {num_structures} structures, {num_atoms} atoms.", since_start=time.time() - pipeline_start, style="success")
+            _log("Data ready (stats only).", since_start=time.time() - pipeline_start, since_phase=time.time() - phase_start, style="success")
+
+    if need_any and not stats_only_ok:
         phase_start = time.time()
-        _log("Loading data and experimental statistics...", since_start=time.time() - pipeline_start, style="info")
+        _log("Loading data...", since_start=time.time() - pipeline_start, style="info")
         coords_np = utils.load_data(data_path)
         coords = torch.tensor(coords_np, dtype=torch.float32)
         device = utils.get_device()
@@ -1426,44 +1913,47 @@ def main():
         num_structures = len(coords_np)
         utils.validate_dataset_for_pipeline(num_structures, training_split)
         _log(f"Loaded {num_structures} structures, {num_atoms} atoms.", since_start=time.time() - pipeline_start, style="success")
-        cache_meta_path = os.path.join(_exp_stats_cache_dir(base_output_dir), EXP_STATS_META)
-        exp_stats = _load_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms)
-        if exp_stats is not None:
-            _log(f"Reused experimental statistics from cache ({EXP_STATS_CACHE_DIR}/).", since_start=time.time() - pipeline_start, style="skip")
-        elif os.path.isfile(cache_meta_path):
-            with open(cache_meta_path) as f:
-                cached = json.load(f)
-            if (
-                cached.get("data_path") == os.path.abspath(data_path)
-                and cached.get("num_structures") == num_structures
-                and cached.get("num_atoms") == num_atoms
-            ):
-                _log("Experimental statistics cache invalid or corrupted, recomputing.", since_start=time.time() - pipeline_start, style="info")
+        exp_stats = None
+        if needs.need_exp_stats:
+            cache_meta_path = os.path.join(_exp_stats_cache_dir(base_output_dir), EXP_STATS_META)
+            exp_stats = _load_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms)
+            if exp_stats is not None:
+                _log(f"Reused experimental statistics from cache ({EXP_STATS_CACHE_DIR}/).", since_start=time.time() - pipeline_start, style="skip")
+            elif os.path.isfile(cache_meta_path):
+                with open(cache_meta_path) as f:
+                    cached = json.load(f)
+                if (
+                    cached.get("data_path") == os.path.abspath(data_path)
+                    and cached.get("num_structures") == num_structures
+                    and cached.get("num_atoms") == num_atoms
+                ):
+                    _log("Experimental statistics cache invalid or corrupted, recomputing.", since_start=time.time() - pipeline_start, style="info")
+                    exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
+                    _save_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms, exp_stats)
+                    _log(f"Cached experimental statistics to {EXP_STATS_CACHE_DIR}/.", since_start=time.time() - pipeline_start, style="success")
+                else:
+                    raise RuntimeError(
+                        f"Experimental statistics cache exists for a different dataset. "
+                        f"Cached: data_path={cached.get('data_path')!r} num_structures={cached.get('num_structures')} num_atoms={cached.get('num_atoms')}. "
+                        f"Current: data_path={os.path.abspath(data_path)!r} num_structures={num_structures} num_atoms={num_atoms}. "
+                        f"Use a different output_dir for this dataset, or remove {_exp_stats_cache_dir(base_output_dir)!r} to start fresh."
+                    )
+            elif _base_has_any_seed_pipeline_content(base_output_dir, seeds):
+                raise RuntimeError(
+                    f"Experimental statistics cache is missing but base_output_dir already has pipeline content ({base_output_dir!r}). "
+                    f"This would allow the dataset to be replaced midway. Use a different output_dir for this dataset, "
+                    f"or restore the cache (e.g. from backup) before resuming."
+                )
+            else:
+                _log("Computing experimental statistics (no valid cache for this dataset).", since_start=time.time() - pipeline_start, style="info")
                 exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
                 _save_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms, exp_stats)
                 _log(f"Cached experimental statistics to {EXP_STATS_CACHE_DIR}/.", since_start=time.time() - pipeline_start, style="success")
-            else:
-                raise RuntimeError(
-                    f"Experimental statistics cache exists for a different dataset. "
-                    f"Cached: data_path={cached.get('data_path')!r} num_structures={cached.get('num_structures')} num_atoms={cached.get('num_atoms')}. "
-                    f"Current: data_path={os.path.abspath(data_path)!r} num_structures={num_structures} num_atoms={num_atoms}. "
-                    f"Use a different output_dir for this dataset, or remove {_exp_stats_cache_dir(base_output_dir)!r} to start fresh."
-                )
-        elif _base_has_any_seed_pipeline_content(base_output_dir, seeds):
-            raise RuntimeError(
-                f"Experimental statistics cache is missing but base_output_dir already has pipeline content ({base_output_dir!r}). "
-                f"This would allow the dataset to be replaced midway. Use a different output_dir for this dataset, "
-                f"or restore the cache (e.g. from backup) before resuming."
-            )
-        else:
-            _log("Computing experimental statistics (no valid cache for this dataset).", since_start=time.time() - pipeline_start, style="info")
-            exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
-            _save_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms, exp_stats)
-            _log(f"Cached experimental statistics to {EXP_STATS_CACHE_DIR}/.", since_start=time.time() - pipeline_start, style="success")
         _log("Data ready.", since_start=time.time() - pipeline_start, since_phase=time.time() - phase_start, style="success")
-    else:
+
+    if not need_any:
         coords_np = coords = device = num_atoms = num_structures = exp_stats = None
-        if data_path and not need_data and (do_plot or do_min_rmsd):
+        if data_path and (do_plot or do_min_rmsd):
             _log("Skipping data load (all runs complete and all plot/analysis outputs present).", since_start=time.time() - pipeline_start, style="skip")
 
     vis_cfg = cfg["training_visualization"]
@@ -1479,17 +1969,99 @@ def main():
         make_eu_hook = make_euclideanizer_epoch_hook
         assemble_video_fn = assemble_video
 
-    sample_variances = get_sample_variances(cfg) if do_plot and coords is not None else []
-    gen_num_samples = cfg["plotting"]["num_samples"] if do_plot and coords is not None else 0
+    stats_only = coords is None and exp_stats is not None
+    sample_variances = get_sample_variances(cfg) if do_plot and (coords is not None or stats_only) else []
+    gen_num_samples = cfg["plotting"]["num_samples"] if do_plot and (coords is not None or stats_only) else 0
     gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
-    need_plot_or_rmsd = (do_plot and coords is not None and exp_stats is not None) or (do_min_rmsd and coords is not None)
+    need_plot_or_rmsd = (
+        (do_plot and (
+            (coords is not None and (exp_stats is not None or (do_recon_plot and not do_bond_rg_scaling and not do_avg_gen)))
+            or (coords is None and exp_stats is not None)
+        ))
+        or (do_min_rmsd and coords is not None)
+    )
     save_structures_gro_plot = plot_cfg["save_structures_gro"]
     analysis_save_data = analysis_cfg["save_data"]
     analysis_save_structures_gro = analysis_cfg["save_structures_gro"]
 
-    for seed in seeds:
-        _run_one_seed(
+    tasks = [(s, g) for s in seeds for g in range(len(dm_groups))]
+    n_gpus = utils.get_available_cuda_count()
+    if args.gpus is not None:
+        n_gpus = min(n_gpus, args.gpus)
+    use_multi_gpu = (n_gpus >= 2) and not getattr(args, "no_multi_gpu", False) and (coords is not None)
+
+    # Multi-GPU: ensure per-seed train/test stats caches exist, then free main-process data so only workers hold copies (reduces memory use).
+    if use_multi_gpu and data_path and coords is not None and (do_plot or do_min_rmsd):
+        for seed in seeds:
+            output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+            train_stats, test_stats = _load_exp_stats_split_cache(
+                output_dir, data_path, num_structures, num_atoms, seed, training_split
+            )
+            if train_stats is None or test_stats is None:
+                train_ds, test_ds = utils.get_train_test_split(coords, training_split, seed)
+                train_indices = np.array(train_ds.indices)
+                test_indices = np.array(test_ds.indices)
+                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
+                _save_exp_stats_split_cache(
+                    output_dir, data_path, num_structures, num_atoms, seed, training_split,
+                    train_stats, test_stats,
+                )
+        _log("Freed main-process data before spawning workers (multi-GPU).", since_start=time.time() - pipeline_start, style="info")
+        coords_np = coords = exp_stats = None
+        gc.collect()
+
+    if not use_multi_gpu:
+        for seed in seeds:
+            _run_one_seed(
             seed=seed,
+            cfg=cfg,
+            base_output_dir=base_output_dir,
+            dm_groups=dm_groups,
+            eu_groups=eu_groups,
+            dm_configs=dm_configs,
+            eu_configs=eu_configs,
+            coords=coords,
+            coords_np=coords_np,
+            device=device,
+            num_atoms=num_atoms,
+            num_structures=num_structures,
+            exp_stats=exp_stats,
+            data_path=data_path,
+            need_train=need_train,
+            pipeline_start=pipeline_start,
+            training_split=training_split,
+            do_plot=do_plot,
+            do_recon_plot=do_recon_plot,
+            do_bond_rg_scaling=do_bond_rg_scaling,
+            do_avg_gen=do_avg_gen,
+            do_min_rmsd=do_min_rmsd,
+            resume=resume,
+            sample_variances=sample_variances,
+            gen_num_samples=gen_num_samples,
+            gen_decode_batch_size=gen_decode_batch_size,
+            need_plot_or_rmsd=need_plot_or_rmsd,
+            save_structures_gro_plot=save_structures_gro_plot,
+            analysis_save_data=analysis_save_data,
+            analysis_save_structures_gro=analysis_save_structures_gro,
+            plot_dpi=plot_dpi,
+            save_pdf=save_pdf,
+            save_plot_data=save_plot_data,
+            num_recon_samples=num_recon_samples,
+            analysis_cfg=analysis_cfg,
+            variance_list=variance_list,
+            num_samples_list=num_samples_list,
+            vis_enabled=vis_enabled,
+            vis_cfg=vis_cfg,
+            plot_cfg=plot_cfg,
+            make_distmap_epoch_hook=make_dm_hook,
+            make_euclideanizer_epoch_hook=make_eu_hook,
+            assemble_video_fn=assemble_video_fn,
+        )
+    else:
+        _run_multi_gpu_tasks(
+            tasks=tasks,
+            n_gpus=n_gpus,
             cfg=cfg,
             base_output_dir=base_output_dir,
             dm_groups=dm_groups,

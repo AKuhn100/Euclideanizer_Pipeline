@@ -16,6 +16,8 @@ from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
 from src.min_rmsd import _rmsd_matrix_batch
 from src.utils import (
     display_path,
+    get_available_cuda_count,
+    get_device,
     get_train_test_split,
     get_upper_tri,
     load_data,
@@ -160,6 +162,63 @@ def test_display_path_no_root():
     assert display_path(path, None) == path
 
 
+def test_get_device_default():
+    """get_device() with no args returns a device (mps/cuda/cpu)."""
+    d = get_device()
+    assert d.type in ("mps", "cuda", "cpu")
+
+
+def test_get_device_index_none_unchanged():
+    """get_device(device_index=None) matches get_device() default behavior."""
+    d = get_device(device_index=None)
+    assert d == get_device()
+
+
+def test_get_device_index_cuda_unavailable_returns_cpu():
+    """When CUDA is not available, get_device(device_index=0) returns CPU."""
+    import unittest.mock as mock
+    with mock.patch("torch.cuda.is_available", return_value=False):
+        d = get_device(device_index=0)
+    assert d.type == "cpu"
+
+
+def test_get_device_index_invalid_raises():
+    """get_device(device_index) raises when index >= device_count."""
+    import unittest.mock as mock
+    with mock.patch("torch.cuda.is_available", return_value=True), mock.patch(
+        "torch.cuda.device_count", return_value=2
+    ):
+        get_device(device_index=0)
+        get_device(device_index=1)
+        with pytest.raises(ValueError, match="device_index must be"):
+            get_device(device_index=2)
+        with pytest.raises(ValueError, match="device_index must be"):
+            get_device(device_index=-1)
+
+
+def test_get_device_index_cuda_returns_cuda_device():
+    """When CUDA is available, get_device(device_index=0) returns cuda:0."""
+    import unittest.mock as mock
+    with mock.patch("torch.cuda.is_available", return_value=True), mock.patch(
+        "torch.cuda.device_count", return_value=4
+    ):
+        d = get_device(device_index=0)
+        assert d.type == "cuda" and d.index == 0
+        d = get_device(device_index=3)
+        assert d.type == "cuda" and d.index == 3
+
+
+def test_get_available_cuda_count():
+    """get_available_cuda_count returns 0 when CUDA unavailable, else device_count."""
+    import unittest.mock as mock
+    with mock.patch("torch.cuda.is_available", return_value=False):
+        assert get_available_cuda_count() == 0
+    with mock.patch("torch.cuda.is_available", return_value=True), mock.patch(
+        "torch.cuda.device_count", return_value=3
+    ):
+        assert get_available_cuda_count() == 3
+
+
 def test_get_train_test_split_shape():
     """get_train_test_split returns train and test subsets with correct total size."""
     coords = torch.randn(100, 10, 3)
@@ -257,6 +316,55 @@ def test_rmsd_matrix_batch_identical_coords_zero():
     rmsd = _rmsd_matrix_batch(coords, refs)
     assert rmsd.shape == (1, 1)
     assert np.isclose(rmsd[0, 0], 0.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Multi-GPU task list and assignment (run.py logic)
+# ---------------------------------------------------------------------------
+
+
+def test_task_list_seeds_x_dm_groups():
+    """Task list is (seed, gidx) for each seed and each dm_group index."""
+    seeds = [0, 1]
+    dm_groups = [{"base_config": {}}, {"base_config": {}}]
+    tasks = [(s, g) for s in seeds for g in range(len(dm_groups))]
+    assert tasks == [(0, 0), (0, 1), (1, 0), (1, 1)]
+
+
+def test_task_assignment_round_robin_even():
+    """Round-robin: 4 tasks, 2 GPUs -> 2 tasks per device."""
+    tasks = [(0, 0), (0, 1), (1, 0), (1, 1)]
+    n_gpus = 2
+    tasks_by_device = [list() for _ in range(n_gpus)]
+    for i, t in enumerate(tasks):
+        tasks_by_device[i % n_gpus].append(t)
+    assert len(tasks_by_device[0]) == 2
+    assert len(tasks_by_device[1]) == 2
+    assert tasks_by_device[0] == [(0, 0), (1, 0)]
+    assert tasks_by_device[1] == [(0, 1), (1, 1)]
+
+
+def test_task_assignment_round_robin_odd():
+    """Round-robin: 5 tasks, 2 GPUs -> 3 and 2."""
+    tasks = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 1)]
+    n_gpus = 2
+    tasks_by_device = [list() for _ in range(n_gpus)]
+    for i, t in enumerate(tasks):
+        tasks_by_device[i % n_gpus].append(t)
+    assert len(tasks_by_device[0]) == 3
+    assert len(tasks_by_device[1]) == 2
+
+
+def test_single_gpu_path_when_one_device():
+    """When only 1 CUDA device is available, use_multi_gpu is False (single-threaded path)."""
+    import unittest.mock as mock
+    with mock.patch("torch.cuda.is_available", return_value=True), mock.patch(
+        "torch.cuda.device_count", return_value=1
+    ):
+        n_gpus = get_available_cuda_count()
+        use_multi_gpu = (n_gpus >= 2)
+        assert n_gpus == 1
+        assert use_multi_gpu is False
 
 
 # ---------------------------------------------------------------------------

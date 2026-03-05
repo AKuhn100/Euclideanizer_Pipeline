@@ -19,6 +19,7 @@ The pipeline trains one or more DistMap configurations, then for each trained Di
 - **PyTorch** 2.0+ (CPU, CUDA, or MPS)
 - **PyYAML**, **NumPy**, **Matplotlib**, **tqdm** (see `requirements.txt`)
 - **ffmpeg** (optional): required to generate training videos
+- **Multi-GPU**: Supported only with CUDA when 2+ devices are available; single-GPU and CPU runs are unchanged.
 
 ---
 
@@ -70,6 +71,8 @@ Training requires a dataset path: set it with `--data` or in the config under `d
 | Skip overwrite confirmation (for SLURM/scripts)     | `--yes-overwrite` (use with `--no-resume`) |
 | Custom output directory  | `--output-dir /path/to/output`                               |
 | Override hyperparameters | `--distmap.beta_kl 0.01 0.05 --euclideanizer.epochs 150 300` |
+| Disable multi-GPU        | `--no-multi-gpu` (run on one device even with 2+ GPUs)       |
+| Limit GPUs used         | `--gpus N` (use at most N CUDA devices)                     |
 
 ### Running on a cluster (SLURM)
 
@@ -86,7 +89,7 @@ Behavior tests live in `tests/test_pipeline_behavior.py`. They cover pipeline lo
 | Area | Description |
 |------|-------------|
 | **Run completion** | A run is complete only when the best checkpoint exists, `last_epoch_trained` matches the target, and (for multi-segment) the last-epoch checkpoint is present when required. Final segment with `save_final_models_per_stretch: false` does not require the last checkpoint. |
-| **need_data** | The pipeline must load the dataset when the seed dir is missing, any run is incomplete, or (when enabled) a plot or analysis output is missing. It can skip loading when all runs are complete and plot/analysis are disabled or already present. |
+| **need_data** | The pipeline loads only what is required. It must load *something* when the seed dir is missing, any run is incomplete, or (when enabled) a plot or analysis output is missing. It skips loading when all runs are complete and plot/analysis are disabled or already present. See **Resume and data loading** for coords-only vs stats-only vs full load. |
 | **Resume logic** | For both DistMap and Euclideanizer: **skip** when the run is complete; **from_scratch** when no previous run or `resume=False`; **resume_from_best** when the current run was interrupted (best epoch &lt; target for first segment, or best &gt; previous segment end for later segments); **resume_from_prev_last** when starting a new segment from the previous segment’s last checkpoint. |
 | **Config** | Loading `config_test.yaml` yields valid training groups; if resume is on and the saved pipeline config in the output dir does not match the current config, the pipeline raises before loading data. |
 | **Plotting / analysis skip** | When `resume=True` and all expected plot (or analysis) files exist, the pipeline skips loading the model for that run. |
@@ -103,7 +106,7 @@ No dataset or GPU is required; tests use `tmp_path` and dummy checkpoints.
 
 **Smoke test (full pipeline run)**
 
-A single end-to-end smoke test runs the pipeline with a minimal config (1 seed, 1 DistMap epoch, 1 Euclideanizer epoch) using `tests/test_data/spheres.gro` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). It is marked as slow and is **skipped by default**.
+A single end-to-end smoke test runs the pipeline with a minimal config using `tests/test_data/spheres.gro` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). **With one GPU** it runs one seed (single task) for a faster check; **with two or more GPUs** it runs two seeds so both devices are used and the multi-GPU path is exercised. The test is marked as slow and is **skipped by default**.
 
 - Run all tests **except** smoke: `pytest tests/ -v -m "not slow"`
 - Run **only** the smoke test: `pytest tests/test_smoke.py -v` or `pytest tests/test_smoke.py -v -m slow`
@@ -166,13 +169,19 @@ flowchart TB
     H -->|No| J
 
     J --> K["Expand DistMap and Euclideanizer grids"]
-    K --> L{"Need to load data?"}
+    K --> CUDA{"2+ CUDA devices?"}
+    CUDA -->|No| L{"Need to load data?"}
     L -->|Yes| M["Load data, compute/cache exp stats"]
     L -->|No| N["Skip load"]
     M --> O["For each seed"]
     N --> O
+    CUDA -->|Yes| L2["Load data, caches, seed dirs"]
+    L2 --> L3["Assign tasks to GPUs (round-robin)"]
+    L3 --> L4["Spawn one worker per GPU"]
+    L4 --> L5["Workers run tasks: DistMap + EU per task"]
+    L5 --> AA
 
-    subgraph per_seed["Per seed"]
+    subgraph per_seed["Per seed (single-GPU path)"]
         O --> P["Cache train/test exp stats"]
         P --> Q["For each DistMap group"]
         Q --> R["Train DistMap segment"]
@@ -184,15 +193,23 @@ flowchart TB
         W --> X["EU plotting + analysis"]
         X --> UE{"More EU?"}
         UE -->|Yes| U
-        UE -->|No| Y
+        UE -->|No| YD{"More DistMap?"}
     end
 
-    Y --> YD{"More DistMap?"}
     YD -->|Yes| Q
     YD -->|No| Z{"More seeds?"}
     Z -->|Yes| O
     Z -->|No| AA["Pipeline complete"]
 ```
+
+### Multi-GPU execution
+
+When **2+ CUDA devices** are available, the pipeline splits work into independent **(seed, DistMap group)** tasks and runs them in parallel: one worker process per GPU, each running its assigned tasks sequentially on that device. No change to config or output layout; resume and overwrite rules are unchanged.
+
+**Memory:** Each worker loads its own copy of the dataset and experimental statistics. The main process precomputes and caches per-seed train/test statistics, then frees its copy before spawning workers so that only the workers hold data (avoiding 1 + N copies and OOM). If you are still killed by the system (e.g. OOM killer) on large datasets, run with **`--no-multi-gpu`** or **`--gpus 1`** so only one copy is in memory.
+
+- **When it runs**: Automatically when `torch.cuda.is_available()` and `torch.cuda.device_count() >= 2`. Single-GPU and CPU (or MPS) runs use the same single-process loop as before.
+- **Restrict devices**: Set `CUDA_VISIBLE_DEVICES` (e.g. `CUDA_VISIBLE_DEVICES=0,1`) to limit which GPUs are seen. You can also use `--no-multi-gpu` to force the single-process path, or `--gpus N` to use at most N devices.
 
 ### Config and CLI reference (flow)
 
@@ -211,6 +228,9 @@ flowchart TB
 | **analysis.min_rmsd_num_samples** | Int or list → one min_rmsd figure set per value. |
 | **analysis.min_rmsd_sample_variance** | Float or list → one min_rmsd figure set per value. |
 | **resume** | If true: skip complete runs and existing plot/analysis outputs. If false: confirm then delete output_dir and run from scratch (unless **--yes-overwrite**, which skips the prompt for non-interactive use). |
+| **CUDA devices** | If 2+ available: tasks (seed × DistMap group) run in parallel, one process per GPU. Use `--no-multi-gpu` to disable or `--gpus N` to cap device count. |
+| **--no-multi-gpu** | Disable multi-GPU even when 2+ CUDA devices are available (single-process loop). |
+| **--gpus N** | Use at most N CUDA devices for multi-GPU (e.g. `--gpus 2` on a 4-GPU node). |
 
 ### Order of operations
 
@@ -279,6 +299,15 @@ flowchart LR
 A run is skipped only if (1) the best checkpoint file exists, (2) the saved run config’s `last_epoch_trained` equals the expected max epochs (and the relevant config section matches), and (3) for multi-segment runs, the last-epoch checkpoint is required only when there is a **next** segment that needs it—i.e. on the **last** segment with `save_final_models_per_stretch: false`, the last-epoch file is not required (and is not written). If a run is incomplete (e.g. interrupted), the pipeline resumes from the run’s **best** checkpoint when that is available (within-segment or mid-segment resume), or from the previous segment’s **last** checkpoint when starting a new segment.
 
 **Resume and config mismatch:** If resume is on and the output directory already exists, the pipeline requires a saved copy of the config that **exactly** matches the current config. If it does not (e.g. you changed hyperparameters), the run fails with a clear diff. Use a different `output_dir` or run with `--no-resume` to overwrite.
+
+**Resume and data loading:** What gets loaded is tied to which outputs are missing:
+
+- **Coords only:** When only training, reconstruction plots, recon_statistics, or min-RMSD are missing, the pipeline loads the coordinate dataset and (if needed) computes or reuses train/test statistics from cache. It does *not* compute or load full experimental statistics (exp_stats) when only those outputs are needed.
+- **Stats only (no coords):** When only gen_variance plots are missing and the base experimental-statistics cache plus every seed’s train/test split cache are present and valid, the pipeline loads only those caches (no coordinate file). It then regenerates gen_variance from the saved models. If any cache is missing or invalid, it falls back to a full load.
+- **Full load:** When both coords-dependent and stats-dependent outputs are missing, or when stats-only is not possible, the pipeline loads the dataset and (if plotting/analysis need them) experimental statistics and train/test stats.
+- **No load:** When all runs are complete and all plot/analysis outputs are present (e.g. you only run to assemble training videos from existing frames), nothing is loaded.
+
+Experimental statistics are cached under `output_dir/experimental_statistics/` (full) and `output_dir/seed_<n>/experimental_statistics/` (train/test). They are reused when the dataset path and dimensions match.
 
 ---
 
@@ -376,7 +405,7 @@ Euclideanizer_Pipeline/
     test_smoke.py             # Full pipeline smoke run (slow; requires tests/test_data/spheres.gro)
     conftest.py               # Pytest markers (e.g. slow)
     config_test.yaml          # Minimal config for behavior tests (no dataset required)
-    config_smoke.yaml         # Minimal config for smoke test (1 seed, 1 epoch each)
+    config_smoke.yaml         # Minimal config for smoke test (2 seeds in config; test uses 1 seed on 1 GPU, 2 on 2+ GPUs)
     test_data/                # Bundled sphere dataset: generate_spheres.py, spheres.gro (after generation)
   src/
     config.py            # Config load, validation, grid expansion

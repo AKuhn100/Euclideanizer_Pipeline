@@ -5,6 +5,7 @@
 #SBATCH --job-name=Euclideanizer_Pipeline
 #SBATCH --partition=commons
 #SBATCH --gres=gpu:1
+# For multi-GPU: e.g. --gres=gpu:2; the pipeline will automatically run tasks in parallel (one process per GPU).
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00

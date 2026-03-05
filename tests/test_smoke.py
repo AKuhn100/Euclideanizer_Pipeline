@@ -1,11 +1,12 @@
 """
-Smoke test: run the pipeline with a minimal config and the sphere dataset, then assert key outputs exist.
+Smoke test: run the full pipeline with a minimal config and the sphere dataset; assert that key outputs exist.
 
-Slow (trains 1 DistMap + 1 Euclideanizer, minimal plots/analysis). Skip by default:
-  pytest -m "not slow"
-Run only smoke test:
-  pytest tests/test_smoke.py -v
-  pytest tests/test_smoke.py -v -m slow
+With one GPU: runs one seed (single task) for a faster check. With two or more GPUs: runs two seeds
+(multi-task) so both GPUs are used and the multi-GPU path is exercised.
+Slow. Skipped by default.
+
+  pytest -m "not slow"     # run all tests except smoke
+  pytest tests/test_smoke.py -v -m slow   # run only smoke test
 """
 from __future__ import annotations
 
@@ -23,25 +24,37 @@ DATA_GRO = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.gro")
 CONFIG_SMOKE = os.path.join(_TEST_DIR, "config_smoke.yaml")
 
 
+def _smoke_test_num_gpus():
+    """Number of CUDA devices available; 0 if CUDA not available."""
+    try:
+        import torch
+        return torch.cuda.device_count()
+    except Exception:
+        return 0
+
+
 @pytest.mark.slow
 def test_pipeline_smoke_run(tmp_path):
-    """Run pipeline with minimal config and sphere data; assert DistMap and Euclideanizer outputs exist."""
+    """Run the full pipeline with minimal config and sphere data; assert DistMap and Euclideanizer outputs exist."""
     if not os.path.isfile(DATA_GRO):
         pytest.skip(f"Smoke test requires {DATA_GRO!r} (run from pipeline root with tests/test_data/spheres.gro)")
     if not os.path.isfile(CONFIG_SMOKE):
         pytest.skip(f"Smoke config not found: {CONFIG_SMOKE!r}")
 
+    n_gpus = _smoke_test_num_gpus()
+    # One GPU: single task (one seed) for a faster run. Two+ GPUs: two seeds so multi-GPU path runs both tasks.
+    if n_gpus >= 2:
+        seeds_to_check = (0, 1)
+        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", os.path.join(tmp_path, "smoke_out"), "--no-resume"]
+    else:
+        seeds_to_check = (0,)
+        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", os.path.join(tmp_path, "smoke_out"), "--no-resume", "--data.split_seed", "0"]
+
     output_dir = os.path.join(tmp_path, "smoke_out")
     argv_save = sys.argv
     cwd_save = os.getcwd()
     try:
-        sys.argv = [
-            "run.py",
-            "--config", CONFIG_SMOKE,
-            "--data", DATA_GRO,
-            "--output-dir", output_dir,
-            "--no-resume",
-        ]
+        sys.argv = argv
         os.chdir(_PIPELINE_ROOT)
         from run import main
         main()
@@ -49,11 +62,10 @@ def test_pipeline_smoke_run(tmp_path):
         sys.argv = argv_save
         os.chdir(cwd_save)
 
-    # Key outputs: one seed, one DistMap run, one Euclideanizer run
-    dm_pt = os.path.join(output_dir, "seed_0", "distmap", "0", "model", "model.pt")
-    eu_pt = os.path.join(output_dir, "seed_0", "distmap", "0", "euclideanizer", "0", "model", "euclideanizer.pt")
     pipeline_log = os.path.join(output_dir, "pipeline.log")
-
-    assert os.path.isfile(dm_pt), f"DistMap checkpoint missing: {dm_pt}"
-    assert os.path.isfile(eu_pt), f"Euclideanizer checkpoint missing: {eu_pt}"
     assert os.path.isfile(pipeline_log), f"Pipeline log missing: {pipeline_log}"
+    for seed in seeds_to_check:
+        dm_pt = os.path.join(output_dir, f"seed_{seed}", "distmap", "0", "model", "model.pt")
+        eu_pt = os.path.join(output_dir, f"seed_{seed}", "distmap", "0", "euclideanizer", "0", "model", "euclideanizer.pt")
+        assert os.path.isfile(dm_pt), f"DistMap checkpoint missing: {dm_pt}"
+        assert os.path.isfile(eu_pt), f"Euclideanizer checkpoint missing: {eu_pt}"
