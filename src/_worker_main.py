@@ -25,7 +25,8 @@ def main(device_id: int, task_list: list, log_path: str, shared_args: dict) -> N
         pass
     # Import run (and thus torch) only after env is set; this process will only see one GPU as cuda:0.
     _script_dir = os.path.dirname(os.path.abspath(__file__))
-    if _script_dir not in sys.path:
-        sys.path.insert(0, _script_dir)
+    _pipeline_dir = os.path.dirname(_script_dir)  # pipeline root (parent of src/)
+    if _pipeline_dir not in sys.path:
+        sys.path.insert(0, _pipeline_dir)
     import run as run_mod
     run_mod._worker(0, task_list, log_path, shared_args)

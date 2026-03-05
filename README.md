@@ -53,10 +53,10 @@ Run the pipeline from a directory that contains (or can see) the `Euclideanizer_
 
 ```bash
 # From project root (replace with your paths)
-python Euclideanizer_Pipeline/run.py --config Euclideanizer_Pipeline/config_sample.yaml --data /path/to/coordinates.gro
+python Euclideanizer_Pipeline/run.py --config Euclideanizer_Pipeline/samples/config_sample.yaml --data /path/to/coordinates.gro
 
 # Or from inside the pipeline directory
-python run.py --config config_sample.yaml --data /path/to/coordinates.gro
+python run.py --config samples/config_sample.yaml --data /path/to/coordinates.gro
 ```
 
 Training requires a dataset path: set it with `--data` or in the config under `data.path`. All other options (output dir, hyperparameters, plotting, etc.) come from the config and can be overridden with CLI flags.
@@ -76,7 +76,7 @@ Training requires a dataset path: set it with `--data` or in the config under `d
 
 ### Running on a cluster (SLURM)
 
-An example SLURM job script is provided as `run.sh`. It is a template with no user-specific paths: it runs from the pipeline directory and writes job logs to `slurm_logs/`. Edit the script to activate your Python environment and load any required modules (e.g. ffmpeg for training videos). For overwriting an existing run, add `--no-resume --yes-overwrite` to the `python run.py` line.
+An example SLURM job script is provided as `samples/run.sh`. It is a template with no user-specific paths: it runs from the pipeline root and uses `samples/config_sample.yaml`; job logs go to `slurm_logs/`. Edit the script to activate your Python environment and load any required modules (e.g. ffmpeg for training videos). For overwriting an existing run, add `--no-resume --yes-overwrite` to the `python run.py` line.
 
 ---
 
@@ -122,7 +122,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 ### Config file
 
 - **Path**: Required. Pass with `--config path/to/config.yaml` (no default; you must specify the config file and know where it is).
-- **Content**: Every config key is required (no code-side defaults). All top-level sections and their keys must be present; see `config_sample.yaml` and the **Config reference** below. Missing keys cause a clear error at load time.
+- **Content**: Every config key is required (no code-side defaults). All top-level sections and their keys must be present; see `samples/config_sample.yaml` and the **Config reference** below. Missing keys cause a clear error at load time.
 - **Overrides**: CLI flags are merged over the config (e.g. `--distmap.epochs 100` replaces the config value).
 
 ### Key options (summary)
@@ -395,10 +395,12 @@ base_output_dir/
 ```
 Euclideanizer_Pipeline/
   run.py                 # Single entrypoint: training, plotting, analysis
-  run.sh                 # Example SLURM job script (template; edit venv and modules for your cluster)
-  config_sample.yaml     # Example config (all required keys)
   requirements.txt
   README.md
+  LICENSE
+  samples/
+    run.sh               # Example SLURM job script (template; edit venv and modules for your cluster)
+    config_sample.yaml   # Example config (all required keys)
   tests/
     test_pipeline_behavior.py  # Behavior tests (run completion, need_data, resume, config)
     test_utils_and_config.py  # Config, utils, metrics, min_rmsd, plot paths
@@ -408,6 +410,7 @@ Euclideanizer_Pipeline/
     config_smoke.yaml         # Minimal config for smoke test (2 seeds in config; test uses 1 seed on 1 GPU, 2 on 2+ GPUs)
     test_data/                # Bundled sphere dataset: generate_spheres.py, spheres.gro (after generation)
   src/
+    _worker_main.py      # Multi-GPU worker launcher (used by run.py when 2+ GPUs)
     config.py            # Config load, validation, grid expansion
     utils.py             # Data loading (GRO-style), device, distance maps, tri/symmetric helpers
     metrics.py           # Experimental statistics (bonds, Rg, scaling)
@@ -466,4 +469,4 @@ All keys below are **required** (no defaults in code). Omit any and the pipeline
 - **training_visualization**: `enabled`, `n_probe`, `n_quick`, `fps`, `frame_width`, `frame_height`, `frame_dpi`, `delete_frames_after_video`.
 - **analysis**: `min_rmsd`, `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`, `save_data`, `save_structures_gro`.
 
-For full structure and comments, use `config_sample.yaml` as the template.
+For full structure and comments, use `samples/config_sample.yaml` as the template.

@@ -811,7 +811,7 @@ def _parse_args():
     """Parse command-line arguments; --config is required (no default)."""
     p = argparse.ArgumentParser(description="Euclideanizer pipeline: DistMap + Euclideanizer training and plotting")
     p.add_argument("--data", type=str, default=None, help="Path to dataset (required for training)")
-    p.add_argument("--config", type=str, required=True, help="Path to YAML config (e.g. Euclideanizer_Pipeline/config_sample.yaml)")
+    p.add_argument("--config", type=str, required=True, help="Path to YAML config (e.g. samples/config_sample.yaml)")
     p.add_argument("--no-plots", action="store_true", help="Disable all plotting")
     p.add_argument("--no-resume", action="store_true", help="Do not resume; overwrite existing run outputs")
     p.add_argument("--yes-overwrite", action="store_true", help="With --no-resume: skip confirmation prompt (use for SLURM/scripted runs)")
@@ -1742,7 +1742,7 @@ def _run_multi_gpu_tasks(
     processes = []
     n_workers = min(n_gpus, len(tasks)) if tasks else 0
     try:
-        import _worker_main as _wm
+        from src import _worker_main as _wm
         worker_target = _wm.main
         use_worker_wrapper = True
     except ImportError:

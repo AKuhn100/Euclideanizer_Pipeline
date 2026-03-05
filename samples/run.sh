@@ -19,10 +19,10 @@
 # Optional: load GCC, FFmpeg (needed for training videos).
 # module load GCCcore/13.3.0 FFmpeg/7.0.2
 
-# Run from the pipeline directory so relative paths in config resolve correctly.
-PIPELINE_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Run from the pipeline root so relative paths in config resolve correctly.
+PIPELINE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$PIPELINE_DIR"
 mkdir -p slurm_logs
 
 # Overwrite existing run: add --no-resume --yes-overwrite
-python run.py --config config_sample.yaml
+python run.py --config samples/config_sample.yaml

@@ -89,7 +89,7 @@ def load_config(path: Optional[str], overrides: Optional[Dict[str, Any]] = None)
     """Load config from YAML. Path is required; file must exist. Overrides (e.g. from CLI) are merged. Validates required keys."""
     if not path or not os.path.isfile(path):
         raise FileNotFoundError(
-            "Config file is required. Use --config path/to/config.yaml (e.g. config_sample.yaml)."
+            "Config file is required. Use --config path/to/config.yaml (e.g. samples/config_sample.yaml)."
         )
     if yaml is None:
         raise RuntimeError("PyYAML is required. pip install pyyaml")
