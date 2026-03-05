@@ -25,10 +25,10 @@ The pipeline trains one or more DistMap configurations, then for each trained Di
 
 ## Installation
 
-From the pipeline directory (or project root that contains it):
+From the pipeline directory:
 
 ```bash
-pip install -r Euclideanizer_Pipeline/requirements.txt
+pip install -r requirements.txt
 ```
 
 No package install step for the pipeline itself; run the script from a working directory where the pipeline folder is available (see **Quick start**).
@@ -64,15 +64,16 @@ Training requires a dataset path: set it with `--data` or in the config under `d
 **Common options:**
 
 
-| Goal                     | Example                                                      |
-| ------------------------ | ------------------------------------------------------------ |
-| Training only (no plots) | `--no-plots`                                                 |
-| Overwrite existing runs (wipe output dir, then run) | `--no-resume`                 |
-| Skip overwrite confirmation (for SLURM/scripts)     | `--yes-overwrite` (use with `--no-resume`) |
-| Custom output directory  | `--output-dir /path/to/output`                               |
-| Override hyperparameters | `--distmap.beta_kl 0.01 0.05 --euclideanizer.epochs 150 300` |
-| Disable multi-GPU        | `--no-multi-gpu` (run on one device even with 2+ GPUs)       |
-| Limit GPUs used         | `--gpus N` (use at most N CUDA devices)                     |
+| Goal                                                | Example                                                      |
+| --------------------------------------------------- | ------------------------------------------------------------ |
+| Training only (no plots)                            | `--no-plots`                                                 |
+| Overwrite existing runs (wipe output dir, then run) | `--no-resume`                                                |
+| Skip overwrite confirmation (for SLURM/scripts)     | `--yes-overwrite` (use with `--no-resume`)                   |
+| Custom output directory                             | `--output-dir /path/to/output`                               |
+| Override hyperparameters                            | `--distmap.beta_kl 0.01 0.05 --euclideanizer.epochs 150 300` |
+| Disable multi-GPU                                   | `--no-multi-gpu` (run on one device even with 2+ GPUs)       |
+| Limit GPUs used                                     | `--gpus N` (use at most N CUDA devices)                      |
+
 
 ### Running on a cluster (SLURM)
 
@@ -86,13 +87,15 @@ Behavior tests live in `tests/test_pipeline_behavior.py`. They cover pipeline lo
 
 **What is tested**
 
-| Area | Description |
-|------|-------------|
-| **Run completion** | A run is complete only when the best checkpoint exists, `last_epoch_trained` matches the target, and (for multi-segment) the last-epoch checkpoint is present when required. Final segment with `save_final_models_per_stretch: false` does not require the last checkpoint. |
-| **need_data** | The pipeline loads only what is required. It must load *something* when the seed dir is missing, any run is incomplete, or (when enabled) a plot or analysis output is missing. It skips loading when all runs are complete and plot/analysis are disabled or already present. See **Resume and data loading** for coords-only vs stats-only vs full load. |
-| **Resume logic** | For both DistMap and Euclideanizer: **skip** when the run is complete; **from_scratch** when no previous run or `resume=False`; **resume_from_best** when the current run was interrupted (best epoch &lt; target for first segment, or best &gt; previous segment end for later segments); **resume_from_prev_last** when starting a new segment from the previous segment’s last checkpoint. |
-| **Config** | Loading `config_test.yaml` yields valid training groups; if resume is on and the saved pipeline config in the output dir does not match the current config, the pipeline raises before loading data. |
-| **Plotting / analysis skip** | When `resume=True` and all expected plot (or analysis) files exist, the pipeline skips loading the model for that run. |
+
+| Area                         | Description                                                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Run completion**           | A run is complete only when the best checkpoint exists, `last_epoch_trained` matches the target, and (for multi-segment) the last-epoch checkpoint is present when required. Final segment with `save_final_models_per_stretch: false` does not require the last checkpoint.                                                                                                             |
+| **need_data**                | The pipeline loads only what is required. It must load *something* when the seed dir is missing, any run is incomplete, or (when enabled) a plot or analysis output is missing. It skips loading when all runs are complete and plot/analysis are disabled or already present. See **Resume and data loading** for coords-only vs stats-only vs full load.                               |
+| **Resume logic**             | For both DistMap and Euclideanizer: **skip** when the run is complete; **from_scratch** when no previous run or `resume=False`; **resume_from_best** when the current run was interrupted (best epoch < target for first segment, or best > previous segment end for later segments); **resume_from_prev_last** when starting a new segment from the previous segment’s last checkpoint. |
+| **Config**                   | Loading `config_test.yaml` yields valid training groups; if resume is on and the saved pipeline config in the output dir does not match the current config, the pipeline raises before loading data.                                                                                                                                                                                     |
+| **Plotting / analysis skip** | When `resume=True` and all expected plot (or analysis) files exist, the pipeline skips loading the model for that run.                                                                                                                                                                                                                                                                   |
+
 
 **How to run**
 
@@ -114,7 +117,6 @@ A single end-to-end smoke test runs the pipeline with a minimal config using `te
 
 The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/test_data/generate_spheres.py`).
 
-
 ---
 
 ## Configuration
@@ -128,19 +130,19 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 ### Key options (summary)
 
 
-| Section                    | Purpose                                                                                                                |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **data**                   | `path`, `split_seed` (int or list for multiple seeds), `training_split`                                                |
-| **output_dir**             | Base directory for all outputs (each seed: `output_dir/seed_<n>/`)                                                     |
-| **distmap**                | VAE: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, lambda weights, `memory_efficient`, `save_final_models_per_stretch` |
-| **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights and `num_diags`. |
+| Section                    | Purpose                                                                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **data**                   | `path`, `split_seed` (int or list for multiple seeds), `training_split`                                                                       |
+| **output_dir**             | Base directory for all outputs (each seed: `output_dir/seed_<n>/`)                                                                            |
+| **distmap**                | VAE: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, lambda weights, `memory_efficient`, `save_final_models_per_stretch`    |
+| **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights and `num_diags`.                        |
 | **plotting**               | `enabled`, reconstruction / bond_rg_scaling / avg_gen_vs_exp, `num_samples`, `sample_variance`, `save_plot_data`, `save_structures_gro`, etc. |
-| **training_visualization** | `enabled`, `n_probe`, `n_quick`, `fps`, frame size/dpi, `delete_frames_after_video`                                    |
-| **analysis**               | `min_rmsd`, `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`, `save_data`, `save_structures_gro` |
+| **training_visualization** | `enabled`, `n_probe`, `n_quick`, `fps`, frame size/dpi, `delete_frames_after_video`                                                           |
+| **analysis**               | `min_rmsd`, `min_rmsd_num_samples`, `min_rmsd_sample_variance`, `min_rmsd_query_batch_size`, `save_data`, `save_structures_gro`               |
 
 
 - **Lists in config**: Any distmap or euclideanizer key can be a list; the pipeline runs one job per element of the Cartesian product (e.g. `beta_kl: [0.01, 0.05]` and `epochs: [100, 300]` → 4 DistMap runs).
-- **Epochs as list (segments)**: If `epochs` is a list (e.g. `[100, 300]`), the pipeline trains in segments: first to 100, then resume from the **last** epoch of that run and train to 300. Each segment gets its own run directory (e.g. `distmap/0/`, `distmap/1/`). The **best** checkpoint (by validation loss) is carried across segments. **Resume behavior**: (1) If a segment is interrupted (e.g. first segment stops at epoch 75 with best at 50), rerunning resumes from the **best** (50) and trains the remaining 50 epochs. (2) If a later segment is interrupted (e.g. 300-epoch run has best at 150 and stops at 250), rerunning resumes from the **best** (150) and trains the remaining 150 epochs. So the pipeline prefers resuming from the most recent of “previous segment’s last” or “current run’s best” when the best is more recent. The previous segment’s last checkpoint is deleted only **after** the current segment’s last is written (so a corrupted best save still has a fallback). When **`save_final_models_per_stretch`** is `false`, the **last** segment does not save a final-epoch checkpoint (no next segment needs it). Set `save_final_models_per_stretch` to `true` to keep each segment’s last checkpoint for inspection.
+- **Epochs as list (segments)**: If `epochs` is a list (e.g. `[100, 300]`), the pipeline trains in segments: first to 100, then resume from the **last** epoch of that run and train to 300. Each segment gets its own run directory (e.g. `distmap/0/`, `distmap/1/`). The **best** checkpoint (by validation loss) is carried across segments. **Resume behavior**: (1) If a segment is interrupted (e.g. first segment stops at epoch 75 with best at 50), rerunning resumes from the **best** (50) and trains the remaining 50 epochs. (2) If a later segment is interrupted (e.g. 300-epoch run has best at 150 and stops at 250), rerunning resumes from the **best** (150) and trains the remaining 150 epochs. So the pipeline prefers resuming from the most recent of “previous segment’s last” or “current run’s best” when the best is more recent. The previous segment’s last checkpoint is deleted only **after** the current segment’s last is written (so a corrupted best save still has a fallback). When `**save_final_models_per_stretch`** is `false`, the **last** segment does not save a final-epoch checkpoint (no next segment needs it). Set `save_final_models_per_stretch` to `true` to keep each segment’s last checkpoint for inspection.
 - **Euclideanizer ↔ DistMap**: For each trained DistMap, the pipeline trains one Euclideanizer run per Euclideanizer config combination; the correct frozen DistMap is chosen automatically.
 
 ---
@@ -152,7 +154,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 ```mermaid
 flowchart TB
     subgraph init["Initialization"]
-        A["run.py --config &lt;yaml&gt;"]
+        A["run.py --config <yaml>"]
         A --> B["Load config + CLI overrides"]
         B --> C["Validate required keys"]
         C --> D{"Training requested?"}
@@ -202,35 +204,39 @@ flowchart TB
     Z -->|No| AA["Pipeline complete"]
 ```
 
+
+
 ### Multi-GPU execution
 
 When **2+ CUDA devices** are available, the pipeline splits work into independent **(seed, DistMap group)** tasks and runs them in parallel: one worker process per GPU, each running its assigned tasks sequentially on that device. No change to config or output layout; resume and overwrite rules are unchanged.
 
-**Memory:** Each worker loads its own copy of the dataset and experimental statistics. The main process precomputes and caches per-seed train/test statistics, then frees its copy before spawning workers so that only the workers hold data (avoiding 1 + N copies and OOM). If you are still killed by the system (e.g. OOM killer) on large datasets, run with **`--no-multi-gpu`** or **`--gpus 1`** so only one copy is in memory.
+**Memory:** Each worker loads its own copy of the dataset and experimental statistics. The main process precomputes and caches per-seed train/test statistics, then frees its copy before spawning workers so that only the workers hold data (avoiding 1 + N copies and OOM). If you are still killed by the system (e.g. OOM killer) on large datasets, run with `**--no-multi-gpu`** or `**--gpus 1**` so only one copy is in memory.
 
 - **When it runs**: Automatically when `torch.cuda.is_available()` and `torch.cuda.device_count() >= 2`. Single-GPU and CPU (or MPS) runs use the same single-process loop as before.
 - **Restrict devices**: Set `CUDA_VISIBLE_DEVICES` (e.g. `CUDA_VISIBLE_DEVICES=0,1`) to limit which GPUs are seen. You can also use `--no-multi-gpu` to force the single-process path, or `--gpus N` to use at most N devices.
 
 ### Config and CLI reference (flow)
 
-| Source | Effect |
-|--------|--------|
-| **data.split_seed** | Single int → one run under `output_dir`. List → one full pipeline per seed under `base_output_dir/seed_<n>/`. |
-| **data.path** | Required for training. Used for train/test split and all plotting/analysis. |
-| **data.training_split** | Fraction for train (e.g. 0.8); same for DistMap, Euclideanizer, plotting, analysis. |
-| **distmap** (any key single or list) | Cartesian product → one DistMap run per combination. List for `epochs` → multi-segment training (e.g. 50, 100). |
-| **euclideanizer** (any key single or list) | One Euclideanizer run per (DistMap run × euclideanizer combination). Same epoch-segment logic. |
-| **plotting.enabled** | If false (or `--no-plots`), no plotting. |
-| **plotting.reconstruction / bond_rg_scaling / avg_gen_vs_exp** | Toggle reconstruction, Rg/scaling stats, and gen-vs-exp plots. |
-| **plotting.sample_variance** | List → one gen_variance plot set per value. |
-| **training_visualization.enabled** | One MP4 per DistMap and per Euclideanizer run (requires ffmpeg). |
-| **analysis.min_rmsd** | If true, min-RMSD analysis after each Euclideanizer (per variance × num_samples). |
-| **analysis.min_rmsd_num_samples** | Int or list → one min_rmsd figure set per value. |
-| **analysis.min_rmsd_sample_variance** | Float or list → one min_rmsd figure set per value. |
-| **resume** | If true: skip complete runs and existing plot/analysis outputs. If false: confirm then delete output_dir and run from scratch (unless **--yes-overwrite**, which skips the prompt for non-interactive use). |
-| **CUDA devices** | If 2+ available: tasks (seed × DistMap group) run in parallel, one process per GPU. Use `--no-multi-gpu` to disable or `--gpus N` to cap device count. |
-| **--no-multi-gpu** | Disable multi-GPU even when 2+ CUDA devices are available (single-process loop). |
-| **--gpus N** | Use at most N CUDA devices for multi-GPU (e.g. `--gpus 2` on a 4-GPU node). |
+
+| Source                                                         | Effect                                                                                                                                                                                                      |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **data.split_seed**                                            | Single int → one run under `output_dir`. List → one full pipeline per seed under `base_output_dir/seed_<n>/`.                                                                                               |
+| **data.path**                                                  | Required for training. Used for train/test split and all plotting/analysis.                                                                                                                                 |
+| **data.training_split**                                        | Fraction for train (e.g. 0.8); same for DistMap, Euclideanizer, plotting, analysis.                                                                                                                         |
+| **distmap** (any key single or list)                           | Cartesian product → one DistMap run per combination. List for `epochs` → multi-segment training (e.g. 50, 100).                                                                                             |
+| **euclideanizer** (any key single or list)                     | One Euclideanizer run per (DistMap run × euclideanizer combination). Same epoch-segment logic.                                                                                                              |
+| **plotting.enabled**                                           | If false (or `--no-plots`), no plotting.                                                                                                                                                                    |
+| **plotting.reconstruction / bond_rg_scaling / avg_gen_vs_exp** | Toggle reconstruction, Rg/scaling stats, and gen-vs-exp plots.                                                                                                                                              |
+| **plotting.sample_variance**                                   | List → one gen_variance plot set per value.                                                                                                                                                                 |
+| **training_visualization.enabled**                             | One MP4 per DistMap and per Euclideanizer run (requires ffmpeg).                                                                                                                                            |
+| **analysis.min_rmsd**                                          | If true, min-RMSD analysis after each Euclideanizer (per variance × num_samples).                                                                                                                           |
+| **analysis.min_rmsd_num_samples**                              | Int or list → one min_rmsd figure set per value.                                                                                                                                                            |
+| **analysis.min_rmsd_sample_variance**                          | Float or list → one min_rmsd figure set per value.                                                                                                                                                          |
+| **resume**                                                     | If true: skip complete runs and existing plot/analysis outputs. If false: confirm then delete output_dir and run from scratch (unless **--yes-overwrite**, which skips the prompt for non-interactive use). |
+| **CUDA devices**                                               | If 2+ available: tasks (seed × DistMap group) run in parallel, one process per GPU. Use `--no-multi-gpu` to disable or `--gpus N` to cap device count.                                                      |
+| **--no-multi-gpu**                                             | Disable multi-GPU even when 2+ CUDA devices are available (single-process loop).                                                                                                                            |
+| **--gpus N**                                                   | Use at most N CUDA devices for multi-GPU (e.g. `--gpus 2` on a 4-GPU node).                                                                                                                                 |
+
 
 ### Order of operations
 
@@ -259,14 +265,16 @@ flowchart TB
         A --> B{"resume and run complete?"}
         B -->|Yes| C["Skip"]
         B -->|No| D{"Previous segment exists?"}
-        D -->|No| E{"resume and best &lt; target?"}
+        D -->|No| E{"resume and best < target?"}
         E -->|Yes| F["Resume from best"]
         E -->|No| G["From scratch"]
-        D -->|Yes| H{"resume and best &gt; prev segment?"}
+        D -->|Yes| H{"resume and best > prev segment?"}
         H -->|Yes| F
         H -->|No| I["Resume from prev last"]
     end
 ```
+
+
 
 ### Plotting and analysis conditions
 
@@ -289,10 +297,12 @@ flowchart LR
     end
 ```
 
+
+
 ### Resume behavior
 
 - **Default** (`resume: true`): Skip training a run if the checkpoint exists and the run is “complete” (see below). Also skip regenerating plot or analysis files that already exist.
-- **Overwrite** (`resume: false` or `--no-resume`): If the output directory already exists, the pipeline prompts you to type `yes delete` and press Enter to confirm; anything else (or Ctrl+C) aborts without deleting. Once confirmed, the output directory is removed and the run starts from scratch. For **non-interactive runs** (e.g. SLURM), add **`--yes-overwrite`** to skip the prompt and avoid the job blocking on input.
+- **Overwrite** (`resume: false` or `--no-resume`): If the output directory already exists, the pipeline prompts you to type `yes delete` and press Enter to confirm; anything else (or Ctrl+C) aborts without deleting. Once confirmed, the output directory is removed and the run starts from scratch. For **non-interactive runs** (e.g. SLURM), add `**--yes-overwrite`** to skip the prompt and avoid the job blocking on input.
 
 **When is a run skipped?**
 
@@ -431,12 +441,12 @@ Euclideanizer_Pipeline/
 ### Plot types (when plotting enabled)
 
 
-| Plot                          | Description                                                                                                                                                                                                                                                                                   |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Reconstruction**            | Test-set samples: original vs reconstructed (DistMap) or original / VAE decode / Euclideanizer (Euclideanizer).                                                                                                                                                                               |
-| **Recon statistics**          | Bond lengths, radius of gyration, genomic scaling: experimental vs reconstruction. Separate figures for **test** and **train** subsets.                                                                                                                                                       |
-| **Generation (gen variance)** | For each `plotting.sample_variance`: distributions (bonds, Rg, scaling) for full/train/test/generated; row of average distance maps (train, test, gen); row of difference maps (test−train, train−gen, test−gen).                                                                             |
-| **Loss curves**               | Train and validation loss per epoch (saved under `plots/loss_curves/`).                                                                                                                                                                                                                       |
+| Plot                          | Description                                                                                                                                                                                                                                                                                                          |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reconstruction**            | Test-set samples: original vs reconstructed (DistMap) or original / VAE decode / Euclideanizer (Euclideanizer).                                                                                                                                                                                                      |
+| **Recon statistics**          | Bond lengths, radius of gyration, genomic scaling: experimental vs reconstruction. Separate figures for **test** and **train** subsets.                                                                                                                                                                              |
+| **Generation (gen variance)** | For each `plotting.sample_variance`: distributions (bonds, Rg, scaling) for full/train/test/generated; row of average distance maps (train, test, gen); row of difference maps (test−train, train−gen, test−gen).                                                                                                    |
+| **Loss curves**               | Train and validation loss per epoch (saved under `plots/loss_curves/`).                                                                                                                                                                                                                                              |
 | **Min-RMSD** (analysis)       | When `analysis.min_rmsd: true`: histograms of min-RMSD (test→train, gen→train, gen→test) per (DistMap, Euclideanizer) pair. One subdir per run under `analysis/min_rmsd/<run>/` (figure, optional `data/`, optional `structures/`). Optional `min_rmsd_num_samples` and `min_rmsd_sample_variance` (scalar or list). |
 
 
@@ -452,7 +462,7 @@ With `plotting.save_plot_data: true`, many plots write a `data/` subdir with `*_
 | **Recon statistics**               | `exp_bonds`, `exp_rg`, `genomic_distances`, `exp_scaling`, `recon_bonds`, `recon_rg`, `recon_scaling`                                                                                 |
 | **Gen variance**                   | `sample_variance`, `full_bonds`, `train_bonds`, `test_bonds`, `gen_bonds`, `avg_train_map`, `avg_test_map`, `avg_gen_map`, `diff_test_train`, `diff_train_gen`, `diff_test_gen`, etc. |
 | **Loss curves**                    | `epoch`, `train_loss`, `val_loss`                                                                                                                                                     |
-| **Min-RMSD** (analysis)           | When `analysis.save_data: true`: `analysis/min_rmsd/<run>/data/min_rmsd_data.npz` with keys `test_to_train`, `gen_to_train`, `gen_to_test`, `bins`.                                                                                                  |
+| **Min-RMSD** (analysis)            | When `analysis.save_data: true`: `analysis/min_rmsd/<run>/data/min_rmsd_data.npz` with keys `test_to_train`, `gen_to_train`, `gen_to_test`, `bins`.                                   |
 
 
 ---
