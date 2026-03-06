@@ -1015,7 +1015,7 @@ def _run_one_distmap_group(
             resume, dm_multi, dm_last_segment, dm_save_final,
         )
         if dm_act["action"] == "skip":
-            _log(f"DistMap run {ri} (epochs={ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
+            _log(f"DistMap run {ri} (seed {seed}, epochs={ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
             prev_dm_path = dm_path
             prev_dm_ev = ev
         else:
@@ -1024,7 +1024,7 @@ def _run_one_distmap_group(
                 if os.path.isdir(fd_dm):
                     shutil.rmtree(fd_dm)
             if dm_act["action"] == "from_scratch":
-                _log(f"DistMap run {ri}: training from scratch to {ev} epochs...", since_start=time.time() - pipeline_start, style="info")
+                _log(f"DistMap run {ri} (seed {seed}): training from scratch to {ev} epochs...", since_start=time.time() - pipeline_start, style="info")
                 epoch_cb = None
                 if vis_enabled and make_distmap_epoch_hook is not None:
                     epoch_cb, _ = make_distmap_epoch_hook(
@@ -1042,7 +1042,7 @@ def _run_one_distmap_group(
                     display_root=base_output_dir,
                 )
             elif dm_act["action"] == "resume_from_best":
-                _log(f"DistMap run {ri}: resuming from best (epoch {dm_act['best_epoch']}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
+                _log(f"DistMap run {ri} (seed {seed}): resuming from best (epoch {dm_act['best_epoch']}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
                 epoch_cb = None
                 if vis_enabled and make_distmap_epoch_hook is not None:
                     epoch_cb, _ = make_distmap_epoch_hook(
@@ -1061,7 +1061,7 @@ def _run_one_distmap_group(
                     display_root=base_output_dir,
                 )
             else:
-                _log(f"DistMap run {ri}: resuming from run (epochs={prev_dm_ev}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
+                _log(f"DistMap run {ri} (seed {seed}): resuming from run (epochs={prev_dm_ev}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
                 epoch_cb = None
                 if vis_enabled and make_distmap_epoch_hook is not None:
                     epoch_cb, _ = make_distmap_epoch_hook(
