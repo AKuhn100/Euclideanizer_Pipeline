@@ -46,8 +46,9 @@ REQUIRED_KEYS = {
         "fps", "frame_width", "frame_height", "frame_dpi",
         "delete_frames_after_video",
     ],
+    "dashboard": ["enabled"],
 }
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "plotting", "analysis", "training_visualization"]
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "plotting", "analysis", "training_visualization", "dashboard"]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

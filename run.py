@@ -813,6 +813,7 @@ def _parse_args():
     p.add_argument("--data", type=str, default=None, help="Path to dataset (required for training)")
     p.add_argument("--config", type=str, required=True, help="Path to YAML config (e.g. samples/config_sample.yaml)")
     p.add_argument("--no-plots", action="store_true", help="Disable all plotting")
+    p.add_argument("--no-dashboard", action="store_true", dest="no_dashboard", help="Do not build interactive dashboard in run root")
     p.add_argument("--no-resume", action="store_true", help="Do not resume; overwrite existing run outputs")
     p.add_argument("--yes-overwrite", action="store_true", help="With --no-resume: skip confirmation prompt (use for SLURM/scripted runs)")
     p.add_argument("--no-multi-gpu", action="store_true", dest="no_multi_gpu", help="Disable multi-GPU parallelization even when 2+ CUDA devices are available")
@@ -854,6 +855,8 @@ def _args_to_overrides(args) -> dict:
         o["output_dir"] = args.output_dir
     if args.no_plots:
         o.setdefault("plotting", {})["enabled"] = False
+    if getattr(args, "no_dashboard", False):
+        o.setdefault("dashboard", {})["enabled"] = False
     if args.no_resume:
         o["resume"] = False
     if args.distmap_beta_kl is not None and len(args.distmap_beta_kl) > 0:
@@ -1813,6 +1816,9 @@ def main():
     analysis_cfg = cfg["analysis"]
     do_min_rmsd = analysis_cfg["min_rmsd"]
     training_split = cfg["data"]["training_split"]
+    do_dashboard = cfg["dashboard"]["enabled"]
+    if getattr(args, "no_dashboard", False):
+        do_dashboard = False
 
     # Training requires dataset
     dm_configs = expand_distmap_grid(cfg)
@@ -2101,6 +2107,15 @@ def main():
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
         )
+
+    if do_dashboard:
+        from src.dashboard import build_dashboard
+        _log("Building dashboard...", since_start=time.time() - pipeline_start, style="info")
+        dashboard_dir = build_dashboard(base_output_dir)
+        if dashboard_dir:
+            _log(f"Dashboard saved to {dashboard_dir}", since_start=time.time() - pipeline_start, style="success")
+        else:
+            _log("Dashboard skipped (no runs with outputs found).", since_start=time.time() - pipeline_start, style="skip")
 
     total_min = (time.time() - pipeline_start) / 60
     _log("Pipeline complete.", since_start=time.time() - pipeline_start, style="success")

@@ -75,3 +75,7 @@ analysis:
   min_rmsd_query_batch_size: 128     # scalar only (batch size for min-RMSD queries)
   save_data: true                 # if true, save .npz data for analysis (e.g. min_rmsd run)
   save_structures_gro: true      # if true, save generated structures used in analysis in GRO format (in analysis/.../structures/)
+
+# Dashboard: interactive HTML report in run root (dashboard/). Disable with --no-dashboard or dashboard.enabled: false.
+dashboard:
+  enabled: true

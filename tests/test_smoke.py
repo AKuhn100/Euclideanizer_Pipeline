@@ -10,6 +10,7 @@ Marked slow; to skip it for a quicker run: pytest -m "not slow".
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -69,3 +70,13 @@ def test_pipeline_smoke_run(tmp_path):
         eu_pt = os.path.join(output_dir, f"seed_{seed}", "distmap", "0", "euclideanizer", "0", "model", "euclideanizer.pt")
         assert os.path.isfile(dm_pt), f"DistMap checkpoint missing: {dm_pt}"
         assert os.path.isfile(eu_pt), f"Euclideanizer checkpoint missing: {eu_pt}"
+
+    dashboard_dir = os.path.join(output_dir, "dashboard")
+    assert os.path.isdir(dashboard_dir), f"Dashboard dir missing: {dashboard_dir}"
+    assert os.path.isfile(os.path.join(dashboard_dir, "index.html")), "dashboard/index.html missing"
+    assert os.path.isfile(os.path.join(dashboard_dir, "manifest.json")), "dashboard/manifest.json missing"
+    assert os.path.isdir(os.path.join(dashboard_dir, "assets")), "dashboard/assets/ missing"
+    with open(os.path.join(dashboard_dir, "manifest.json"), encoding="utf-8") as f:
+        manifest = json.load(f)
+    assert "runs" in manifest, "manifest.json must contain 'runs'"
+    assert len(manifest["runs"]) >= 1, "manifest should have at least one run"

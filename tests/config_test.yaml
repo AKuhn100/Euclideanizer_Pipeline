@@ -66,3 +66,6 @@ analysis:
   min_rmsd_query_batch_size: 8
   save_data: false
   save_structures_gro: false
+
+dashboard:
+  enabled: true
