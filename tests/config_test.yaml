@@ -37,6 +37,7 @@ euclideanizer:
 
 plotting:
   enabled: true
+  overwrite_existing: false
   reconstruction: true
   bond_rg_scaling: true
   avg_gen_vs_exp: true
@@ -45,8 +46,8 @@ plotting:
   sample_variance: [1.0]
   num_reconstruction_samples: 2
   plot_dpi: 72
+  save_data: false
   save_pdf_copy: false
-  save_plot_data: false
   save_structures_gro: false
 
 training_visualization:
@@ -60,12 +61,23 @@ training_visualization:
   delete_frames_after_video: true
 
 analysis:
-  min_rmsd: true
-  min_rmsd_num_samples: 10
-  min_rmsd_sample_variance: [1.0]
-  min_rmsd_query_batch_size: 8
-  save_data: false
-  save_structures_gro: false
+  min_rmsd_gen:
+    enabled: true
+    overwrite_existing: false
+    num_samples: 10
+    sample_variance: [1.0]
+    query_batch_size: 8
+    save_data: false
+    save_pdf_copy: false
+    save_structures_gro: false
+  min_rmsd_recon:
+    enabled: true
+    overwrite_existing: false
+    max_recon_train: null
+    max_recon_test: null
+    save_data: false
+    save_pdf_copy: false
+    visualize_latent: false
 
 dashboard:
   enabled: true

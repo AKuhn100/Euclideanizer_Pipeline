@@ -324,7 +324,7 @@ def make_distmap_epoch_hook(coords, dm_cfg, run_dir, device, utils_mod, vis_cfg,
     n_probe = vis_cfg["n_probe"]
     n_quick = vis_cfg["n_quick"]
     latent_dim = dm_cfg["latent_dim"]
-    frames_dir = os.path.join(run_dir, "plots", "training_video", "frames")
+    frames_dir = os.path.join(run_dir, "training_video", "frames")
     total_epochs = int(total_epochs_display) if total_epochs_display is not None else dm_cfg["epochs"]
 
     from . import utils
@@ -374,7 +374,7 @@ def make_distmap_epoch_hook(coords, dm_cfg, run_dir, device, utils_mod, vis_cfg,
         epoch_for_loss_line = epoch if epoch_start else None
         if run_dirs:
             for d in run_dirs:
-                fd = os.path.join(d, "plots", "training_video", "frames")
+                fd = os.path.join(d, "training_video", "frames")
                 render_dm_frame(
                     display_epoch, total_epochs,
                     probe_ref_coords, probe_input_dms, probe_recon_dms,
@@ -411,7 +411,7 @@ def make_euclideanizer_epoch_hook(coords, eu_cfg, frozen_vae_path, frozen_latent
     n_quick = vis_cfg["n_quick"]
     latent_dim = frozen_latent_dim
     total_epochs = int(total_epochs_display) if total_epochs_display is not None else eu_cfg["epochs"]
-    frames_dir = os.path.join(run_dir, "plots", "training_video", "frames")
+    frames_dir = os.path.join(run_dir, "training_video", "frames")
 
     from . import utils
     train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
@@ -472,7 +472,7 @@ def make_euclideanizer_epoch_hook(coords, eu_cfg, frozen_vae_path, frozen_latent
         epoch_for_loss_line = epoch if epoch_start else None
         if run_dirs:
             for d in run_dirs:
-                fd = os.path.join(d, "plots", "training_video", "frames")
+                fd = os.path.join(d, "training_video", "frames")
                 render_eu_frame(
                     display_epoch, total_epochs,
                     probe_ref_coords, probe_input_dms, probe_non_euclidean_dms,

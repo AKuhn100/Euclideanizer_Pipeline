@@ -13,7 +13,7 @@ import torch
 
 from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
 from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
-from src.min_rmsd import _rmsd_matrix_batch
+from src.min_rmsd import _rmsd_matrix_batch, _recon_rmsd_one_to_one
 from src.utils import (
     display_path,
     get_available_cuda_count,
@@ -329,6 +329,16 @@ def test_rmsd_matrix_batch_identical_coords_zero():
     rmsd = _rmsd_matrix_batch(coords, refs)
     assert rmsd.shape == (1, 1)
     assert np.isclose(rmsd[0, 0], 0.0, atol=1e-5)
+
+
+def test_recon_rmsd_one_to_one():
+    """_recon_rmsd_one_to_one returns (n,) RMSD per structure; identical original/recon gives zero."""
+    S, N = 3, 4
+    original = np.random.randn(S, N, 3).astype(np.float32)
+    recon = np.copy(original)
+    rmsds = _recon_rmsd_one_to_one(original, recon)
+    assert rmsds.shape == (S,)
+    assert np.allclose(rmsds, 0.0, atol=1e-5)
 
 
 # ---------------------------------------------------------------------------

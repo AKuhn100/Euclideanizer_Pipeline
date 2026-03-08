@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 from .utils import display_path, get_train_test_split
+from .plotting import _save_pdf_copy
 
 
 def _rmsd_matrix_batch(queries: np.ndarray, ref_coords: np.ndarray) -> np.ndarray:
@@ -76,6 +77,9 @@ def get_or_compute_test_to_train_rmsd(
     """
     Load test→train min-RMSD (and train/test coords) from seed-level cache, or compute and save.
     Same for all analyses in the seed (same split). Returns (test_to_train, train_coords_np, test_coords_np).
+
+    The seed-level cache is always written when computed (independent of the analysis block's save_data).
+    Per-run outputs (min_rmsd_data.npz, min_rmsd_recon_data.npz) are still gated by save_data.
     """
     if os.path.isfile(cache_path):
         try:
@@ -102,6 +106,7 @@ def get_or_compute_test_to_train_rmsd(
     test_to_train = min_rmsd_batch(
         test_coords_np, train_coords_np, query_batch_size=query_batch_size, desc="Test → Train (min RMSD)"
     )
+    # Always save when computed (independent of analysis save_data); reused for all runs in this seed.
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     np.savez_compressed(
         cache_path,
@@ -153,14 +158,16 @@ def _run_one_min_rmsd(
     os.makedirs(run_dir_this, exist_ok=True)
     out_path = os.path.join(run_dir_this, "min_rmsd_distributions.png")
     plt.savefig(out_path, dpi=dpi)
+    if plot_cfg.get("save_pdf_copy", False):
+        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
     plt.close()
 
     if save_data:
         data_dir = os.path.join(run_dir_this, "data")
         os.makedirs(data_dir, exist_ok=True)
         data_path = os.path.join(data_dir, "min_rmsd_data.npz")
+        # test_to_train is stored at seed level (experimental_statistics/test_to_train_rmsd.npz), not duplicated here
         save_kw: dict = dict(
-            test_to_train=test_to_train,
             gen_to_train=gen_to_train,
             gen_to_test=gen_to_test,
             bins=bins,
@@ -206,7 +213,7 @@ def run_min_rmsd_analysis(
     When precomputed_test_to_train, train_coords_np, test_coords_np are provided (e.g. from seed-level cache), they are reused.
     """
     run_name = output_suffix.lstrip("_") if output_suffix else "default"
-    run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", run_name)
+    run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", "gen", run_name)
     save_data = plot_cfg["save_data"]
     save_structures_gro = plot_cfg["save_structures_gro"]
 
@@ -321,7 +328,7 @@ def run_min_rmsd_analysis_multi(
     loaded_n = 0
     for n in reversed(sorted_n):
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
-        run_dir_n = os.path.join(run_dir, "analysis", "min_rmsd", run_name)
+        run_dir_n = os.path.join(run_dir, "analysis", "min_rmsd", "gen", run_name)
         fig_p = os.path.join(run_dir_n, "min_rmsd_distributions.png")
         data_p = os.path.join(run_dir_n, "data", "min_rmsd_data.npz")
         if os.path.isfile(fig_p) and os.path.isfile(data_p):
@@ -370,7 +377,7 @@ def run_min_rmsd_analysis_multi(
             gen_coords_np = np.concatenate(acc_gen_coords, axis=0)
 
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
-        run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", run_name)
+        run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", "gen", run_name)
         print(f"  Min-RMSD: n={n}, variance={sample_variance} (merged from {len(acc_gen_to_train)} chunk(s))...")
         path = _run_one_min_rmsd(
             run_dir_this, test_to_train, gen_to_train, gen_to_test,
@@ -387,3 +394,181 @@ def run_min_rmsd_analysis_multi(
                 shutil.rmtree(d, ignore_errors=True)
 
     return out_paths
+
+
+def _recon_rmsd_one_to_one(original_coords: np.ndarray, recon_coords: np.ndarray) -> np.ndarray:
+    """RMSD between each original and its reconstruction (same index). Returns (n,) array. Uses Kabsch via _rmsd_matrix_batch diagonal."""
+    if original_coords.shape[0] != recon_coords.shape[0]:
+        raise ValueError("original_coords and recon_coords must have same number of structures")
+    rmsd_mat = _rmsd_matrix_batch(recon_coords, original_coords)
+    return np.diag(rmsd_mat).astype(np.float32)
+
+
+def _run_one_min_rmsd_recon(
+    run_dir_recon: str,
+    test_to_train: np.ndarray,
+    train_recon_rmsd: np.ndarray,
+    test_recon_rmsd: np.ndarray,
+    plot_cfg: dict,
+    display_root: str | None,
+    save_data: bool,
+) -> str:
+    """Write recon min-RMSD figure (test→train, train recon, test recon) and optional data. Returns path to figure."""
+    dpi = plot_cfg["plot_dpi"]
+    all_vals = np.concatenate([test_to_train, train_recon_rmsd, test_recon_rmsd])
+    x_min = max(0.0, np.percentile(all_vals, 0.5) - 0.5)
+    x_max = np.percentile(all_vals, 99.5) + 0.5
+    bins = np.linspace(x_min, x_max, 50)
+
+    fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color="C0", edgecolor="k", linewidth=0.3)
+    axes[0].set_ylabel("Density")
+    axes[0].set_title("Test → Train (min RMSD to training set)")
+    axes[0].set_xlim(x_min, x_max)
+    axes[0].grid(True, alpha=0.3)
+    axes[1].hist(train_recon_rmsd, bins=bins, density=True, alpha=0.7, color="C1", edgecolor="k", linewidth=0.3)
+    axes[1].set_ylabel("Density")
+    axes[1].set_title("Train reconstruction (aligned RMSD to original)")
+    axes[1].set_xlim(x_min, x_max)
+    axes[1].grid(True, alpha=0.3)
+    axes[2].hist(test_recon_rmsd, bins=bins, density=True, alpha=0.7, color="C2", edgecolor="k", linewidth=0.3)
+    axes[2].set_ylabel("Density")
+    axes[2].set_xlabel("Min RMSD (aligned coords)")
+    axes[2].set_title("Test reconstruction (aligned RMSD to original)")
+    axes[2].set_xlim(x_min, x_max)
+    axes[2].grid(True, alpha=0.3)
+    plt.tight_layout()
+    os.makedirs(run_dir_recon, exist_ok=True)
+    out_path = os.path.join(run_dir_recon, "min_rmsd_distributions.png")
+    plt.savefig(out_path, dpi=dpi)
+    if plot_cfg.get("save_pdf_copy", False):
+        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
+    plt.close()
+
+    if save_data:
+        data_dir = os.path.join(run_dir_recon, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        data_path = os.path.join(data_dir, "min_rmsd_recon_data.npz")
+        # test_to_train is at seed level (experimental_statistics/test_to_train_rmsd.npz), not duplicated here
+        np.savez_compressed(
+            data_path,
+            train_recon_rmsd=train_recon_rmsd,
+            test_recon_rmsd=test_recon_rmsd,
+            bins=bins,
+        )
+        print(f"  Saved: {display_path(data_path, display_root)}")
+
+    print(f"  Saved: {display_path(out_path, display_root)}")
+    return out_path
+
+
+def run_min_rmsd_recon_analysis(
+    test_to_train: np.ndarray,
+    train_coords_np: np.ndarray,
+    test_coords_np: np.ndarray,
+    train_recon_coords_np: np.ndarray,
+    test_recon_coords_np: np.ndarray,
+    run_dir: str,
+    plot_cfg: dict,
+    display_root: str | None = None,
+    recon_subdir: str = "",
+) -> str:
+    """
+    Compute recon min-RMSD figure: test→train (reused), train recon RMSD, test recon RMSD.
+    Saves to run_dir/analysis/min_rmsd/recon[/recon_subdir]/min_rmsd_distributions.png and optional data/.
+    When recon_subdir is non-empty (e.g. "train100_test50"), outputs go under recon/recon_subdir/.
+    """
+    run_dir_recon = os.path.join(run_dir, "analysis", "min_rmsd", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "min_rmsd", "recon")
+    save_data = plot_cfg["save_data"]
+    # Ensure we have the same count (cap may have been applied to recon)
+    n_train = min(train_coords_np.shape[0], train_recon_coords_np.shape[0])
+    n_test = min(test_coords_np.shape[0], test_recon_coords_np.shape[0])
+    train_coords_np = train_coords_np[:n_train]
+    train_recon_coords_np = train_recon_coords_np[:n_train]
+    test_coords_np = test_coords_np[:n_test]
+    test_recon_coords_np = test_recon_coords_np[:n_test]
+    print(f"  Min-RMSD recon: train {n_train}, test {n_test} (test→train + recon RMSD)...")
+    train_recon_rmsd = _recon_rmsd_one_to_one(train_coords_np, train_recon_coords_np)
+    test_recon_rmsd = _recon_rmsd_one_to_one(test_coords_np, test_recon_coords_np)
+    return _run_one_min_rmsd_recon(
+        run_dir_recon, test_to_train, train_recon_rmsd, test_recon_rmsd,
+        plot_cfg, display_root, save_data,
+    )
+
+
+def plot_latent_distribution(
+    train_mu_np: np.ndarray,
+    test_mu_np: np.ndarray,
+    out_path: str,
+    plot_dpi: int = 150,
+    display_root: str | None = None,
+    save_pdf_copy: bool = False,
+) -> None:
+    """
+    Plot latent distribution: top row two box plots (train left, test right), shared y;
+    middle row one plot full width = mean per dimension (train vs test lines);
+    bottom row one plot full width = std per dimension (train vs test lines).
+    """
+    from .utils import display_path
+    n_dim = train_mu_np.shape[1]
+    dims = np.arange(n_dim)
+    fig = plt.figure(figsize=(12, 10))
+    # Top row: two box plots side by side (train left, test right)
+    ax1 = fig.add_subplot(3, 2, 1)
+    ax1.boxplot(
+        [train_mu_np[:, d] for d in range(n_dim)],
+        positions=np.arange(n_dim),
+        widths=0.6,
+        patch_artist=True,
+    )
+    ax1.set_ylabel("Latent value")
+    ax1.set_title("Train latent distribution")
+    ax1.set_xlabel("Dimension")
+    ax1.set_xlim(-0.5, n_dim - 0.5)
+
+    ax2 = fig.add_subplot(3, 2, 2)
+    ax2.boxplot(
+        [test_mu_np[:, d] for d in range(n_dim)],
+        positions=np.arange(n_dim),
+        widths=0.6,
+        patch_artist=True,
+    )
+    ax2.set_ylabel("Latent value")
+    ax2.set_title("Test latent distribution")
+    ax2.set_xlabel("Dimension")
+    ax2.set_xlim(-0.5, n_dim - 0.5)
+    y_min = min(train_mu_np.min(), test_mu_np.min())
+    y_max = max(train_mu_np.max(), test_mu_np.max())
+    ax1.set_ylim(y_min, y_max)
+    ax2.set_ylim(y_min, y_max)
+
+    # Middle row: mean per dimension (full width)
+    ax_mean = fig.add_subplot(3, 2, (3, 4))
+    mean_train = np.mean(train_mu_np, axis=0)
+    mean_test = np.mean(test_mu_np, axis=0)
+    ax_mean.plot(dims, mean_train, label="Train", color="C0")
+    ax_mean.plot(dims, mean_test, label="Test", color="C1")
+    ax_mean.set_xlabel("Dimension")
+    ax_mean.set_ylabel("Mean")
+    ax_mean.legend()
+    ax_mean.grid(True, alpha=0.3)
+
+    # Bottom row: std per dimension (full width)
+    ax_std = fig.add_subplot(3, 2, (5, 6))
+    std_train = np.std(train_mu_np, axis=0)
+    std_test = np.std(test_mu_np, axis=0)
+    ax_std.plot(dims, std_train, label="Train", color="C0")
+    ax_std.plot(dims, std_test, label="Test", color="C1")
+    ax_std.set_xlabel("Dimension")
+    ax_std.set_ylabel("Std")
+    ax_std.legend()
+    ax_std.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    plt.savefig(out_path, dpi=plot_dpi)
+    if save_pdf_copy:
+        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
+    plt.close()
+    if display_root is not None:
+        print(f"  Saved: {display_path(out_path, display_root)}")

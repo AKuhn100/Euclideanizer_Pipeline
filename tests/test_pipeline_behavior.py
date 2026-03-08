@@ -660,6 +660,44 @@ def test_euclideanizer_analysis_all_present_true_when_no_min_rmsd(tmp_path):
     ) is True
 
 
+def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path):
+    """When do_min_rmsd is True and gen outputs exist at analysis/min_rmsd/gen/<run_name>/, analysis is all present."""
+    # Single variance and single num_samples -> run_name is "default"
+    run_dir = tmp_path / "analysis" / "min_rmsd" / "gen" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "min_rmsd_distributions.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        do_min_rmsd_recon=False, visualize_latent=False,
+    ) is True
+
+
+def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing(tmp_path):
+    """When do_min_rmsd_recon is True and recon figure is missing, analysis is not all present."""
+    run_dir = tmp_path / "analysis" / "min_rmsd" / "gen" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "min_rmsd_distributions.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        do_min_rmsd_recon=True, visualize_latent=False,
+        max_recon_train_list=[None], max_recon_test_list=[None],
+    ) is False
+
+
+def test_euclideanizer_analysis_all_present_true_when_recon_and_latent_exist(tmp_path):
+    """When do_min_rmsd_recon and visualize_latent are True, recon and latent figures must exist."""
+    (tmp_path / "analysis" / "min_rmsd" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "min_rmsd" / "gen" / "default" / "min_rmsd_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "min_rmsd" / "recon").mkdir(parents=True)
+    (tmp_path / "analysis" / "min_rmsd" / "recon" / "min_rmsd_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "min_rmsd" / "recon" / "latent_distribution.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        do_min_rmsd_recon=True, visualize_latent=True,
+        max_recon_train_list=[None], max_recon_test_list=[None],
+    ) is True
+
+
 def test_pipeline_need_data_false_only_when_all_runs_and_outputs_present(tmp_path):
     """need_data is False only when every run is complete and plot/analysis flags are off (no outputs to check)."""
     cfg = _load_test_config()

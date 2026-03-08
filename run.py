@@ -49,9 +49,11 @@ from src.config import (
     load_pipeline_config,
     save_pipeline_config,
     configs_match_exactly,
+    configs_match_sections,
     config_diff,
     run_config_section_matches,
     pipeline_config_path,
+    TRAINING_CRITICAL_KEYS,
 )
 from src.metrics import compute_exp_statistics
 from src.train_distmap import train_distmap
@@ -65,7 +67,13 @@ from src.plotting import (
 from src.distmap.model import ChromVAE_Conv
 from src.distmap.sample import generate_samples as dm_generate_samples
 from src.euclideanizer.model import Euclideanizer, load_frozen_vae
-from src.min_rmsd import run_min_rmsd_analysis, run_min_rmsd_analysis_multi, get_or_compute_test_to_train_rmsd
+from src.min_rmsd import (
+    run_min_rmsd_analysis,
+    run_min_rmsd_analysis_multi,
+    run_min_rmsd_recon_analysis,
+    plot_latent_distribution,
+    get_or_compute_test_to_train_rmsd,
+)
 from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
@@ -205,6 +213,196 @@ def _confirm_overwrite(base_output_dir: str) -> None:
     print(_red(f"  Resume is OFF. Output directory already exists:"))
     print(_red(f"    {base_output_dir}"))
     print(_red("  All contents will be DELETED and the run will start from scratch."))
+    print(_red(""))
+    print(_red(f"  To CONFIRM: type exactly  {OVERWRITE_CONFIRM_PHRASE!r}  and press Enter."))
+    print(_red("  To ABORT:    type anything else, or press Ctrl+C."))
+    print(_red(line))
+    print()
+    try:
+        reply = input(_red("> ")).strip()
+    except (EOFError, KeyboardInterrupt):
+        print(_red("Aborted."))
+        sys.exit(1)
+    if reply.lower() != OVERWRITE_CONFIRM_PHRASE.lower():
+        print(_red("Aborted."))
+        sys.exit(1)
+
+
+def _confirm_replot_one_chunk(base_output_dir: str, chunk_label: str) -> None:
+    """When resume and one plotting/analysis chunk's config changed: prompt to confirm removal of that chunk's outputs."""
+    width = 70
+    line = "=" * width
+    print()
+    print(_red(line))
+    print(_red(f"  CONFIG CHANGED: {chunk_label}  "))
+    print(_red(line))
+    print(_red(f"  Output directory: {base_output_dir}"))
+    print(_red(f"  Training config matches; {chunk_label} config differs from saved."))
+    print(_red(f"  Existing {chunk_label} outputs will be REMOVED, then re-run."))
+    print(_red(""))
+    print(_red(f"  To CONFIRM: type exactly  {OVERWRITE_CONFIRM_PHRASE!r}  and press Enter."))
+    print(_red("  To ABORT:    type anything else, or press Ctrl+C."))
+    print(_red(line))
+    print()
+    try:
+        reply = input(_red("> ")).strip()
+    except (EOFError, KeyboardInterrupt):
+        print(_red("Aborted."))
+        sys.exit(1)
+    if reply.lower() != OVERWRITE_CONFIRM_PHRASE.lower():
+        print(_red("Aborted."))
+        sys.exit(1)
+
+
+def _delete_plotting_and_analysis_outputs(base_output_dir: str, seeds: list) -> None:
+    """Remove all plots/, analysis/, and dashboard under base_output_dir for the given seeds."""
+    import re
+    for seed in seeds:
+        seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        if not os.path.isdir(seed_dir):
+            continue
+        distmap_dir = os.path.join(seed_dir, "distmap")
+        if not os.path.isdir(distmap_dir):
+            continue
+        for dm_name in os.listdir(distmap_dir):
+            if not dm_name.isdigit():
+                continue
+            dm_path = os.path.join(distmap_dir, dm_name)
+            plots_dm = os.path.join(dm_path, "plots")
+            if os.path.isdir(plots_dm):
+                shutil.rmtree(plots_dm, ignore_errors=True)
+            eu_dir = os.path.join(dm_path, "euclideanizer")
+            if os.path.isdir(eu_dir):
+                for eu_name in os.listdir(eu_dir):
+                    if not eu_name.isdigit():
+                        continue
+                    eu_path = os.path.join(eu_dir, eu_name)
+                    plots_eu = os.path.join(eu_path, "plots")
+                    if os.path.isdir(plots_eu):
+                        shutil.rmtree(plots_eu, ignore_errors=True)
+                    analysis_dir = os.path.join(eu_path, "analysis")
+                    if os.path.isdir(analysis_dir):
+                        shutil.rmtree(analysis_dir, ignore_errors=True)
+    dashboard_dir = os.path.join(base_output_dir, "dashboard")
+    if os.path.isdir(dashboard_dir):
+        shutil.rmtree(dashboard_dir, ignore_errors=True)
+
+
+def _has_any_plotting_output(base_output_dir: str, seeds: list) -> bool:
+    """True if any plots/ or dashboard exists under base_output_dir for the given seeds."""
+    for seed in seeds:
+        seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        if not os.path.isdir(seed_dir):
+            continue
+        distmap_dir = os.path.join(seed_dir, "distmap")
+        if not os.path.isdir(distmap_dir):
+            continue
+        for dm_name in os.listdir(distmap_dir):
+            if not dm_name.isdigit():
+                continue
+            dm_path = os.path.join(distmap_dir, dm_name)
+            if os.path.isdir(os.path.join(dm_path, "plots")):
+                return True
+            eu_dir = os.path.join(dm_path, "euclideanizer")
+            if os.path.isdir(eu_dir):
+                for eu_name in os.listdir(eu_dir):
+                    if not eu_name.isdigit():
+                        continue
+                    if os.path.isdir(os.path.join(eu_dir, eu_name, "plots")):
+                        return True
+    if os.path.isdir(os.path.join(base_output_dir, "dashboard")):
+        return True
+    return False
+
+
+def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) -> bool:
+    """True if any analysis output for the given component exists. component: 'min_rmsd_gen' or 'min_rmsd_recon'."""
+    subdir = "gen" if component == "min_rmsd_gen" else "recon"
+    target = os.path.join("analysis", "min_rmsd", subdir)
+    for seed in seeds:
+        seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        if not os.path.isdir(seed_dir):
+            continue
+        distmap_dir = os.path.join(seed_dir, "distmap")
+        if not os.path.isdir(distmap_dir):
+            continue
+        for dm_name in os.listdir(distmap_dir):
+            if not dm_name.isdigit():
+                continue
+            eu_dir = os.path.join(distmap_dir, dm_name, "euclideanizer")
+            if not os.path.isdir(eu_dir):
+                continue
+            for eu_name in os.listdir(eu_dir):
+                if not eu_name.isdigit():
+                    continue
+                if os.path.isdir(os.path.join(eu_dir, eu_name, target)):
+                    return True
+    return False
+
+
+def _delete_plotting_outputs_only(base_output_dir: str, seeds: list) -> None:
+    """Remove all plots/ and dashboard under base_output_dir for the given seeds (no analysis dirs)."""
+    for seed in seeds:
+        seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        if not os.path.isdir(seed_dir):
+            continue
+        distmap_dir = os.path.join(seed_dir, "distmap")
+        if not os.path.isdir(distmap_dir):
+            continue
+        for dm_name in os.listdir(distmap_dir):
+            if not dm_name.isdigit():
+                continue
+            dm_path = os.path.join(distmap_dir, dm_name)
+            plots_dm = os.path.join(dm_path, "plots")
+            if os.path.isdir(plots_dm):
+                shutil.rmtree(plots_dm, ignore_errors=True)
+            eu_dir = os.path.join(dm_path, "euclideanizer")
+            if os.path.isdir(eu_dir):
+                for eu_name in os.listdir(eu_dir):
+                    if not eu_name.isdigit():
+                        continue
+                    plots_eu = os.path.join(eu_dir, eu_name, "plots")
+                    if os.path.isdir(plots_eu):
+                        shutil.rmtree(plots_eu, ignore_errors=True)
+    dashboard_dir = os.path.join(base_output_dir, "dashboard")
+    if os.path.isdir(dashboard_dir):
+        shutil.rmtree(dashboard_dir, ignore_errors=True)
+
+
+def _delete_analysis_outputs_for_component(base_output_dir: str, seeds: list, component: str) -> None:
+    """Remove entire analysis/ folder for each run (simplicity: one wipe for any analysis component). component: 'min_rmsd_gen' or 'min_rmsd_recon'."""
+    target = "analysis"
+    for seed in seeds:
+        seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        if not os.path.isdir(seed_dir):
+            continue
+        distmap_dir = os.path.join(seed_dir, "distmap")
+        if not os.path.isdir(distmap_dir):
+            continue
+        for dm_name in os.listdir(distmap_dir):
+            if not dm_name.isdigit():
+                continue
+            eu_dir = os.path.join(distmap_dir, dm_name, "euclideanizer")
+            if not os.path.isdir(eu_dir):
+                continue
+            for eu_name in os.listdir(eu_dir):
+                if not eu_name.isdigit():
+                    continue
+                path = os.path.join(eu_dir, eu_name, target)
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+
+
+def _confirm_overwrite_outputs(labels: list) -> None:
+    """Prompt user to type OVERWRITE_CONFIRM_PHRASE to confirm overwrite of the listed output types. Else abort."""
+    width = 70
+    line = "=" * width
+    print()
+    print(_red(line))
+    print(_red("  OVERWRITE EXISTING OUTPUTS  "))
+    print(_red(line))
+    print(_red("  You requested overwrite_existing for: " + ", ".join(labels)))
+    print(_red("  Existing outputs for these will be REMOVED before re-running."))
     print(_red(""))
     print(_red(f"  To CONFIRM: type exactly  {OVERWRITE_CONFIRM_PHRASE!r}  and press Enter."))
     print(_red("  To ABORT:    type anything else, or press Ctrl+C."))
@@ -650,17 +848,43 @@ def _euclideanizer_analysis_all_present(
     do_min_rmsd: bool,
     variance_list: list,
     num_samples_list: list,
+    do_min_rmsd_recon: bool = False,
+    visualize_latent: bool = False,
+    max_recon_train_list: list | None = None,
+    max_recon_test_list: list | None = None,
 ) -> bool:
-    """True if resume and do_min_rmsd and all min_rmsd analysis outputs we would generate already exist."""
-    if not resume or not do_min_rmsd:
-        return True  # no analysis or not resuming -> "all present" for analysis
-    for var in variance_list:
-        variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
-        for n in num_samples_list:
-            run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
-            fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"{run_name}/min_rmsd_distributions.png")
-            if not os.path.isfile(fig_path):
+    """True if resume and all min_rmsd (gen + recon + latent) analysis outputs we would generate already exist."""
+    if not resume:
+        return True
+    if do_min_rmsd:
+        for var in variance_list:
+            variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
+            for n in num_samples_list:
+                run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
+                fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"gen/{run_name}/min_rmsd_distributions.png")
+                if not os.path.isfile(fig_path):
+                    return False
+    if do_min_rmsd_recon and max_recon_train_list is not None and max_recon_test_list is not None:
+        n_recon = len(max_recon_train_list) * len(max_recon_test_list)
+        if n_recon == 1:
+            recon_fig = _analysis_path(run_dir_eu, "min_rmsd", "recon/min_rmsd_distributions.png")
+            if not os.path.isfile(recon_fig):
                 return False
+            if visualize_latent:
+                latent_fig = _analysis_path(run_dir_eu, "min_rmsd", "recon/latent_distribution.png")
+                if not os.path.isfile(latent_fig):
+                    return False
+        else:
+            for max_train in max_recon_train_list:
+                for max_test in max_recon_test_list:
+                    subdir = f"train{max_train}_test{max_test}"
+                    recon_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{subdir}/min_rmsd_distributions.png")
+                    if not os.path.isfile(recon_fig):
+                        return False
+                    if visualize_latent:
+                        latent_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{subdir}/latent_distribution.png")
+                        if not os.path.isfile(latent_fig):
+                            return False
     return True
 
 
@@ -678,12 +902,18 @@ def _pipeline_need_data(
     plot_variances: list,
     variance_list: list,
     num_samples_list: list,
+    do_min_rmsd_recon: bool = False,
+    visualize_latent: bool = False,
+    max_recon_train_list: list | None = None,
+    max_recon_test_list: list | None = None,
 ) -> bool:
     """True if any run is incomplete or any plot/analysis output is missing (so we must load something)."""
     return _pipeline_data_needs(
         base_output_dir, seeds, dm_groups, eu_groups,
         resume, do_plot, do_min_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen,
         plot_variances, variance_list, num_samples_list,
+        do_min_rmsd_recon=do_min_rmsd_recon, visualize_latent=visualize_latent,
+        max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
     ).need_any()
 
 
@@ -713,6 +943,10 @@ def _pipeline_data_needs(
     plot_variances: list,
     variance_list: list,
     num_samples_list: list,
+    do_min_rmsd_recon: bool = False,
+    visualize_latent: bool = False,
+    max_recon_train_list: list | None = None,
+    max_recon_test_list: list | None = None,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
@@ -794,17 +1028,21 @@ def _pipeline_data_needs(
                                     if not resume or not os.path.isfile(_plot_path(eu_run_dir, "gen_variance", var=str(var))):
                                         need_exp_stats = True
                                         need_train_test_stats = True
-                        if do_min_rmsd and not _euclideanizer_analysis_all_present(eu_run_dir, resume, do_min_rmsd, variance_list, num_samples_list):
+                        if (do_min_rmsd or do_min_rmsd_recon) and not _euclideanizer_analysis_all_present(
+                            eu_run_dir, resume, do_min_rmsd, variance_list, num_samples_list,
+                            do_min_rmsd_recon=do_min_rmsd_recon, visualize_latent=visualize_latent,
+                            max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
+                        ):
                             need_coords = True
     return PipelineDataNeeds(need_coords=need_coords, need_exp_stats=need_exp_stats, need_train_test_stats=need_train_test_stats)
 
 
 def _video_frames_dir(run_root: str) -> str:
-    return os.path.join(run_root, "plots", "training_video", "frames")
+    return os.path.join(run_root, "training_video", "frames")
 
 
 def _video_mp4_path(run_root: str) -> str:
-    return os.path.join(run_root, "plots", "training_video", "training_evolution.mp4")
+    return os.path.join(run_root, "training_video", "training_evolution.mp4")
 
 
 def _parse_args():
@@ -935,6 +1173,50 @@ def _get_recon_dm_euclideanizer(embed, frozen_vae, device, coords, eu_cfg, train
     return np.concatenate(out, axis=0)
 
 
+def _get_recon_coords_euclideanizer(embed, frozen_vae, device, coords, training_split, split_seed, utils_mod, use_train: bool = False, max_n: int | None = None):
+    """Compute reconstruction 3D coords for the Euclideanizer on train or test split; returns (n, N, 3) numpy array. If max_n is set, use at most that many structures."""
+    train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
+    subset_ds = train_ds if use_train else test_ds
+    dl = torch.utils.data.DataLoader(subset_ds, batch_size=128, shuffle=False)
+    embed.eval()
+    out = []
+    with torch.no_grad():
+        for batch in dl:
+            batch_dm = utils_mod.get_distmaps(batch)
+            gt_log = torch.log1p(batch_dm)
+            mu = frozen_vae.encode(gt_log)
+            D_noneuclid = frozen_vae._decode_to_matrix(mu)
+            coords_out = embed(D_noneuclid)
+            out.append(coords_out.cpu().numpy())
+    arr = np.concatenate(out, axis=0)
+    if max_n is not None and arr.shape[0] > max_n:
+        arr = arr[:max_n]
+    return arr.astype(np.float32)
+
+
+def _get_latent_vectors_euclideanizer(frozen_vae, device, coords, training_split, split_seed, utils_mod, max_train: int | None = None, max_test: int | None = None):
+    """Return (train_mu_np, test_mu_np) each (n, latent_dim). Optional max_train/max_test cap the number of structures."""
+    train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
+    out_train = []
+    out_test = []
+    frozen_vae.eval()
+    with torch.no_grad():
+        for subset_ds, out_list, max_n in [(train_ds, out_train, max_train), (test_ds, out_test, max_test)]:
+            dl = torch.utils.data.DataLoader(subset_ds, batch_size=128, shuffle=False)
+            for batch in dl:
+                batch_dm = utils_mod.get_distmaps(batch)
+                gt_log = torch.log1p(batch_dm)
+                mu = frozen_vae.encode(gt_log)
+                out_list.append(mu.cpu().numpy())
+    train_mu = np.concatenate(out_train, axis=0).astype(np.float32)
+    test_mu = np.concatenate(out_test, axis=0).astype(np.float32)
+    if max_train is not None and train_mu.shape[0] > max_train:
+        train_mu = train_mu[:max_train]
+    if max_test is not None and test_mu.shape[0] > max_test:
+        test_mu = test_mu[:max_test]
+    return train_mu, test_mu
+
+
 def _force_gpu_cleanup(device: torch.device) -> None:
     """Release unused GPU memory so the allocator and system see accurate free memory."""
     gc.collect()
@@ -981,6 +1263,8 @@ def _run_one_distmap_group(
     analysis_cfg: dict,
     variance_list: list,
     num_samples_list: list,
+    max_recon_train_list: list,
+    max_recon_test_list: list,
     vis_enabled: bool,
     vis_cfg: dict,
     plot_cfg: dict,
@@ -1261,7 +1545,9 @@ def _run_one_distmap_group(
                         run_dir_eu, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
                     )
                     all_analysis = _euclideanizer_analysis_all_present(
-                        run_dir_eu, resume, do_min_rmsd, variance_list, num_samples_list
+                        run_dir_eu, resume, do_min_rmsd, variance_list, num_samples_list,
+                        do_min_rmsd_recon=analysis_cfg["min_rmsd_recon"]["enabled"], visualize_latent=analysis_cfg["min_rmsd_recon"]["visualize_latent"],
+                        max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
                     )
                     if resume and all_plots and all_analysis:
                         _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): [skip] plotting and analysis (all present)", since_start=time.time() - pipeline_start, style="skip")
@@ -1323,64 +1609,118 @@ def _run_one_distmap_group(
                                         _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     
-                        if do_min_rmsd and coords is not None:
+                        do_min_rmsd_recon = analysis_cfg["min_rmsd_recon"]["enabled"]
+                        visualize_latent = analysis_cfg["min_rmsd_recon"]["visualize_latent"]
+                        if (do_min_rmsd or do_min_rmsd_recon) and coords is not None:
                             if seed_test_to_train_holder[0] is None:
+                                # Seed-level cache: always saved when used (independent of analysis save_data).
                                 _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
                                 seed_test_to_train_holder[0] = get_or_compute_test_to_train_rmsd(
                                     coords_np, coords, training_split, split_seed,
                                     _cache_path,
-                                    query_batch_size=analysis_cfg["min_rmsd_query_batch_size"],
+                                    query_batch_size=analysis_cfg["min_rmsd_gen"]["query_batch_size"],
                                     display_root=base_output_dir,
                                 )
                             _tt, _train_c, _test_c = seed_test_to_train_holder[0]
                             analysis_phase_start = time.time()
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD)...", since_start=time.time() - pipeline_start, style="info")
+                            gen_cfg = analysis_cfg["min_rmsd_gen"]
                             plot_cfg_analysis = {
-                                **analysis_cfg,
                                 "plot_dpi": plot_dpi,
-                                "save_plot_data": save_plot_data,
-                                "save_data": analysis_save_data,
-                                "save_structures_gro": analysis_save_structures_gro,
+                                "save_pdf_copy": gen_cfg["save_pdf_copy"],
+                                "min_rmsd_num_samples": gen_cfg["num_samples"],
+                                "min_rmsd_sample_variance": gen_cfg["sample_variance"],
+                                "min_rmsd_query_batch_size": gen_cfg["query_batch_size"],
+                                "save_data": gen_cfg["save_data"],
+                                "save_structures_gro": gen_cfg["save_structures_gro"],
                             }
-                            for var in variance_list:
-                                variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
-                                any_missing = False
-                                for n in num_samples_list:
-                                    run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
-                                    fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"{run_name}/min_rmsd_distributions.png")
-                                    if not (resume and os.path.isfile(fig_path)):
-                                        any_missing = True
-                                        break
-                                if any_missing:
-                                    if len(num_samples_list) > 1:
-                                        run_min_rmsd_analysis_multi(
-                                            coords_np, coords, training_split, split_seed,
-                                            frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                            plot_cfg_analysis,
-                                            num_samples_list=num_samples_list,
-                                            sample_variance=var,
-                                            variance_suffix=variance_suffix,
-                                            display_root=base_output_dir,
-                                            precomputed_test_to_train=_tt,
-                                            train_coords_np=_train_c,
-                                            test_coords_np=_test_c,
-                                        )
+                            if do_min_rmsd:
+                                for var in variance_list:
+                                    variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
+                                    any_missing = False
+                                    for n in num_samples_list:
+                                        run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
+                                        fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"gen/{run_name}/min_rmsd_distributions.png")
+                                        if not (resume and os.path.isfile(fig_path)):
+                                            any_missing = True
+                                            break
+                                    if any_missing:
+                                        if len(num_samples_list) > 1:
+                                            run_min_rmsd_analysis_multi(
+                                                coords_np, coords, training_split, split_seed,
+                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                                plot_cfg_analysis,
+                                                num_samples_list=num_samples_list,
+                                                sample_variance=var,
+                                                variance_suffix=variance_suffix,
+                                                display_root=base_output_dir,
+                                                precomputed_test_to_train=_tt,
+                                                train_coords_np=_train_c,
+                                                test_coords_np=_test_c,
+                                            )
+                                        else:
+                                            n = num_samples_list[0]
+                                            run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(num_samples_list) > 1) else "default"
+                                            output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
+                                            run_min_rmsd_analysis(
+                                                coords_np, coords, training_split, split_seed,
+                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                                plot_cfg_analysis,
+                                                num_samples=n, sample_variance=var, output_suffix=output_suffix,
+                                                display_root=base_output_dir,
+                                                precomputed_test_to_train=_tt,
+                                                train_coords_np=_train_c,
+                                                test_coords_np=_test_c,
+                                            )
                                     else:
-                                        n = num_samples_list[0]
-                                        run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(num_samples_list) > 1) else "default"
-                                        output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
-                                        run_min_rmsd_analysis(
-                                            coords_np, coords, training_split, split_seed,
-                                            frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                            plot_cfg_analysis,
-                                            num_samples=n, sample_variance=var, output_suffix=output_suffix,
-                                            display_root=base_output_dir,
-                                            precomputed_test_to_train=_tt,
-                                            train_coords_np=_train_c,
-                                            test_coords_np=_test_c,
-                                        )
-                                else:
-                                    _log(f"  [skip] min_rmsd variance={var}", since_start=time.time() - pipeline_start, style="skip")
+                                        _log(f"  [skip] min_rmsd variance={var}", since_start=time.time() - pipeline_start, style="skip")
+                            if do_min_rmsd_recon:
+                                n_recon = len(max_recon_train_list) * len(max_recon_test_list)
+                                for max_recon_train in max_recon_train_list:
+                                    for max_recon_test in max_recon_test_list:
+                                        if n_recon == 1:
+                                            recon_subdir = ""
+                                            recon_fig = _analysis_path(run_dir_eu, "min_rmsd", "recon/min_rmsd_distributions.png")
+                                            latent_fig = _analysis_path(run_dir_eu, "min_rmsd", "recon/latent_distribution.png")
+                                        else:
+                                            recon_subdir = f"train{max_recon_train}_test{max_recon_test}"
+                                            recon_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{recon_subdir}/min_rmsd_distributions.png")
+                                            latent_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{recon_subdir}/latent_distribution.png")
+                                        if not (resume and os.path.isfile(recon_fig)):
+                                            train_recon_coords = _get_recon_coords_euclideanizer(
+                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
+                                                use_train=True, max_n=max_recon_train,
+                                            )
+                                            test_recon_coords = _get_recon_coords_euclideanizer(
+                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
+                                                use_train=False, max_n=max_recon_test,
+                                            )
+                                            run_min_rmsd_recon_analysis(
+                                                _tt, _train_c, _test_c, train_recon_coords, test_recon_coords,
+                                                run_dir_eu,
+                                                {
+                                                    "save_data": analysis_cfg["min_rmsd_recon"]["save_data"],
+                                                    "plot_dpi": plot_dpi,
+                                                    "save_pdf_copy": analysis_cfg["min_rmsd_recon"]["save_pdf_copy"],
+                                                },
+                                                display_root=base_output_dir,
+                                                recon_subdir=recon_subdir,
+                                            )
+                                        elif resume and n_recon == 1:
+                                            _log(f"  [skip] min_rmsd recon", since_start=time.time() - pipeline_start, style="skip")
+                                        if visualize_latent and not (resume and os.path.isfile(latent_fig)):
+                                            train_mu, test_mu = _get_latent_vectors_euclideanizer(
+                                                frozen_vae, device, coords, training_split, split_seed, utils,
+                                                max_train=max_recon_train,
+                                                max_test=max_recon_test,
+                                            )
+                                            plot_latent_distribution(
+                                                train_mu, test_mu, latent_fig,
+                                                plot_dpi=plot_dpi, display_root=base_output_dir,
+                                                save_pdf_copy=analysis_cfg["min_rmsd_recon"]["save_pdf_copy"],
+                                            )
+                                        elif resume and visualize_latent and n_recon == 1 and os.path.isfile(latent_fig):
+                                            _log(f"  [skip] latent distribution", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     
                         del embed, frozen_vae
@@ -1426,6 +1766,8 @@ def _run_one_seed(
     analysis_cfg: dict,
     variance_list: list,
     num_samples_list: list,
+    max_recon_train_list: list,
+    max_recon_test_list: list,
     vis_enabled: bool,
     vis_cfg: dict,
     plot_cfg: dict,
@@ -1478,6 +1820,7 @@ def _run_one_seed(
             sample_variances, gen_num_samples, gen_decode_batch_size, need_plot_or_rmsd,
             save_structures_gro_plot, analysis_save_data, analysis_save_structures_gro,
             plot_dpi, save_pdf, save_plot_data, num_recon_samples, analysis_cfg, variance_list, num_samples_list,
+            max_recon_train_list, max_recon_test_list,
             vis_enabled, vis_cfg, plot_cfg,
             train_stats, test_stats, seed_test_to_train_holder,
             make_distmap_epoch_hook=make_distmap_epoch_hook,
@@ -1485,13 +1828,7 @@ def _run_one_seed(
             assemble_video_fn=assemble_video_fn,
         )
 
-    if do_min_rmsd and not analysis_save_data and seed_test_to_train_holder[0] is not None:
-        _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
-        if os.path.isfile(_cache_path):
-            try:
-                os.remove(_cache_path)
-            except OSError:
-                pass
+    # Seed-level test_to_train RMSD cache is kept for reuse (e.g. when overwrite_existing re-runs analysis).
 
 
 def _get_gen_dm_distmap(model, device, num_samples, latent_dim, sample_variance, gen_batch_size: int):
@@ -1602,6 +1939,7 @@ def _worker(
                 shared_args["plot_dpi"], shared_args["save_pdf"], shared_args["save_plot_data"],
                 shared_args["num_recon_samples"], shared_args["analysis_cfg"],
                 shared_args["variance_list"], shared_args["num_samples_list"],
+                shared_args["max_recon_train_list"], shared_args["max_recon_test_list"],
                 shared_args["vis_enabled"], shared_args["vis_cfg"], shared_args["plot_cfg"],
                 train_stats, test_stats, seed_test_to_train_holder,
                 make_distmap_epoch_hook=shared_args.get("make_distmap_epoch_hook"),
@@ -1666,6 +2004,8 @@ def _run_multi_gpu_tasks(
     analysis_cfg: dict,
     variance_list: list,
     num_samples_list: list,
+    max_recon_train_list: list,
+    max_recon_test_list: list,
     vis_enabled: bool,
     vis_cfg: dict,
     plot_cfg: dict,
@@ -1731,6 +2071,8 @@ def _run_multi_gpu_tasks(
         "analysis_cfg": analysis_cfg,
         "variance_list": variance_list,
         "num_samples_list": num_samples_list,
+        "max_recon_train_list": max_recon_train_list,
+        "max_recon_test_list": max_recon_test_list,
         "vis_enabled": vis_enabled,
         "vis_cfg": vis_cfg,
         "plot_cfg": plot_cfg,
@@ -1808,13 +2150,13 @@ def main():
     do_plot = plot_cfg["enabled"]
     plot_dpi = plot_cfg["plot_dpi"]
     save_pdf = plot_cfg["save_pdf_copy"]
-    save_plot_data = plot_cfg["save_plot_data"]
+    save_plot_data = plot_cfg["save_data"]  # config key is save_data (same as analysis); variable name for clarity
     num_recon_samples = plot_cfg["num_reconstruction_samples"]
     do_recon_plot = plot_cfg["reconstruction"]
     do_bond_rg_scaling = plot_cfg["bond_rg_scaling"]
     do_avg_gen = plot_cfg["avg_gen_vs_exp"]
     analysis_cfg = cfg["analysis"]
-    do_min_rmsd = analysis_cfg["min_rmsd"]
+    do_min_rmsd = analysis_cfg["min_rmsd_gen"]["enabled"]
     training_split = cfg["data"]["training_split"]
     do_dashboard = cfg["dashboard"]["enabled"]
     if getattr(args, "no_dashboard", False):
@@ -1832,18 +2174,52 @@ def main():
     _log(f"config: {config_path}  output: {base_output_dir}  seeds: {seeds}", since_start=time.time() - pipeline_start, style="info")
     _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  min_rmsd={do_min_rmsd}", since_start=time.time() - pipeline_start, style="info")
 
-    num_samples_list = analysis_cfg["min_rmsd_num_samples"] if do_min_rmsd else []
+    num_samples_list = analysis_cfg["min_rmsd_gen"]["num_samples"] if do_min_rmsd else []
     if not isinstance(num_samples_list, list):
         num_samples_list = [num_samples_list]
-    variance_list = analysis_cfg["min_rmsd_sample_variance"] if do_min_rmsd else []
+    variance_list = analysis_cfg["min_rmsd_gen"]["sample_variance"] if do_min_rmsd else []
     if not isinstance(variance_list, list):
         variance_list = [variance_list]
+    do_min_rmsd_recon_cfg = analysis_cfg["min_rmsd_recon"]["enabled"]
+    max_recon_train_list = analysis_cfg["min_rmsd_recon"]["max_recon_train"] if do_min_rmsd_recon_cfg else []
+    if not isinstance(max_recon_train_list, list):
+        max_recon_train_list = [max_recon_train_list]
+    max_recon_test_list = analysis_cfg["min_rmsd_recon"]["max_recon_test"] if do_min_rmsd_recon_cfg else []
+    if not isinstance(max_recon_test_list, list):
+        max_recon_test_list = [max_recon_test_list]
     dm_groups = distmap_training_groups(cfg)
     eu_groups = euclideanizer_training_groups(cfg)
     plot_variances_for_scan = get_sample_variances(cfg) if do_plot else []
 
-    # Pipeline config match first (fail fast before loading data)
+    # overwrite_existing: prompt and delete existing plotting/analysis outputs up front (requires user approval)
+    to_overwrite = []
+    if do_plot and plot_cfg.get("overwrite_existing", False) and _has_any_plotting_output(base_output_dir, seeds):
+        to_overwrite.append("plotting")
+    if do_min_rmsd and analysis_cfg["min_rmsd_gen"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "min_rmsd_gen"):
+        to_overwrite.append("min_rmsd_gen")
+    if do_min_rmsd_recon_cfg and analysis_cfg["min_rmsd_recon"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "min_rmsd_recon"):
+        to_overwrite.append("min_rmsd_recon")
+    if to_overwrite:
+        if not getattr(args, "yes_overwrite", False):
+            _confirm_overwrite_outputs(to_overwrite)
+        _log("Removing existing outputs (overwrite_existing requested): " + ", ".join(to_overwrite), since_start=time.time() - pipeline_start, style="info")
+        for label in to_overwrite:
+            if label == "plotting":
+                _delete_plotting_outputs_only(base_output_dir, seeds)
+            elif label == "min_rmsd_gen":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "min_rmsd_gen")
+            elif label == "min_rmsd_recon":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "min_rmsd_recon")
+        _log("Done removing; will re-run these components.", since_start=time.time() - pipeline_start, style="success")
+
+    # Pipeline config: strict match for training; if only plotting/analysis differ, prompt then delete and update saved config
+    def _cfg_for_compare(c):
+        d = dict(c)
+        d.pop("resume", None)
+        return d
+
     if need_train and resume and data_path:
+        chunks_to_update = set()
         for seed in seeds:
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             if os.path.isdir(output_dir):
@@ -1854,29 +2230,68 @@ def main():
                     )
                 effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed}}
                 saved_cfg = load_pipeline_config(output_dir)
-                # Ignore 'resume' when comparing configs (so toggling resume does not cause mismatch)
-                def _cfg_for_compare(c):
-                    d = dict(c)
-                    d.pop("resume", None)
-                    return d
                 saved_compare = _cfg_for_compare(saved_cfg) if saved_cfg else None
                 effective_compare = _cfg_for_compare(effective_cfg)
-                if saved_compare is None or not configs_match_exactly(saved_compare, effective_compare):
-                    diff_lines = config_diff(saved_compare or {}, effective_compare) if saved_compare else ["saved config missing or invalid"]
+                if saved_compare is None:
+                    raise RuntimeError(
+                        f"Resume is enabled but pipeline config in {output_dir!r} could not be loaded. "
+                        f"Use a different output_dir or run with --no-resume to overwrite."
+                    )
+                if not configs_match_sections(saved_compare, effective_compare, TRAINING_CRITICAL_KEYS):
+                    diff_lines = config_diff(
+                        {k: saved_compare.get(k) for k in TRAINING_CRITICAL_KEYS if k in saved_compare},
+                        {k: effective_compare.get(k) for k in TRAINING_CRITICAL_KEYS if k in effective_compare},
+                    )
                     diff_msg = "\n  ".join(diff_lines[:20])
                     if len(diff_lines) > 20:
                         diff_msg += f"\n  ... and {len(diff_lines) - 20} more."
                     raise RuntimeError(
-                        f"Resume is enabled but pipeline config in output_dir does not match current config (comparison ignores 'resume').\n"
+                        f"Resume is enabled but training config (data, distmap, euclideanizer, training_visualization) does not match.\n"
                         f"Output dir: {output_dir!r}\n"
                         f"Differences (saved vs current):\n  {diff_msg}\n"
-                        f"Use a different output_dir to keep existing runs, or run with --no-resume to overwrite (this will overwrite existing checkpoints and outputs in that directory)."
+                        f"Use a different output_dir or run with --no-resume to overwrite."
                     )
+                # Collect which chunks (plotting, min_rmsd_gen, min_rmsd_recon) differ from saved
+                if not configs_match_sections(saved_compare, effective_compare, ["plotting"]):
+                    chunks_to_update.add("plotting")
+                s_analysis = (saved_compare.get("analysis") or {})
+                e_analysis = (effective_compare.get("analysis") or {})
+                if s_analysis.get("min_rmsd_gen") != e_analysis.get("min_rmsd_gen"):
+                    chunks_to_update.add("min_rmsd_gen")
+                if s_analysis.get("min_rmsd_recon") != e_analysis.get("min_rmsd_recon"):
+                    chunks_to_update.add("min_rmsd_recon")
+        chunks_to_update = sorted(chunks_to_update)  # stable order: min_rmsd_gen, min_rmsd_recon, plotting
+        if "plotting" in chunks_to_update:
+            chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
+        # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
+        chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
+        if chunks_to_update:
+            chunk_labels = {"plotting": "Plotting", "min_rmsd_gen": "Min-RMSD (gen)", "min_rmsd_recon": "Min-RMSD (recon)"}
+            for chunk in chunks_still_to_delete:
+                if not getattr(args, "yes_overwrite", False):
+                    _confirm_replot_one_chunk(base_output_dir, chunk_labels[chunk])
+                _log(f"Removing existing {chunk_labels[chunk]} outputs (config changed).", since_start=time.time() - pipeline_start, style="info")
+                if chunk == "plotting":
+                    _delete_plotting_outputs_only(base_output_dir, seeds)
+                else:
+                    _delete_analysis_outputs_for_component(base_output_dir, seeds, chunk)
+            save_pipeline_config({**cfg, "output_dir": base_output_dir}, base_output_dir)
+            for seed in seeds:
+                output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+                if os.path.isdir(output_dir):
+                    save_pipeline_config(
+                        {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed}},
+                        output_dir,
+                    )
+            _log("Saved updated pipeline config; will skip training and re-run affected plotting/analysis.", since_start=time.time() - pipeline_start, style="success")
+            need_train = False  # Skip training when only plotting/analysis config changed
 
     # Decide what to load from pipeline segments (resume) or from flags (no resume)
     if not resume or not data_path:
+        do_min_rmsd_recon = analysis_cfg["min_rmsd_recon"]["enabled"]
+        do_visualize_latent = analysis_cfg["min_rmsd_recon"]["visualize_latent"]
         needs = PipelineDataNeeds(
-            need_coords=(need_train or do_plot or do_min_rmsd),
+            need_coords=(need_train or do_plot or do_min_rmsd or do_min_rmsd_recon),
             need_exp_stats=do_plot,
             need_train_test_stats=do_plot,
         ) if data_path else PipelineDataNeeds(need_coords=False, need_exp_stats=False, need_train_test_stats=False)
@@ -1885,6 +2300,8 @@ def main():
             base_output_dir, seeds, dm_groups, eu_groups,
             resume, do_plot, do_min_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen,
             plot_variances_for_scan, variance_list, num_samples_list,
+            do_min_rmsd_recon=analysis_cfg["min_rmsd_recon"]["enabled"], visualize_latent=analysis_cfg["min_rmsd_recon"]["visualize_latent"],
+            max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
         )
     need_any = needs.need_any() and data_path
 
@@ -1983,8 +2400,8 @@ def main():
         or (do_min_rmsd and coords is not None)
     )
     save_structures_gro_plot = plot_cfg["save_structures_gro"]
-    analysis_save_data = analysis_cfg["save_data"]
-    analysis_save_structures_gro = analysis_cfg["save_structures_gro"]
+    analysis_save_data = analysis_cfg["min_rmsd_gen"]["save_data"]
+    analysis_save_structures_gro = analysis_cfg["min_rmsd_gen"]["save_structures_gro"]
 
     tasks = [(s, g) for s in seeds for g in range(len(dm_groups))]
     n_gpus = utils.get_available_cuda_count()
@@ -2053,6 +2470,8 @@ def main():
             analysis_cfg=analysis_cfg,
             variance_list=variance_list,
             num_samples_list=num_samples_list,
+            max_recon_train_list=max_recon_train_list,
+            max_recon_test_list=max_recon_test_list,
             vis_enabled=vis_enabled,
             vis_cfg=vis_cfg,
             plot_cfg=plot_cfg,
@@ -2100,6 +2519,8 @@ def main():
             analysis_cfg=analysis_cfg,
             variance_list=variance_list,
             num_samples_list=num_samples_list,
+            max_recon_train_list=max_recon_train_list,
+            max_recon_test_list=max_recon_test_list,
             vis_enabled=vis_enabled,
             vis_cfg=vis_cfg,
             plot_cfg=plot_cfg,

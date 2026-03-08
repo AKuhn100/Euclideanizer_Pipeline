@@ -13,7 +13,8 @@ try:
 except ImportError:
     yaml = None
 
-# Required keys per section (config file must contain all of these; no code-side defaults).
+# Required keys per section (no code-side defaults). Key order is standardized:
+# enabled/overwrite_existing first, then behavior params, then save_data, save_pdf_copy, save_structures_gro (or visualize_latent).
 REQUIRED_KEYS = {
     "data": ["path", "split_seed", "training_split"],
     "distmap": [
@@ -30,16 +31,30 @@ REQUIRED_KEYS = {
         "memory_efficient", "save_final_models_per_stretch",
     ],
     "plotting": [
-        "enabled", "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp",
+        "enabled", "overwrite_existing",
+        "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp",
         "num_samples", "gen_decode_batch_size", "sample_variance",
-        "num_reconstruction_samples", "plot_dpi", "save_pdf_copy",
-        "save_plot_data", "save_structures_gro",
+        "num_reconstruction_samples", "plot_dpi",
+        "save_data", "save_pdf_copy", "save_structures_gro",
     ],
-    "analysis": [
-        "min_rmsd",
-        "min_rmsd_num_samples", "min_rmsd_sample_variance", "min_rmsd_query_batch_size",
-        "save_data", "save_structures_gro",
+    "analysis": ["min_rmsd_gen", "min_rmsd_recon"],
+}
+# Required keys inside each analysis sub-block (validated when top-level key exists).
+REQUIRED_ANALYSIS_SUBKEYS = {
+    "min_rmsd_gen": [
+        "enabled", "overwrite_existing",
+        "num_samples", "sample_variance", "query_batch_size",
+        "save_data", "save_pdf_copy", "save_structures_gro",
     ],
+    "min_rmsd_recon": [
+        "enabled", "overwrite_existing",
+        "max_recon_train", "max_recon_test",
+        "save_data", "save_pdf_copy", "visualize_latent",
+    ],
+}
+REQUIRED_KEYS = {
+    **{k: v for k, v in REQUIRED_KEYS.items() if k != "analysis"},
+    "analysis": ["min_rmsd_gen", "min_rmsd_recon"],
     "training_visualization": [
         "enabled",
         "n_probe", "n_quick",
@@ -48,7 +63,13 @@ REQUIRED_KEYS = {
     ],
     "dashboard": ["enabled"],
 }
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "plotting", "analysis", "training_visualization", "dashboard"]
+# Order: training_visualization before plotting so training-related config is grouped.
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard"]
+
+# Sections that must match exactly when resuming (training and training visualization).
+TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization"]
+# Sections that may differ on resume; if they do, user is prompted and plotting/analysis outputs are removed and re-run.
+PLOTTING_ANALYSIS_KEYS = ["plotting", "analysis"]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -72,6 +93,16 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
             for key in REQUIRED_KEYS[top]:
                 if not isinstance(cfg[top], dict) or key not in cfg[top]:
                     missing.append(f"{top}.{key}")
+            # Nested validation for analysis sub-blocks
+            if top == "analysis" and isinstance(cfg.get("analysis"), dict):
+                for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
+                    block = cfg["analysis"].get(block_name)
+                    if not isinstance(block, dict):
+                        missing.append(f"{top}.{block_name} (must be a dict)")
+                    else:
+                        for sk in sub_keys:
+                            if sk not in block:
+                                missing.append(f"{top}.{block_name}.{sk}")
     if missing:
         raise KeyError(
             "Config is missing required keys (set them in your config file): " + ", ".join(missing)
@@ -248,6 +279,16 @@ def _config_deep_equal(a: Any, b: Any) -> bool:
 def configs_match_exactly(cfg1: Dict[str, Any], cfg2: Dict[str, Any]) -> bool:
     """True if the two pipeline configs are identical (for resume safety)."""
     return _config_deep_equal(cfg1, cfg2)
+
+
+def configs_match_sections(cfg1: Dict[str, Any], cfg2: Dict[str, Any], top_level_keys: List[str]) -> bool:
+    """True if the two configs match on the given top-level keys (deep equality). Keys missing in either config count as mismatch."""
+    for k in top_level_keys:
+        if k not in cfg1 or k not in cfg2:
+            return False
+        if not _config_deep_equal(cfg1[k], cfg2[k]):
+            return False
+    return True
 
 
 def config_diff(cfg1: Dict[str, Any], cfg2: Dict[str, Any], prefix: str = "") -> List[str]:
