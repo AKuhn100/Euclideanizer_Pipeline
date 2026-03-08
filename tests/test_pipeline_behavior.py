@@ -102,19 +102,22 @@ def test_run_completed_without_section_match(tmp_path):
 
 
 def test_run_completed_multi_segment_last_optional_on_final_stretch(tmp_path):
-    """Multi-segment: last checkpoint required only when not the final segment (or save_final_models_per_stretch)."""
+    """Multi-segment: last checkpoint required only when save_final_models_per_stretch (when false we delete it so don't require)."""
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     save_run_config({"distmap": {"epochs": 1}}, str(model_dir), last_epoch_trained=1, best_epoch=1, best_val=0.5)
     (model_dir / "model.pt").write_bytes(b"x")
-    assert _run_completed(str(tmp_path), 1, section_key="distmap", expected_section=None, multi_segment=True,
-        checkpoint_last_name="model_last.pt", is_last_segment=False, save_final_models_per_stretch=False) is False
-    (model_dir / "model_last.pt").write_bytes(b"x")
+    # save_final_models_per_stretch=False: we never require model_last.pt (it is deleted after next segment uses it)
     assert _run_completed(str(tmp_path), 1, section_key="distmap", expected_section=None, multi_segment=True,
         checkpoint_last_name="model_last.pt", is_last_segment=False, save_final_models_per_stretch=False) is True
-    (model_dir / "model_last.pt").unlink(missing_ok=True)
     assert _run_completed(str(tmp_path), 1, section_key="distmap", expected_section=None, multi_segment=True,
-        checkpoint_last_name="model_last.pt",         is_last_segment=True, save_final_models_per_stretch=False) is True
+        checkpoint_last_name="model_last.pt", is_last_segment=True, save_final_models_per_stretch=False) is True
+    # save_final_models_per_stretch=True: we require model_last.pt for non-last segment
+    assert _run_completed(str(tmp_path), 1, section_key="distmap", expected_section=None, multi_segment=True,
+        checkpoint_last_name="model_last.pt", is_last_segment=False, save_final_models_per_stretch=True) is False
+    (model_dir / "model_last.pt").write_bytes(b"x")
+    assert _run_completed(str(tmp_path), 1, section_key="distmap", expected_section=None, multi_segment=True,
+        checkpoint_last_name="model_last.pt", is_last_segment=False, save_final_models_per_stretch=True) is True
 
 
 # ---------------------------------------------------------------------------

@@ -16,8 +16,11 @@ import gc
 import json
 import multiprocessing
 import os
+import pickle
 import shutil
+import subprocess
 import sys
+import tempfile
 import traceback
 import zipfile
 import zlib
@@ -658,22 +661,37 @@ def _run_completed(
     checkpoint_last_name: str | None = None,
     is_last_segment: bool = False,
     save_final_models_per_stretch: bool = False,
+    _log_fail_reason: str | None = None,
 ) -> bool:
-    """True if run_dir has a completed run: last_epoch_trained == expected_epochs, section matches if given, best checkpoint exists. When multi_segment, last checkpoint required only if (not is_last_segment or save_final_models_per_stretch)."""
+    """True if run_dir has a completed run: last_epoch_trained == expected_epochs, section matches if given, best checkpoint exists. When multi_segment, last checkpoint required only if save_final_models_per_stretch (we don't require it when false since it is deleted after the next segment uses it)."""
     model_dir = os.path.join(run_dir, model_subdir)
     run_cfg = load_run_config(model_dir)
     if run_cfg is None:
+        if _log_fail_reason:
+            _log(f"{_log_fail_reason}: run_config not found or invalid at {model_dir}", since_start=None, style="skip")
         return False
-    if run_cfg.get("last_epoch_trained") != expected_epochs:
+    last_trained = run_cfg.get("last_epoch_trained")
+    if last_trained != expected_epochs:
+        if _log_fail_reason:
+            _log(f"{_log_fail_reason}: last_epoch_trained={last_trained!r} (type {type(last_trained).__name__}) != expected_epochs={expected_epochs!r} (type {type(expected_epochs).__name__})", since_start=None, style="skip")
         return False
     if section_key is not None and expected_section is not None:
         if not run_config_section_matches(run_cfg, section_key, expected_section):
+            if _log_fail_reason:
+                diffs = config_diff(run_cfg.get(section_key) or {}, expected_section, section_key)
+                _log(f"{_log_fail_reason}: section match failed: {diffs}", since_start=None, style="skip")
             return False
     best_name = "model.pt" if section_key == "distmap" else "euclideanizer.pt"
-    if not os.path.isfile(os.path.join(model_dir, best_name)):
+    best_path = os.path.join(model_dir, best_name)
+    if not os.path.isfile(best_path):
+        if _log_fail_reason:
+            _log(f"{_log_fail_reason}: best checkpoint missing: {best_path}", since_start=None, style="skip")
         return False
-    require_last = multi_segment and checkpoint_last_name and (not is_last_segment or save_final_models_per_stretch)
+    # Only require last-epoch checkpoint when we keep it (save_final_models_per_stretch); when false we delete it after the next segment uses it, so it won't exist on re-run.
+    require_last = multi_segment and checkpoint_last_name and save_final_models_per_stretch
     if require_last and not os.path.isfile(os.path.join(model_dir, checkpoint_last_name)):
+        if _log_fail_reason:
+            _log(f"{_log_fail_reason}: last checkpoint required but missing", since_start=None, style="skip")
         return False
     return True
 
@@ -692,10 +710,12 @@ def _distmap_training_action(
 ) -> dict:
     """Determine how to run this DistMap segment: skip, from_scratch, resume_from_best, or resume_from_prev_last. Returns a dict with 'action' and, when relevant, resume_from_path, prev_run_dir, additional_epochs, best_epoch."""
     dm_path = _dm_path(run_dir_dm)
+    run_label = os.path.basename(run_dir_dm)
     if resume and os.path.isfile(dm_path) and _run_completed(
         run_dir_dm, ev, section_key="distmap", expected_section=dm_cfg,
         multi_segment=dm_multi, checkpoint_last_name="model_last.pt" if dm_multi else None,
         is_last_segment=dm_last_segment, save_final_models_per_stretch=dm_save_final,
+        _log_fail_reason=f"DistMap run {run_label} (ev={ev}) complete check",
     ):
         return {"action": "skip"}
     dm_model_dir = os.path.join(run_dir_dm, "model")
@@ -1046,10 +1066,11 @@ def _video_mp4_path(run_root: str) -> str:
 
 
 def _parse_args():
-    """Parse command-line arguments; --config is required (no default)."""
+    """Parse command-line arguments; --config is required unless --worker-from-pickle is used."""
     p = argparse.ArgumentParser(description="Euclideanizer pipeline: DistMap + Euclideanizer training and plotting")
+    p.add_argument("--worker-from-pickle", type=str, default=None, dest="worker_from_pickle", help=argparse.SUPPRESS)
     p.add_argument("--data", type=str, default=None, help="Path to dataset (required for training)")
-    p.add_argument("--config", type=str, required=True, help="Path to YAML config (e.g. samples/config_sample.yaml)")
+    p.add_argument("--config", type=str, required=("--worker-from-pickle" not in sys.argv), help="Path to YAML config (e.g. samples/config_sample.yaml)")
     p.add_argument("--no-plots", action="store_true", help="Disable all plotting")
     p.add_argument("--no-dashboard", action="store_true", dest="no_dashboard", help="Do not build interactive dashboard in run root")
     p.add_argument("--no-resume", action="store_true", help="Do not resume; overwrite existing run outputs")
@@ -2080,38 +2101,48 @@ def _run_multi_gpu_tasks(
         "make_euclideanizer_epoch_hook": make_euclideanizer_epoch_hook,
         "assemble_video_fn": assemble_video_fn,
     }
-    try:
-        multiprocessing.set_start_method("spawn", force=True)
-    except RuntimeError:
-        pass
-    processes = []
     n_workers = min(n_gpus, len(tasks)) if tasks else 0
-    try:
-        from src import _worker_main as _wm
-        worker_target = _wm.main
-        use_worker_wrapper = True
-    except ImportError:
-        worker_target = _worker
-        use_worker_wrapper = False
-    if use_worker_wrapper:
-        shared_args = {
-            **shared_args,
-            "make_distmap_epoch_hook": None,
-            "make_euclideanizer_epoch_hook": None,
-            "assemble_video_fn": None,
-        }
+    shared_args = {
+        **shared_args,
+        "make_distmap_epoch_hook": None,
+        "make_euclideanizer_epoch_hook": None,
+        "assemble_video_fn": None,
+    }
+    # Launch workers as subprocesses with CUDA_VISIBLE_DEVICES set before process start,
+    # so each worker gets a dedicated GPU (fixes SLURM/clusters where child processes
+    # started via multiprocessing.Process do not get GPU access).
+    run_py_path = os.path.abspath(os.path.join(_SCRIPT_DIR, "run.py"))
+    procs = []
     for device_id in range(n_workers):
-        args = (device_id, tasks_by_device[device_id], log_path, shared_args)
-        p = multiprocessing.Process(target=worker_target, args=args)
-        processes.append(p)
-    for p in processes:
-        p.start()
-    for p in processes:
-        p.join()
-    # Propagate worker failure
-    failed = [p for p in processes if p.exitcode != 0]
+        task_list = tasks_by_device[device_id]
+        fd, pickle_path = tempfile.mkstemp(suffix=".pkl", prefix="euclideanizer_worker_")
+        try:
+            with os.fdopen(fd, "wb") as f:
+                pickle.dump((task_list, log_path, shared_args), f)
+        except Exception:
+            os.close(fd)
+            try:
+                os.remove(pickle_path)
+            except OSError:
+                pass
+            raise
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": str(device_id)}
+        p = subprocess.Popen(
+            [sys.executable, run_py_path, "--worker-from-pickle", pickle_path],
+            env=env,
+            cwd=os.getcwd(),
+        )
+        procs.append((p, pickle_path))
+    for p, pickle_path in procs:
+        p.wait()
+        if p.returncode != 0 and os.path.isfile(pickle_path):
+            try:
+                os.remove(pickle_path)
+            except OSError:
+                pass
+    failed = [p for p, _ in procs if p.returncode != 0]
     if failed:
-        exit_codes = [p.exitcode for p in failed]
+        exit_codes = [p.returncode for p in failed]
         msg = f"Multi-GPU worker(s) exited with non-zero status: {exit_codes}"
         if any(c in (-9, -11) for c in exit_codes):
             msg += (
@@ -2125,6 +2156,18 @@ def main():
     global _LOG_FILE, _pipeline_real_stdout, _pipeline_real_stderr
     pipeline_start = time.time()
     args = _parse_args()
+    # Worker subprocess entry: load args from pickle and run _worker (CUDA_VISIBLE_DEVICES already set by parent).
+    if getattr(args, "worker_from_pickle", None):
+        with open(args.worker_from_pickle, "rb") as f:
+            task_list, log_path, shared_args = pickle.load(f)
+        try:
+            _worker(0, task_list, log_path, shared_args)
+        finally:
+            try:
+                os.remove(args.worker_from_pickle)
+            except OSError:
+                pass
+        return
     overrides = _args_to_overrides(args)
     config_path = args.config
     cfg = load_config(path=config_path, overrides=overrides)
@@ -2408,6 +2451,13 @@ def main():
     if args.gpus is not None:
         n_gpus = min(n_gpus, args.gpus)
     use_multi_gpu = (n_gpus >= 2) and not getattr(args, "no_multi_gpu", False) and (coords is not None)
+    if use_multi_gpu:
+        n_workers = min(n_gpus, len(tasks))
+        _log(f"Detected {n_gpus} GPU(s). Using multi-GPU with {n_workers} worker(s).", since_start=time.time() - pipeline_start, style="info")
+    else:
+        _log(f"Detected {n_gpus} GPU(s). Using single process.", since_start=time.time() - pipeline_start, style="info")
+        if n_gpus == 1 and (coords is not None) and len(tasks) > 1:
+            _log("Tip: to use multiple GPUs in parallel, ensure the process sees 2+ devices (e.g. set CUDA_VISIBLE_DEVICES=0,1,2,3 in your run script).", since_start=time.time() - pipeline_start, style="skip")
 
     # Multi-GPU: ensure per-seed train/test stats caches exist, then free main-process data so only workers hold copies (reduces memory use).
     if use_multi_gpu and data_path and coords is not None and (do_plot or do_min_rmsd):
