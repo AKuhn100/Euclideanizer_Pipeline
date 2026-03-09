@@ -70,19 +70,8 @@ from src.plotting import (
 from src.distmap.model import ChromVAE_Conv
 from src.distmap.sample import generate_samples as dm_generate_samples
 from src.euclideanizer.model import Euclideanizer, load_frozen_vae
-from src.min_rmsd import (
-    run_min_rmsd_analysis,
-    run_min_rmsd_analysis_multi,
-    run_min_rmsd_recon_analysis,
-    plot_latent_distribution,
-    get_or_compute_test_to_train_rmsd,
-)
-from src.q_analysis import (
-    run_q_analysis,
-    run_q_analysis_multi,
-    run_q_recon_analysis,
-    get_or_compute_test_to_train_q,
-)
+from src.analysis_metrics import ANALYSIS_METRICS
+from src.min_rmsd import plot_latent_distribution
 from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
@@ -1726,215 +1715,160 @@ def _run_one_distmap_group(
                                         _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     
-                        do_min_rmsd_recon = analysis_cfg["min_rmsd_recon"]["enabled"]
-                        visualize_latent = analysis_cfg["min_rmsd_recon"]["visualize_latent"]
-                        if (do_min_rmsd or do_min_rmsd_recon or do_q or do_q_recon) and coords is not None:
-                            if seed_test_to_train_holder[0] is None:
-                                # Seed-level cache: always saved when used (independent of analysis save_data).
-                                _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
-                                seed_test_to_train_holder[0] = get_or_compute_test_to_train_rmsd(
-                                    coords_np, coords, training_split, split_seed,
-                                    _cache_path,
-                                    query_batch_size=analysis_cfg["min_rmsd_gen"]["query_batch_size"],
-                                    display_root=base_output_dir,
-                                )
-                            _tt, _train_c, _test_c = seed_test_to_train_holder[0]
+                        # Single analysis loop over registered metrics (order: min_rmsd, then q).
+                        any_analysis = any(
+                            analysis_cfg.get(spec.gen_key, {}).get("enabled", False) or analysis_cfg.get(spec.recon_key, {}).get("enabled", False)
+                            for spec in ANALYSIS_METRICS
+                        )
+                        if any_analysis and coords is not None:
+                            if not isinstance(seed_test_to_train_holder[0], dict):
+                                seed_test_to_train_holder[0] = {}
+                            _cache = seed_test_to_train_holder[0]
                             analysis_phase_start = time.time()
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD + Q)...", since_start=time.time() - pipeline_start, style="info")
-                            gen_cfg = analysis_cfg["min_rmsd_gen"]
-                            plot_cfg_analysis = {
-                                "plot_dpi": plot_dpi,
-                                "save_pdf_copy": gen_cfg["save_pdf_copy"],
-                                "min_rmsd_num_samples": gen_cfg["num_samples"],
-                                "min_rmsd_sample_variance": gen_cfg["sample_variance"],
-                                "min_rmsd_query_batch_size": gen_cfg["query_batch_size"],
-                                "save_data": gen_cfg["save_data"],
-                                "save_structures_gro": gen_cfg["save_structures_gro"],
-                            }
-                            if do_min_rmsd:
-                                for var in variance_list:
-                                    variance_suffix = f"_var{var}" if len(variance_list) > 1 else ""
-                                    any_missing = False
-                                    for n in num_samples_list:
-                                        run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list) > 1 else "default")
-                                        fig_path = _analysis_path(run_dir_eu, "min_rmsd", f"gen/{run_name}/min_rmsd_distributions.png")
-                                        if not (resume and os.path.isfile(fig_path)):
-                                            any_missing = True
-                                            break
-                                    if any_missing:
-                                        if len(num_samples_list) > 1:
-                                            run_min_rmsd_analysis_multi(
-                                                coords_np, coords, training_split, split_seed,
-                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                                plot_cfg_analysis,
-                                                num_samples_list=num_samples_list,
-                                                sample_variance=var,
-                                                variance_suffix=variance_suffix,
-                                                display_root=base_output_dir,
-                                                precomputed_test_to_train=_tt,
-                                                train_coords_np=_train_c,
-                                                test_coords_np=_test_c,
+                            for spec in ANALYSIS_METRICS:
+                                do_gen = analysis_cfg.get(spec.gen_key, {}).get("enabled", False)
+                                do_recon = analysis_cfg.get(spec.recon_key, {}).get("enabled", False)
+                                if not (do_gen or do_recon):
+                                    continue
+                                gen_cfg = analysis_cfg.get(spec.gen_key) or {}
+                                recon_cfg = analysis_cfg.get(spec.recon_key) or {}
+                                _variance_list = gen_cfg.get("sample_variance")
+                                if _variance_list is None:
+                                    _variance_list = []
+                                if not isinstance(_variance_list, list):
+                                    _variance_list = [_variance_list]
+                                _num_samples_list = gen_cfg.get("num_samples")
+                                if _num_samples_list is None:
+                                    _num_samples_list = []
+                                if not isinstance(_num_samples_list, list):
+                                    _num_samples_list = [_num_samples_list]
+                                _max_recon_train_list = recon_cfg.get("max_recon_train")
+                                if _max_recon_train_list is None:
+                                    _max_recon_train_list = []
+                                if not isinstance(_max_recon_train_list, list):
+                                    _max_recon_train_list = [_max_recon_train_list]
+                                _max_recon_test_list = recon_cfg.get("max_recon_test")
+                                if _max_recon_test_list is None:
+                                    _max_recon_test_list = []
+                                if not isinstance(_max_recon_test_list, list):
+                                    _max_recon_test_list = [_max_recon_test_list]
+                                _visualize_latent = recon_cfg.get("visualize_latent", False)
+                                _gen_max_train = gen_cfg.get("max_train")
+                                _gen_max_test = gen_cfg.get("max_test")
+
+                                def _get_or_compute_cached(mt, mc):
+                                    if spec.id == "min_rmsd":
+                                        if _cache.get("min_rmsd") is None:
+                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, None, None))
+                                            _cache["min_rmsd"] = spec.get_or_compute_test_to_train(
+                                                _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
+                                                **spec.kwargs_for_cache(analysis_cfg, None, None),
                                             )
-                                        else:
-                                            n = num_samples_list[0]
-                                            run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(num_samples_list) > 1) else "default"
-                                            output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
-                                            run_min_rmsd_analysis(
-                                                coords_np, coords, training_split, split_seed,
-                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                                plot_cfg_analysis,
-                                                num_samples=n, sample_variance=var, output_suffix=output_suffix,
-                                                display_root=base_output_dir,
-                                                precomputed_test_to_train=_tt,
-                                                train_coords_np=_train_c,
-                                                test_coords_np=_test_c,
-                                            )
-                                    else:
-                                        _log(f"  [skip] min_rmsd variance={var}", since_start=time.time() - pipeline_start, style="skip")
-                            if do_min_rmsd_recon:
-                                n_recon = len(max_recon_train_list) * len(max_recon_test_list)
-                                for max_recon_train in max_recon_train_list:
-                                    for max_recon_test in max_recon_test_list:
-                                        if n_recon == 1:
-                                            recon_subdir = ""
-                                            recon_fig = _analysis_path(run_dir_eu, "min_rmsd", "recon/min_rmsd_distributions.png")
-                                            latent_fig = _analysis_path(run_dir_eu, "min_rmsd", "recon/latent_distribution.png")
-                                        else:
-                                            recon_subdir = f"train{max_recon_train}_test{max_recon_test}"
-                                            recon_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{recon_subdir}/min_rmsd_distributions.png")
-                                            latent_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{recon_subdir}/latent_distribution.png")
-                                        if not (resume and os.path.isfile(recon_fig)):
-                                            train_recon_coords = _get_recon_coords_euclideanizer(
-                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
-                                                use_train=True, max_n=max_recon_train,
-                                            )
-                                            test_recon_coords = _get_recon_coords_euclideanizer(
-                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
-                                                use_train=False, max_n=max_recon_test,
-                                            )
-                                            run_min_rmsd_recon_analysis(
-                                                _tt, _train_c, _test_c, train_recon_coords, test_recon_coords,
-                                                run_dir_eu,
-                                                {
-                                                    "save_data": analysis_cfg["min_rmsd_recon"]["save_data"],
-                                                    "plot_dpi": plot_dpi,
-                                                    "save_pdf_copy": analysis_cfg["min_rmsd_recon"]["save_pdf_copy"],
-                                                },
-                                                display_root=base_output_dir,
-                                                recon_subdir=recon_subdir,
-                                            )
-                                        elif resume and n_recon == 1:
-                                            _log(f"  [skip] min_rmsd recon", since_start=time.time() - pipeline_start, style="skip")
-                                        if visualize_latent and not (resume and os.path.isfile(latent_fig)):
-                                            train_mu, test_mu = _get_latent_vectors_euclideanizer(
-                                                frozen_vae, device, coords, training_split, split_seed, utils,
-                                                max_train=max_recon_train,
-                                                max_test=max_recon_test,
-                                            )
-                                            plot_latent_distribution(
-                                                train_mu, test_mu, latent_fig,
-                                                plot_dpi=plot_dpi, display_root=base_output_dir,
-                                                save_pdf_copy=analysis_cfg["min_rmsd_recon"]["save_pdf_copy"],
-                                            )
-                                        elif resume and visualize_latent and n_recon == 1 and os.path.isfile(latent_fig):
-                                            _log(f"  [skip] latent distribution", since_start=time.time() - pipeline_start, style="skip")
-                            if do_q and q_max_train is not None and q_max_test is not None and q_num_samples_list and q_variance_list is not None:
-                                _cache_path_q = os.path.join(output_dir, EXP_STATS_CACHE_DIR, f"q_test_to_train_{q_max_train}_{q_max_test}.npz")
-                                _tt_q, _train_q, _test_q = get_or_compute_test_to_train_q(
-                                    coords_np, coords, training_split, split_seed,
-                                    _cache_path_q, max_train=q_max_train, max_test=q_max_test,
-                                    delta=q_delta, query_batch_size=analysis_cfg["q_gen"]["query_batch_size"],
-                                    display_root=base_output_dir,
-                                )
-                                q_gen_cfg = analysis_cfg["q_gen"]
-                                plot_cfg_q = {
-                                    "plot_dpi": plot_dpi,
-                                    "save_pdf_copy": q_gen_cfg["save_pdf_copy"],
-                                    "q_num_samples": q_gen_cfg["num_samples"],
-                                    "q_sample_variance": q_gen_cfg["sample_variance"],
-                                    "q_query_batch_size": q_gen_cfg["query_batch_size"],
-                                    "save_data": q_gen_cfg["save_data"],
-                                    "save_structures_gro": q_gen_cfg["save_structures_gro"],
-                                }
-                                for var_q in q_variance_list:
-                                    variance_suffix_q = f"_var{var_q}" if len(q_variance_list) > 1 else ""
-                                    any_missing_q = False
-                                    for n in q_num_samples_list:
-                                        run_name_q = (str(n) + variance_suffix_q) if variance_suffix_q else (str(n) if len(q_num_samples_list) > 1 else "default")
-                                        fig_path_q = _analysis_path(run_dir_eu, "q", f"gen/{run_name_q}/q_distributions.png")
-                                        if not (resume and os.path.isfile(fig_path_q)):
-                                            any_missing_q = True
-                                            break
-                                    if any_missing_q:
-                                        if len(q_num_samples_list) > 1:
-                                            run_q_analysis_multi(
-                                                coords_np, coords, training_split, split_seed,
-                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                                plot_cfg_q, num_samples_list=q_num_samples_list,
-                                                sample_variance=var_q, delta=q_delta, variance_suffix=variance_suffix_q,
-                                                display_root=base_output_dir,
-                                                precomputed_test_to_train_max_q=_tt_q,
-                                                train_coords_np=_train_q, test_coords_np=_test_q,
-                                            )
-                                        else:
-                                            n_q = q_num_samples_list[0]
-                                            run_name_single_q = (str(n_q) + variance_suffix_q) if (variance_suffix_q or len(q_num_samples_list) > 1) else "default"
-                                            output_suffix_q = ("_" + run_name_single_q) if run_name_single_q != "default" else ""
-                                            run_q_analysis(
-                                                coords_np, coords, training_split, split_seed,
-                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                                plot_cfg_q, num_samples=n_q, sample_variance=var_q, delta=q_delta,
-                                                output_suffix=output_suffix_q, display_root=base_output_dir,
-                                                precomputed_test_to_train_max_q=_tt_q,
-                                                train_coords_np=_train_q, test_coords_np=_test_q,
-                                            )
-                                    else:
-                                        _log(f"  [skip] Q variance={var_q}", since_start=time.time() - pipeline_start, style="skip")
-                            if do_q_recon and q_max_recon_train_list and q_max_recon_test_list:
-                                n_q_recon = len(q_max_recon_train_list) * len(q_max_recon_test_list)
-                                for max_recon_train in q_max_recon_train_list:
-                                    for max_recon_test in q_max_recon_test_list:
-                                        _cache_path_q_recon = os.path.join(output_dir, EXP_STATS_CACHE_DIR, f"q_test_to_train_{max_recon_train}_{max_recon_test}.npz")
-                                        _tt_q_r, _train_q_r, _test_q_r = get_or_compute_test_to_train_q(
-                                            coords_np, coords, training_split, split_seed,
-                                            _cache_path_q_recon, max_train=max_recon_train, max_test=max_recon_test,
-                                            delta=q_recon_delta, query_batch_size=analysis_cfg["q_gen"]["query_batch_size"],
-                                            display_root=base_output_dir,
+                                        return _cache["min_rmsd"]
+                                    assert spec.id == "q"
+                                    if _cache.get("q") is None:
+                                        _cache["q"] = {}
+                                    key = (mt, mc)
+                                    if key not in _cache["q"]:
+                                        _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                                        _cache["q"][key] = spec.get_or_compute_test_to_train(
+                                            _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
+                                            **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                         )
-                                        if n_q_recon == 1:
-                                            recon_subdir_q = ""
-                                            recon_fig_q = _analysis_path(run_dir_eu, "q", "recon/q_distributions.png")
-                                            latent_fig_q = _analysis_path(run_dir_eu, "q", "recon/latent_distribution.png")
+                                    return _cache["q"][key]
+
+                                if do_gen:
+                                    _mt_gen = _gen_max_train if spec.id == "q" else None
+                                    _mc_gen = _gen_max_test if spec.id == "q" else None
+                                    if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
+                                        continue
+                                    _tt, _train_c, _test_c = _get_or_compute_cached(_mt_gen, _mc_gen)
+                                    plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg, plot_dpi)
+                                    pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
+                                    extra_kw = spec.gen_extra_kwargs(analysis_cfg)
+                                    for var in _variance_list:
+                                        variance_suffix = f"_var{var}" if len(_variance_list) > 1 else ""
+                                        any_missing = False
+                                        for n in _num_samples_list:
+                                            run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(_num_samples_list) > 1 else "default")
+                                            fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
+                                            if not (resume and os.path.isfile(fig_path)):
+                                                any_missing = True
+                                                break
+                                        if any_missing:
+                                            if len(_num_samples_list) > 1:
+                                                spec.run_gen_analysis_multi(
+                                                    coords_np, coords, training_split, split_seed,
+                                                    frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                                    plot_cfg_gen,
+                                                    num_samples_list=_num_samples_list,
+                                                    sample_variance=var,
+                                                    variance_suffix=variance_suffix,
+                                                    display_root=base_output_dir,
+                                                    **pre_kw,
+                                                    **extra_kw,
+                                                )
+                                            else:
+                                                n = _num_samples_list[0]
+                                                run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(_num_samples_list) > 1) else "default"
+                                                output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
+                                                spec.run_gen_analysis(
+                                                    coords_np, coords, training_split, split_seed,
+                                                    frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                                    plot_cfg_gen,
+                                                    num_samples=n, sample_variance=var, output_suffix=output_suffix,
+                                                    display_root=base_output_dir,
+                                                    **pre_kw,
+                                                    **extra_kw,
+                                                )
                                         else:
-                                            recon_subdir_q = f"train{max_recon_train}_test{max_recon_test}"
-                                            recon_fig_q = _analysis_path(run_dir_eu, "q", f"recon/{recon_subdir_q}/q_distributions.png")
-                                            latent_fig_q = _analysis_path(run_dir_eu, "q", f"recon/{recon_subdir_q}/latent_distribution.png")
-                                        if not (resume and os.path.isfile(recon_fig_q)):
-                                            train_recon_coords_q = _get_recon_coords_euclideanizer(
-                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
-                                                use_train=True, max_n=max_recon_train,
-                                            )
-                                            test_recon_coords_q = _get_recon_coords_euclideanizer(
-                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
-                                                use_train=False, max_n=max_recon_test,
-                                            )
-                                            run_q_recon_analysis(
-                                                _tt_q_r, _train_q_r, _test_q_r,
-                                                train_recon_coords_q, test_recon_coords_q,
-                                                run_dir_eu,
-                                                {"save_data": analysis_cfg["q_recon"]["save_data"], "plot_dpi": plot_dpi, "save_pdf_copy": analysis_cfg["q_recon"]["save_pdf_copy"]},
-                                                delta=q_recon_delta, display_root=base_output_dir, recon_subdir=recon_subdir_q,
-                                            )
-                                        if q_visualize_latent and not (resume and os.path.isfile(latent_fig_q)):
-                                            train_mu_q, test_mu_q = _get_latent_vectors_euclideanizer(
-                                                frozen_vae, device, coords, training_split, split_seed, utils,
-                                                max_train=max_recon_train, max_test=max_recon_test,
-                                            )
-                                            plot_latent_distribution(
-                                                train_mu_q, test_mu_q, latent_fig_q,
-                                                plot_dpi=plot_dpi, display_root=base_output_dir,
-                                                save_pdf_copy=analysis_cfg["q_recon"]["save_pdf_copy"],
-                                            )
+                                            _log(f"  [skip] {spec.id} variance={var}", since_start=time.time() - pipeline_start, style="skip")
+
+                                if do_recon and _max_recon_train_list and _max_recon_test_list:
+                                    n_recon = len(_max_recon_train_list) * len(_max_recon_test_list)
+                                    plot_cfg_recon = spec.build_recon_plot_cfg(analysis_cfg, plot_dpi)
+                                    recon_extra = spec.recon_extra_kwargs(analysis_cfg)
+                                    for max_recon_train in _max_recon_train_list:
+                                        for max_recon_test in _max_recon_test_list:
+                                            _tt, _train_c, _test_c = _get_or_compute_cached(max_recon_train, max_recon_test)
+                                            if n_recon == 1:
+                                                recon_subdir = ""
+                                                recon_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{spec.figure_filename}")
+                                                latent_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/latent_distribution.png")
+                                            else:
+                                                recon_subdir = f"train{max_recon_train}_test{max_recon_test}"
+                                                recon_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{recon_subdir}/{spec.figure_filename}")
+                                                latent_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{recon_subdir}/latent_distribution.png")
+                                            if not (resume and os.path.isfile(recon_fig)):
+                                                train_recon_coords = _get_recon_coords_euclideanizer(
+                                                    embed, frozen_vae, device, coords, training_split, split_seed, utils,
+                                                    use_train=True, max_n=max_recon_train,
+                                                )
+                                                test_recon_coords = _get_recon_coords_euclideanizer(
+                                                    embed, frozen_vae, device, coords, training_split, split_seed, utils,
+                                                    use_train=False, max_n=max_recon_test,
+                                                )
+                                                spec.run_recon_analysis(
+                                                    _tt, _train_c, _test_c, train_recon_coords, test_recon_coords,
+                                                    run_dir_eu, plot_cfg_recon,
+                                                    display_root=base_output_dir, recon_subdir=recon_subdir,
+                                                    **recon_extra,
+                                                )
+                                            elif resume and n_recon == 1:
+                                                _log(f"  [skip] {spec.id} recon", since_start=time.time() - pipeline_start, style="skip")
+                                            if _visualize_latent and not (resume and os.path.isfile(latent_fig)):
+                                                train_mu, test_mu = _get_latent_vectors_euclideanizer(
+                                                    frozen_vae, device, coords, training_split, split_seed, utils,
+                                                    max_train=max_recon_train, max_test=max_recon_test,
+                                                )
+                                                plot_latent_distribution(
+                                                    train_mu, test_mu, latent_fig,
+                                                    plot_dpi=plot_dpi, display_root=base_output_dir,
+                                                    save_pdf_copy=recon_cfg.get("save_pdf_copy", False),
+                                                )
+                                            elif resume and _visualize_latent and n_recon == 1 and os.path.isfile(latent_fig):
+                                                _log(f"  [skip] latent distribution", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     
                         del embed, frozen_vae

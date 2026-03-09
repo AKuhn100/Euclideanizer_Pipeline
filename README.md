@@ -314,7 +314,7 @@ A run is skipped only if (1) the best checkpoint file exists, (2) the saved run 
 
 **Resume and config mismatch:** If resume is on and the output directory already exists, **training-related** config (data, distmap, euclideanizer, training_visualization) must match the saved config exactly; otherwise the run fails with a diff. If **plotting** or **analysis** config differs, the pipeline handles each **chunk** independently: **Plotting**, **Min-RMSD (gen)**, **Min-RMSD (recon)**, **Q (gen)**, and **Q (recon)**. For each chunk whose config differs from saved, the pipeline prompts once to confirm, then removes only that chunk’s outputs, then re-runs that chunk (training is skipped). So if only the min_rmsd_recon block changed, you get one prompt and only recon analysis outputs are removed; plotting and min_rmsd_gen outputs are left intact. After any such updates, the saved pipeline config is overwritten with the current config.
 
-**Overwriting only plotting or analysis:** You can re-run plotting or analysis over existing outputs without changing config by setting `**overwrite_existing: true`** in `plotting` or in an analysis sub-block (`min_rmsd_gen`, `min_rmsd_recon`, `q_gen`, `q_recon`). When that option is true and the corresponding outputs already exist, the pipeline prompts you to type `yes delete` to confirm; then it **deletes only those outputs up front** (plots/dashboard for plotting; that component’s analysis dirs for analysis) and re-runs them. This avoids mixing old and new results. Use `**--yes-overwrite`** to skip the prompt (e.g. in scripts).
+**Overwriting only plotting or analysis:** You can re-run plotting or analysis over existing outputs without changing config by setting `**overwrite_existing: true`** in `plotting` or in an analysis sub-block (`min_rmsd_gen`, `min_rmsd_recon`, `q_gen`, `q_recon`). When that option is true and the corresponding outputs already exist, the pipeline prompts you to type `yes delete` to confirm; then it **deletes only those outputs up front** (plots/dashboard for plotting; that component’s analysis subdir only (e.g. analysis/q/gen); other metrics stay intact). You are only prompted when output exists for that component, then re-runs them. This avoids mixing old and new results. Use `**--yes-overwrite`** to skip the prompt (e.g. in scripts).
 
 **Resume and data loading:** For replot-only runs (e.g. after config diff or overwrite_existing), the pipeline assumes the same inputs as for a full run: the **root dataset file** (`data.path` / `--data`, e.g. the .gro) when any step needs coordinates, and the **experimental_statistics caches** when it can do a stats-only load (e.g. only gen_variance missing). If the .gro is moved or the caches are missing/invalid, the run can fail when it tries to load. What gets loaded is tied to which outputs are missing:
 
@@ -466,6 +466,10 @@ Euclideanizer_Pipeline/
 ---
 
 ## Plots and analysis
+
+### Analysis metrics
+
+The pipeline supports **pluggable analysis metrics**: min-RMSD and Q (max Q). Output layout and config keys are unchanged: `analysis/min_rmsd/...` and `analysis/q/...`, with the same figure names and nested blocks (`min_rmsd_gen`, `min_rmsd_recon`, `q_gen`, `q_recon`). The implementation uses a single metric-agnostic loop in `run.py` over a small **analysis metric registry** in `src/analysis_metrics.py`. Each metric is described by an **AnalysisMetricSpec** (config keys, subdir, figure filename, and callables for cache, gen, and recon). Adding a new metric requires implementing that interface and appending a spec to `ANALYSIS_METRICS` in `src/analysis_metrics.py`; no change to the driver or dashboard loop is needed beyond registering the new metric.
 
 ### Plot types (when plotting enabled)
 
