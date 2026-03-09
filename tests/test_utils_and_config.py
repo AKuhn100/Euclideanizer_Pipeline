@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 import torch
 
+from conftest import assert_exact_or_numerical
 from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
 from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
 from src.min_rmsd import _rmsd_matrix_batch, _recon_rmsd_one_to_one
@@ -121,8 +122,8 @@ def test_load_data_valid_gro(tmp_path):
     )
     out = load_data(str(gro))
     assert out.shape == (1, 2, 3)
-    assert np.allclose(out[0, 0], [0.1, 0.2, 0.3])
-    assert np.allclose(out[0, 1], [0.4, 0.5, 0.6])
+    assert_exact_or_numerical(out[0, 0], np.array([0.1, 0.2, 0.3]), atol=1e-7, name="parsed xyz row 0")
+    assert_exact_or_numerical(out[0, 1], np.array([0.4, 0.5, 0.6]), atol=1e-7, name="parsed xyz row 1")
 
 
 def test_load_data_raises_atom_line_too_few_columns(tmp_path):
@@ -322,23 +323,23 @@ def test_rmsd_matrix_batch_shape():
 
 
 def test_rmsd_matrix_batch_identical_coords_zero():
-    """When query and ref are identical copies, Kabsch-aligned RMSD should be zero."""
+    """When query and ref are identical copies, RMSD must be zero. Exact equality required; pass with note if within atol."""
     N = 5
     coords = np.random.randn(1, N, 3).astype(np.float32)
     refs = np.copy(coords)
     rmsd = _rmsd_matrix_batch(coords, refs)
     assert rmsd.shape == (1, 1)
-    assert np.isclose(rmsd[0, 0], 0.0, atol=1e-5)
+    assert_exact_or_numerical(rmsd[0, 0], 0.0, atol=1e-6, name="RMSD(identical coords)")
 
 
 def test_recon_rmsd_one_to_one():
-    """_recon_rmsd_one_to_one returns (n,) RMSD per structure; identical original/recon gives zero."""
+    """_recon_rmsd_one_to_one: identical original/recon must give RMSD=0. Exact equality required; pass with note if within atol."""
     S, N = 3, 4
     original = np.random.randn(S, N, 3).astype(np.float32)
     recon = np.copy(original)
     rmsds = _recon_rmsd_one_to_one(original, recon)
     assert rmsds.shape == (S,)
-    assert np.allclose(rmsds, 0.0, atol=1e-5)
+    assert_exact_or_numerical(rmsds, 0.0, atol=1e-6, name="recon RMSD (identical original/recon)")
 
 
 # ---------------------------------------------------------------------------

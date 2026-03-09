@@ -27,6 +27,8 @@ _GEN_VARIANCE_PATTERN = os.path.join(_PLOTS_BASE, "gen_variance", "gen_variance_
 _TRAINING_VIDEO = os.path.join("training_video", "training_evolution.mp4")
 _ANALYSIS_MIN_RMSD_DIR = "analysis"
 _MIN_RMSD_FIG = "min_rmsd_distributions.png"
+_ANALYSIS_Q_DIR = "q"
+_Q_FIG = "q_distributions.png"
 
 DASHBOARD_DIR = "dashboard"
 ASSETS_DIR = "assets"
@@ -113,6 +115,39 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                 if os.path.isfile(latent_sub):
                     rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, "min_rmsd", "recon", subdir, "latent_distribution.png")
                     blocks.append({"type": "latent_distribution", "name": f"Latent distribution {subdir}", "source_path": rel})
+    q_root = os.path.join(run_root, _ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR)
+    if os.path.isdir(q_root):
+        gen_dir = os.path.join(q_root, "gen")
+        if os.path.isdir(gen_dir):
+            for run_name in sorted(os.listdir(gen_dir)):
+                fig_path = os.path.join(gen_dir, run_name, _Q_FIG)
+                if os.path.isfile(fig_path):
+                    rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "gen", run_name, _Q_FIG)
+                    blocks.append({"type": "q_gen", "name": f"Q (gen) {run_name}", "source_path": rel})
+        recon_dir = os.path.join(q_root, "recon")
+        recon_fig = os.path.join(recon_dir, _Q_FIG)
+        if os.path.isfile(recon_fig):
+            rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", _Q_FIG)
+            blocks.append({"type": "q_recon", "name": "Q (recon)", "source_path": rel})
+        else:
+            for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+                subdir_path = os.path.join(recon_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    subdir_fig = os.path.join(subdir_path, _Q_FIG)
+                    if os.path.isfile(subdir_fig):
+                        rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", subdir, _Q_FIG)
+                        blocks.append({"type": "q_recon", "name": f"Q (recon) {subdir}", "source_path": rel})
+        latent_fig = os.path.join(recon_dir, "latent_distribution.png")
+        if os.path.isfile(latent_fig):
+            rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", "latent_distribution.png")
+            blocks.append({"type": "latent_distribution", "name": "Latent distribution (Q)", "source_path": rel})
+        else:
+            for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+                subdir_path = os.path.join(recon_dir, subdir)
+                latent_sub = os.path.join(subdir_path, "latent_distribution.png")
+                if os.path.isfile(latent_sub):
+                    rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_distribution.png")
+                    blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Q) {subdir}", "source_path": rel})
     return blocks
 
 
@@ -572,7 +607,7 @@ def _html_content(manifest: dict) -> str:
     }
 
     function blockTypeOrder(type) {
-      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'min_rmsd'];
+      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'min_rmsd', 'q_gen', 'q_recon', 'latent_distribution'];
       const i = order.indexOf(type);
       return i >= 0 ? i : order.length;
     }

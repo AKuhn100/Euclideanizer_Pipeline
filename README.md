@@ -9,7 +9,7 @@ A self-contained pipeline for training **DistMap** (a distance-map VAE) and **Eu
 - **DistMap**: Variational autoencoder over pairwise distance matrices; encodes/decodes in a latent space.
 - **Euclideanizer**: Takes the (non-Euclidean) decoded distance maps from the frozen DistMap and produces 3D coordinates so that their pairwise distances match the decoded map.
 
-The pipeline trains one or more DistMap configurations, then for each trained DistMap trains one or more Euclideanizer configurations. All hyperparameters are driven by a single YAML config (with optional CLI overrides). Outputs include checkpoints, plots (reconstruction, statistics, generation), optional training videos, and optional analysis (e.g. min-RMSD).
+The pipeline trains one or more DistMap configurations, then for each trained DistMap trains one or more Euclideanizer configurations. All hyperparameters are driven by a single YAML config (with optional CLI overrides). Outputs include checkpoints, plots (reconstruction, statistics, generation), optional training videos, and optional analysis (e.g. min-RMSD, Q / max Q).
 
 ---
 
@@ -138,7 +138,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 | **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights and `num_diags`.                                                                |
 | **plotting**               | `enabled`, `overwrite_existing`, reconstruction / bond_rg_scaling / avg_gen_vs_exp, numeric params, `plot_dpi`, then `save_data`, `save_pdf_copy`, `save_structures_gro`.             |
 | **training_visualization** | `enabled`, `n_probe`, `n_quick`, `fps`, frame size/dpi, `delete_frames_after_video`                                                                                                   |
-| **analysis**               | Nested blocks: same key order as plotting (enabled, overwrite_existing, params, save_data, save_pdf_copy, save_structures_gro or visualize_latent). `min_rmsd_gen`, `min_rmsd_recon`. |
+| **analysis**               | Nested blocks: same key order as plotting (enabled, overwrite_existing, params, save_data, save_pdf_copy, save_structures_gro or visualize_latent). `min_rmsd_gen`, `min_rmsd_recon`, `q_gen`, `q_recon`. |
 
 
 - **Lists in config**: Any distmap or euclideanizer key can be a list; the pipeline runs one job per element of the Cartesian product (e.g. `beta_kl: [0.01, 0.05]` and `epochs: [100, 300]` → 4 DistMap runs).
@@ -234,6 +234,8 @@ When **2+ CUDA devices** are available, the pipeline splits work into independen
 | **training_visualization.enabled**                             | One MP4 per DistMap and per Euclideanizer run (requires ffmpeg).                                                                                                                                                                   |
 | **analysis.min_rmsd_gen**                                      | Nested block: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. If enabled, min-RMSD (gen) outputs under `analysis/min_rmsd/gen/<run>/`. |
 | **analysis.min_rmsd_recon**                                    | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, recon figure and optional latent figure under `analysis/min_rmsd/recon/`.        |
+| **analysis.q_gen**                                             | Nested block: `enabled`, `overwrite_existing`, `max_train`, `max_test`, `num_samples`, `sample_variance`, `delta`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. If enabled, max Q (gen) outputs under `analysis/q/gen/<run_name>/`. Default `delta`: 1/√2. |
+| **analysis.q_recon**                                           | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, max Q (recon) figure under `analysis/q/recon/`. Default `delta`: 1/√2. |
 | **resume**                                                     | If true: skip complete runs and existing plot/analysis outputs. If false: confirm then delete output_dir and run from scratch (unless **--yes-overwrite**, which skips the prompt for non-interactive use).                        |
 | **CUDA devices**                                               | If 2+ available: tasks (seed × DistMap group) run in parallel, one process per GPU. Use `--no-multi-gpu` to disable or `--gpus N` to cap device count.                                                                             |
 | **--no-multi-gpu**                                             | Disable multi-GPU even when 2+ CUDA devices are available (single-process loop).                                                                                                                                                   |
@@ -310,9 +312,9 @@ flowchart LR
 
 A run is skipped only if (1) the best checkpoint file exists, (2) the saved run config’s `last_epoch_trained` equals the expected max epochs (and the relevant config section matches), and (3) for multi-segment runs, the last-epoch checkpoint is required only when there is a **next** segment that needs it—i.e. on the **last** segment with `save_final_models_per_stretch: false`, the last-epoch file is not required (and is not written). If a run is incomplete (e.g. interrupted), the pipeline resumes from the run’s **best** checkpoint when that is available (within-segment or mid-segment resume), or from the previous segment’s **last** checkpoint when starting a new segment.
 
-**Resume and config mismatch:** If resume is on and the output directory already exists, **training-related** config (data, distmap, euclideanizer, training_visualization) must match the saved config exactly; otherwise the run fails with a diff. If **plotting** or **analysis** config differs, the pipeline handles each **chunk** independently: **Plotting**, **Min-RMSD (gen)**, and **Min-RMSD (recon)**. For each chunk whose config differs from saved, the pipeline prompts once to confirm, then removes only that chunk’s outputs, then re-runs that chunk (training is skipped). So if only the min_rmsd_recon block changed, you get one prompt and only recon analysis outputs are removed; plotting and min_rmsd_gen outputs are left intact. After any such updates, the saved pipeline config is overwritten with the current config.
+**Resume and config mismatch:** If resume is on and the output directory already exists, **training-related** config (data, distmap, euclideanizer, training_visualization) must match the saved config exactly; otherwise the run fails with a diff. If **plotting** or **analysis** config differs, the pipeline handles each **chunk** independently: **Plotting**, **Min-RMSD (gen)**, **Min-RMSD (recon)**, **Q (gen)**, and **Q (recon)**. For each chunk whose config differs from saved, the pipeline prompts once to confirm, then removes only that chunk’s outputs, then re-runs that chunk (training is skipped). So if only the min_rmsd_recon block changed, you get one prompt and only recon analysis outputs are removed; plotting and min_rmsd_gen outputs are left intact. After any such updates, the saved pipeline config is overwritten with the current config.
 
-**Overwriting only plotting or analysis:** You can re-run plotting or analysis over existing outputs without changing config by setting `**overwrite_existing: true`** in `plotting` or in an analysis sub-block (`min_rmsd_gen`, `min_rmsd_recon`). When that option is true and the corresponding outputs already exist, the pipeline prompts you to type `yes delete` to confirm; then it **deletes only those outputs up front** (plots/dashboard for plotting; that component’s analysis dirs for analysis) and re-runs them. This avoids mixing old and new results. Use `**--yes-overwrite`** to skip the prompt (e.g. in scripts).
+**Overwriting only plotting or analysis:** You can re-run plotting or analysis over existing outputs without changing config by setting `**overwrite_existing: true`** in `plotting` or in an analysis sub-block (`min_rmsd_gen`, `min_rmsd_recon`, `q_gen`, `q_recon`). When that option is true and the corresponding outputs already exist, the pipeline prompts you to type `yes delete` to confirm; then it **deletes only those outputs up front** (plots/dashboard for plotting; that component’s analysis dirs for analysis) and re-runs them. This avoids mixing old and new results. Use `**--yes-overwrite`** to skip the prompt (e.g. in scripts).
 
 **Resume and data loading:** For replot-only runs (e.g. after config diff or overwrite_existing), the pipeline assumes the same inputs as for a full run: the **root dataset file** (`data.path` / `--data`, e.g. the .gro) when any step needs coordinates, and the **experimental_statistics caches** when it can do a stats-only load (e.g. only gen_variance missing). If the .gro is moved or the caches are missing/invalid, the run can fail when it tries to load. What gets loaded is tied to which outputs are missing:
 
@@ -321,7 +323,9 @@ A run is skipped only if (1) the best checkpoint file exists, (2) the saved run 
 - **Full load:** When both coords-dependent and stats-dependent outputs are missing, or when stats-only is not possible, the pipeline loads the dataset and (if plotting/analysis need them) experimental statistics and train/test stats.
 - **No load:** When all runs are complete and all plot/analysis outputs are present (e.g. you only run to assemble training videos from existing frames), nothing is loaded.
 
-Experimental statistics are cached under `output_dir/experimental_statistics/` (full) and `output_dir/seed_<n>/experimental_statistics/` (train/test). They are reused when the dataset path and dimensions match. Test→train min-RMSD is cached at seed level (`seed_<n>/experimental_statistics/test_to_train_rmsd.npz`): it is **saved whenever it is computed** (i.e. whenever min-RMSD analysis runs for that seed), **independent of the analysis block’s `save_data`**. That cache is reused for all min-RMSD analyses in that seed (including when `overwrite_existing` re-runs analysis) and is not duplicated in the per-run analysis data dirs. The **per-run** analysis outputs (e.g. `min_rmsd_data.npz`, `min_rmsd_recon_data.npz`) are still controlled by `save_data`.
+**Q metric (max Q):** The Q analysis blocks use a pairwise-distance similarity score **Q(α, β)** = (1/N) × Σ_{i<j} exp(−(r_ij(α) − r_ij(β))²/(2δ²)), where r_ij are pairwise distances (upper triangle, no diagonal), N = n_beads×(n_beads−1)/2, and **δ** is configurable (default **1/√2** so 2δ² = 1). Q is in [0, 1]; higher means more similar. For each query structure the pipeline reports **max Q** (best match over reference structures). All Q plot labels and outputs use “max Q”.
+
+Experimental statistics are cached under `output_dir/experimental_statistics/` (full) and `output_dir/seed_<n>/experimental_statistics/` (train/test). They are reused when the dataset path and dimensions match. Test→train min-RMSD is cached at seed level (`seed_<n>/experimental_statistics/test_to_train_rmsd.npz`): it is **saved whenever it is computed** (i.e. whenever min-RMSD analysis runs for that seed), **independent of the analysis block’s `save_data`**. Similarly, test→train **max Q** is cached at seed level as `seed_<n>/experimental_statistics/q_test_to_train_{max_train}_{max_test}.npz` (saved whenever Q analysis runs for that seed with those train/test sizes; reused by both Q_gen and Q_recon when the same sizes are requested). That cache is reused for all min-RMSD (or Q) analyses in that seed (including when `overwrite_existing` re-runs analysis) and is not duplicated in the per-run analysis data dirs. The **per-run** analysis outputs (e.g. `min_rmsd_data.npz`, `min_rmsd_recon_data.npz`, `q_data.npz`, `q_recon_data.npz`) are still controlled by `save_data`.
 
 ---
 
@@ -332,14 +336,14 @@ Experimental statistics are cached under `output_dir/experimental_statistics/` (
 All outputs live under `output_dir` (from config or `--output-dir`). With multiple seeds, each seed uses `output_dir/seed_<n>/`.
 
 - **Log**: `output_dir/pipeline.log` — concise, real-time log (elapsed time per line). Use `tail -f output_dir/pipeline.log` to monitor.
-- **Experimental statistics cache**: `output_dir/experimental_statistics/` (full dataset) and per-seed under `output_dir/seed_<n>/experimental_statistics/` (train/test). Reused when path and dataset size match. Per-seed dir also gets `test_to_train_rmsd.npz` when min-RMSD analysis runs (saved whenever used, independent of analysis `save_data`).
+- **Experimental statistics cache**: `output_dir/experimental_statistics/` (full dataset) and per-seed under `output_dir/seed_<n>/experimental_statistics/` (train/test). Reused when path and dataset size match. Per-seed dir also gets `test_to_train_rmsd.npz` when min-RMSD analysis runs and `q_test_to_train_{max_train}_{max_test}.npz` when Q analysis runs (saved whenever used, independent of analysis `save_data`).
 - **DistMap run**: `output_dir/seed_<n>/distmap/<i>/`
   - `model/model.pt` (best), `model/model_last.pt` (last epoch; present only when there is a next segment or `save_final_models_per_stretch: true`), `model/run_config.yaml`
   - `plots/reconstruction/`, `plots/recon_statistics/`, `plots/gen_variance/`, `plots/loss_curves/`
   - `training_video/` (frames and `training_evolution.mp4`) — separate from `plots/` so a plotting wipe does not remove it
 - **Euclideanizer run**: `output_dir/seed_<n>/distmap/<i>/euclideanizer/<j>/`
   - Same idea: `model/euclideanizer.pt` (best), `model/euclideanizer_last.pt` (when not the last segment or `save_final_models_per_stretch: true`), `model/run_config.yaml`, plus the same plot types under `plots/`, and `training_video/` when enabled.
-  - When min-RMSD (gen) is enabled: `analysis/min_rmsd/gen/<run_name>/` per (num_samples, variance), with figure, optional `data/`, optional `structures/`. When min-RMSD recon is enabled: `analysis/min_rmsd/recon/` with `min_rmsd_distributions.png` and optional `latent_distribution.png` (if `visualize_latent`).
+  - When min-RMSD (gen) is enabled: `analysis/min_rmsd/gen/<run_name>/` per (num_samples, variance), with figure, optional `data/`, optional `structures/`. When min-RMSD recon is enabled: `analysis/min_rmsd/recon/` with `min_rmsd_distributions.png` and optional `latent_distribution.png` (if `visualize_latent`). When Q (gen) is enabled: `analysis/q/gen/<run_name>/` with `q_distributions.png` and optional `data/`, `structures/`. When Q (recon) is enabled: `analysis/q/recon/` (or `.../recon/<subdir>/` for multiple sizes) with `q_distributions.png` and optional `latent_distribution.png` (if `visualize_latent`).
   - When `plotting.save_structures_gro` is true, generated structures used for gen_variance plots are saved as one multi-frame GRO file per set under `plots/gen_variance/structures/<variance>/structures.gro` (Euclideanizer only; each structure is a frame/timestep).
 
 Index `i` is the run index in the expanded DistMap grid; `j` is the Euclideanizer config index. When `plotting.save_data` is true, many plots also write a `data/` subdir with `.npz` files (see **Saved plot data**).
@@ -356,7 +360,7 @@ output_dir/
     experimental_statistics/
     distmap/
       0/  model/, plots/, training_video/, euclideanizer/
-            0/  model/, plots/ (reconstruction, recon_statistics, gen_variance, loss_curves), training_video/, analysis/min_rmsd/gen/<run_name>/ (figure, data/, structures/), analysis/min_rmsd/recon/ (min_rmsd_distributions.png, optional latent_distribution.png)
+            0/  model/, plots/ (reconstruction, recon_statistics, gen_variance, loss_curves), training_video/, analysis/min_rmsd/gen/<run_name>/ (figure, data/, structures/), analysis/min_rmsd/recon/ (min_rmsd_distributions.png, optional latent_distribution.png), analysis/q/gen/<run_name>/ (q_distributions.png, optional data/, structures/), analysis/q/recon/ (q_distributions.png, optional latent_distribution.png)
             1/  ...
       1/  model/, plots/, euclideanizer/
             0/  ...
@@ -378,7 +382,8 @@ base_output_dir/
     │   ├── split_meta.json
     │   ├── exp_stats_train.npz
     │   ├── exp_stats_test.npz
-    │   └── test_to_train_rmsd.npz   # when min_rmsd analysis runs; always saved when used (independent of save_data)
+    │   ├── test_to_train_rmsd.npz   # when min_rmsd analysis runs; always saved when used (independent of save_data)
+    │   └── q_test_to_train_{max_train}_{max_test}.npz   # when Q analysis runs; always saved when used (independent of save_data)
     └── distmap/<i>/
         ├── model/
         │   ├── run_config.yaml
@@ -400,15 +405,25 @@ base_output_dir/
             │   └── euclideanizer_last.pt
             ├── plots/
             ├── training_video/     # when enabled
-            └── analysis/min_rmsd/
-                ├── gen/<run_name>/
-                │   ├── min_rmsd_distributions.png
-                │   ├── data/        # if save_data
-                │   └── structures/  # if save_structures_gro
-                └── recon/
-                    ├── min_rmsd_distributions.png
-                    ├── data/        # if save_data (min_rmsd_recon_data.npz)
-                    └── latent_distribution.png   # if visualize_latent
+            └── analysis/
+                ├── min_rmsd/
+                │   ├── gen/<run_name>/
+                │   │   ├── min_rmsd_distributions.png
+                │   │   ├── data/        # if save_data
+                │   │   └── structures/  # if save_structures_gro
+                │   └── recon/
+                │       ├── min_rmsd_distributions.png
+                │       ├── data/        # if save_data (min_rmsd_recon_data.npz)
+                │       └── latent_distribution.png   # if visualize_latent
+                └── q/
+                    ├── gen/<run_name>/
+                    │   ├── q_distributions.png
+                    │   ├── data/        # if save_data (q_data.npz)
+                    │   └── structures/  # if save_structures_gro
+                    └── recon/   # or recon/<subdir>/ for multiple (max_recon_train, max_recon_test)
+                        ├── q_distributions.png
+                        ├── data/        # if save_data (q_recon_data.npz)
+                        └── latent_distribution.png   # if visualize_latent
 ```
 
 ---
@@ -441,6 +456,7 @@ Euclideanizer_Pipeline/
     train_distmap.py     # One DistMap training run
     train_euclideanizer.py
     min_rmsd.py          # Min-RMSD analysis (optional, via analysis.min_rmsd_gen / min_rmsd_recon)
+    q_analysis.py        # Q / max Q analysis (optional, via analysis.q_gen / q_recon)
     gro_io.py            # Write 3D structures to GROMACS GRO format
     training_visualization.py  # Training videos (optional, requires ffmpeg)
     distmap/             # DistMap VAE (model, loss, sampling)
@@ -462,7 +478,9 @@ Euclideanizer_Pipeline/
 | **Loss curves**                    | Train and validation loss per epoch (saved under `plots/loss_curves/`).                                                                                                                                                                                                                                                                   |
 | **Min-RMSD (gen)** (analysis)      | When `analysis.min_rmsd_gen.enabled: true`: histograms of min-RMSD (test→train, gen→train, gen→test) per (DistMap, Euclideanizer) pair. Outputs under `analysis/min_rmsd/gen/<run_name>/` (figure, optional `data/`, optional `structures/`). Use `num_samples`, `sample_variance`, `save_data`, `save_structures_gro` in the same block. |
 | **Min-RMSD (recon)** (analysis)    | When `analysis.min_rmsd_recon.enabled: true`: one figure with test→train (reused), train recon RMSD, test recon RMSD under `analysis/min_rmsd/recon/`. Use `max_recon_train` / `max_recon_test`, `save_data` in the same block.                                                                                                           |
-| **Latent distribution** (analysis) | When `analysis.min_rmsd_recon.visualize_latent: true`: box plots (train/test) and mean/std per dimension under `analysis/min_rmsd/recon/latent_distribution.png`.                                                                                                                                                                         |
+| **Q (gen)** (analysis)             | When `analysis.q_gen.enabled: true`: histograms of max Q (test→train, gen→train, gen→test) per (DistMap, Euclideanizer) pair. Outputs under `analysis/q/gen/<run_name>/` (figure, optional `data/`, optional `structures/`). Use `max_train`, `max_test`, `num_samples`, `sample_variance`, `delta`, `query_batch_size`, `save_data`, `save_structures_gro`. |
+| **Q (recon)** (analysis)           | When `analysis.q_recon.enabled: true`: one figure with test→train (max Q), train recon Q (one-to-one), test recon Q (one-to-one) under `analysis/q/recon/`. Use `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `visualize_latent`.                                                                                               |
+| **Latent distribution** (analysis) | When `analysis.min_rmsd_recon.visualize_latent: true` or `analysis.q_recon.visualize_latent: true`: box plots (train/test) and mean/std per dimension under the corresponding `analysis/.../recon/latent_distribution.png`.                                                                                                                                                   |
 
 
 ### Saved plot data (.npz)
@@ -479,6 +497,8 @@ With `plotting.save_data: true`, many plots write a `data/` subdir with `*_data.
 | **Loss curves**                    | `epoch`, `train_loss`, `val_loss`                                                                                                                                                                                                                                                                             |
 | **Min-RMSD (gen)** (analysis)      | When `analysis.min_rmsd_gen.save_data: true`: `analysis/min_rmsd/gen/<run_name>/data/min_rmsd_data.npz` with keys `gen_to_train`, `gen_to_test`, `bins`. Test→train RMSD is only at seed level (`experimental_statistics/test_to_train_rmsd.npz`), saved whenever analysis runs (independent of `save_data`). |
 | **Min-RMSD (recon)** (analysis)    | When `analysis.min_rmsd_recon.save_data: true`: `analysis/min_rmsd/recon/data/min_rmsd_recon_data.npz` with keys `train_recon_rmsd`, `test_recon_rmsd`, `bins`. Test→train RMSD is at seed level only (saved when used).                                                                                      |
+| **Q (gen)** (analysis)             | When `analysis.q_gen.save_data: true`: `analysis/q/gen/<run_name>/data/q_data.npz` with keys `gen_to_train`, `gen_to_test`, `bins`. Test→train max Q is at seed level (`experimental_statistics/q_test_to_train_{max_train}_{max_test}.npz`), saved whenever Q analysis runs (independent of `save_data`).   |
+| **Q (recon)** (analysis)           | When `analysis.q_recon.save_data: true`: `analysis/q/recon/data/q_recon_data.npz` (or `.../recon/<subdir>/data/...`) with keys `train_recon_q`, `test_recon_q`, `bins`. Test→train max Q is at seed level only (saved when used).                                                                          |
 
 
 ---
@@ -493,6 +513,6 @@ All keys below are **required** (no defaults in code). Omit any and the pipeline
 - **euclideanizer**: `epochs`, `batch_size`, `learning_rate`, same lambdas plus `lambda_w_diag_recon`, `lambda_w_diag_gen`, `num_diags` (diagonals for diagonal Wasserstein), `memory_efficient`, `save_final_models_per_stretch`.
 - **plotting**: `enabled`, `overwrite_existing`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `plot_dpi`, `save_data`, `save_pdf_copy`, `save_structures_gro`. (Key order standardized: behavior then save options.)
 - **training_visualization**: `enabled`, `n_probe`, `n_quick`, `fps`, `frame_width`, `frame_height`, `frame_dpi`, `delete_frames_after_video`.
-- **analysis**: Nested blocks; same key order (enabled, overwrite_existing, params, then save_data, save_pdf_copy, save_structures_gro or visualize_latent). **min_rmsd_gen**: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. **min_rmsd_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`.
+- **analysis**: Nested blocks; same key order (enabled, overwrite_existing, params, then save_data, save_pdf_copy, save_structures_gro or visualize_latent). **min_rmsd_gen**: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. **min_rmsd_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`. **q_gen**: `enabled`, `overwrite_existing`, `max_train`, `max_test`, `num_samples`, `sample_variance`, `delta`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. **q_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `save_pdf_copy`, `visualize_latent`.
 
 For full structure and comments, use `samples/config_sample.yaml` as the template.

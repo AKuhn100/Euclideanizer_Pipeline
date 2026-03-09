@@ -77,6 +77,12 @@ from src.min_rmsd import (
     plot_latent_distribution,
     get_or_compute_test_to_train_rmsd,
 )
+from src.q_analysis import (
+    run_q_analysis,
+    run_q_analysis_multi,
+    run_q_recon_analysis,
+    get_or_compute_test_to_train_q,
+)
 from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
@@ -319,9 +325,15 @@ def _has_any_plotting_output(base_output_dir: str, seeds: list) -> bool:
 
 
 def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) -> bool:
-    """True if any analysis output for the given component exists. component: 'min_rmsd_gen' or 'min_rmsd_recon'."""
-    subdir = "gen" if component == "min_rmsd_gen" else "recon"
-    target = os.path.join("analysis", "min_rmsd", subdir)
+    """True if any analysis output for the given component exists. component: 'min_rmsd_gen', 'min_rmsd_recon', 'q_gen', or 'q_recon'."""
+    if component in ("min_rmsd_gen", "min_rmsd_recon"):
+        subdir = "gen" if component == "min_rmsd_gen" else "recon"
+        target = os.path.join("analysis", "min_rmsd", subdir)
+    elif component in ("q_gen", "q_recon"):
+        subdir = "gen" if component == "q_gen" else "recon"
+        target = os.path.join("analysis", "q", subdir)
+    else:
+        return False
     for seed in seeds:
         seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
         if not os.path.isdir(seed_dir):
@@ -373,8 +385,15 @@ def _delete_plotting_outputs_only(base_output_dir: str, seeds: list) -> None:
 
 
 def _delete_analysis_outputs_for_component(base_output_dir: str, seeds: list, component: str) -> None:
-    """Remove entire analysis/ folder for each run (simplicity: one wipe for any analysis component). component: 'min_rmsd_gen' or 'min_rmsd_recon'."""
-    target = "analysis"
+    """Remove only the analysis subdir for this component (e.g. analysis/q/gen). component: 'min_rmsd_gen', 'min_rmsd_recon', 'q_gen', or 'q_recon'."""
+    if component in ("min_rmsd_gen", "min_rmsd_recon"):
+        subdir = "gen" if component == "min_rmsd_gen" else "recon"
+        target = os.path.join("analysis", "min_rmsd", subdir)
+    elif component in ("q_gen", "q_recon"):
+        subdir = "gen" if component == "q_gen" else "recon"
+        target = os.path.join("analysis", "q", subdir)
+    else:
+        return
     for seed in seeds:
         seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
         if not os.path.isdir(seed_dir):
@@ -872,8 +891,15 @@ def _euclideanizer_analysis_all_present(
     visualize_latent: bool = False,
     max_recon_train_list: list | None = None,
     max_recon_test_list: list | None = None,
+    do_q: bool = False,
+    do_q_recon: bool = False,
+    q_variance_list: list | None = None,
+    q_num_samples_list: list | None = None,
+    q_max_recon_train_list: list | None = None,
+    q_max_recon_test_list: list | None = None,
+    q_visualize_latent: bool = False,
 ) -> bool:
-    """True if resume and all min_rmsd (gen + recon + latent) analysis outputs we would generate already exist."""
+    """True if resume and all min_rmsd and Q (gen + recon + latent) analysis outputs we would generate already exist."""
     if not resume:
         return True
     if do_min_rmsd:
@@ -905,6 +931,35 @@ def _euclideanizer_analysis_all_present(
                         latent_fig = _analysis_path(run_dir_eu, "min_rmsd", f"recon/{subdir}/latent_distribution.png")
                         if not os.path.isfile(latent_fig):
                             return False
+    if do_q and q_variance_list is not None and q_num_samples_list is not None:
+        for var in q_variance_list:
+            variance_suffix = f"_var{var}" if len(q_variance_list) > 1 else ""
+            for n in q_num_samples_list:
+                run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(q_num_samples_list) > 1 else "default")
+                fig_path = _analysis_path(run_dir_eu, "q", f"gen/{run_name}/q_distributions.png")
+                if not os.path.isfile(fig_path):
+                    return False
+    if do_q_recon and q_max_recon_train_list is not None and q_max_recon_test_list is not None:
+        n_recon = len(q_max_recon_train_list) * len(q_max_recon_test_list)
+        if n_recon == 1:
+            recon_fig = _analysis_path(run_dir_eu, "q", "recon/q_distributions.png")
+            if not os.path.isfile(recon_fig):
+                return False
+            if q_visualize_latent:
+                latent_fig = _analysis_path(run_dir_eu, "q", "recon/latent_distribution.png")
+                if not os.path.isfile(latent_fig):
+                    return False
+        else:
+            for max_train in q_max_recon_train_list:
+                for max_test in q_max_recon_test_list:
+                    subdir = f"train{max_train}_test{max_test}"
+                    recon_fig = _analysis_path(run_dir_eu, "q", f"recon/{subdir}/q_distributions.png")
+                    if not os.path.isfile(recon_fig):
+                        return False
+                    if q_visualize_latent:
+                        latent_fig = _analysis_path(run_dir_eu, "q", f"recon/{subdir}/latent_distribution.png")
+                        if not os.path.isfile(latent_fig):
+                            return False
     return True
 
 
@@ -926,6 +981,13 @@ def _pipeline_need_data(
     visualize_latent: bool = False,
     max_recon_train_list: list | None = None,
     max_recon_test_list: list | None = None,
+    do_q: bool = False,
+    do_q_recon: bool = False,
+    q_variance_list: list | None = None,
+    q_num_samples_list: list | None = None,
+    q_max_recon_train_list: list | None = None,
+    q_max_recon_test_list: list | None = None,
+    q_visualize_latent: bool = False,
 ) -> bool:
     """True if any run is incomplete or any plot/analysis output is missing (so we must load something)."""
     return _pipeline_data_needs(
@@ -934,6 +996,10 @@ def _pipeline_need_data(
         plot_variances, variance_list, num_samples_list,
         do_min_rmsd_recon=do_min_rmsd_recon, visualize_latent=visualize_latent,
         max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
+        do_q=do_q, do_q_recon=do_q_recon,
+        q_variance_list=q_variance_list or [], q_num_samples_list=q_num_samples_list or [],
+        q_max_recon_train_list=q_max_recon_train_list or [], q_max_recon_test_list=q_max_recon_test_list or [],
+        q_visualize_latent=q_visualize_latent,
     ).need_any()
 
 
@@ -967,10 +1033,17 @@ def _pipeline_data_needs(
     visualize_latent: bool = False,
     max_recon_train_list: list | None = None,
     max_recon_test_list: list | None = None,
+    do_q: bool = False,
+    do_q_recon: bool = False,
+    q_variance_list: list | None = None,
+    q_num_samples_list: list | None = None,
+    q_max_recon_train_list: list | None = None,
+    q_max_recon_test_list: list | None = None,
+    q_visualize_latent: bool = False,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
-    - need_coords: any run incomplete, or any reconstruction / recon_statistics / min_rmsd missing.
+    - need_coords: any run incomplete, or any reconstruction / recon_statistics / min_rmsd / q analysis missing.
     - need_exp_stats: any gen_variance plot missing.
     - need_train_test_stats: any recon_statistics or gen_variance missing.
     """
@@ -1052,6 +1125,14 @@ def _pipeline_data_needs(
                             eu_run_dir, resume, do_min_rmsd, variance_list, num_samples_list,
                             do_min_rmsd_recon=do_min_rmsd_recon, visualize_latent=visualize_latent,
                             max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
+                        ):
+                            need_coords = True
+                        if (do_q or do_q_recon) and not _euclideanizer_analysis_all_present(
+                            eu_run_dir, resume, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+                            do_min_rmsd_recon=False, do_q=do_q, do_q_recon=do_q_recon,
+                            q_variance_list=q_variance_list, q_num_samples_list=q_num_samples_list,
+                            q_max_recon_train_list=q_max_recon_train_list, q_max_recon_test_list=q_max_recon_test_list,
+                            q_visualize_latent=q_visualize_latent,
                         ):
                             need_coords = True
     return PipelineDataNeeds(need_coords=need_coords, need_exp_stats=need_exp_stats, need_train_test_stats=need_train_test_stats)
@@ -1292,6 +1373,17 @@ def _run_one_distmap_group(
     train_stats,
     test_stats,
     seed_test_to_train_holder: list,
+    do_q: bool = False,
+    do_q_recon: bool = False,
+    q_max_train: int | None = None,
+    q_max_test: int | None = None,
+    q_num_samples_list: list | None = None,
+    q_variance_list: list | None = None,
+    q_delta: float = 0.7071067811865475,
+    q_max_recon_train_list: list | None = None,
+    q_max_recon_test_list: list | None = None,
+    q_recon_delta: float = 0.7071067811865475,
+    q_visualize_latent: bool = False,
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
@@ -1569,6 +1661,10 @@ def _run_one_distmap_group(
                         run_dir_eu, resume, do_min_rmsd, variance_list, num_samples_list,
                         do_min_rmsd_recon=analysis_cfg["min_rmsd_recon"]["enabled"], visualize_latent=analysis_cfg["min_rmsd_recon"]["visualize_latent"],
                         max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
+                        do_q=do_q, do_q_recon=do_q_recon,
+                        q_variance_list=q_variance_list or [], q_num_samples_list=q_num_samples_list or [],
+                        q_max_recon_train_list=q_max_recon_train_list or [], q_max_recon_test_list=q_max_recon_test_list or [],
+                        q_visualize_latent=q_visualize_latent,
                     )
                     if resume and all_plots and all_analysis:
                         _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): [skip] plotting and analysis (all present)", since_start=time.time() - pipeline_start, style="skip")
@@ -1632,7 +1728,7 @@ def _run_one_distmap_group(
     
                         do_min_rmsd_recon = analysis_cfg["min_rmsd_recon"]["enabled"]
                         visualize_latent = analysis_cfg["min_rmsd_recon"]["visualize_latent"]
-                        if (do_min_rmsd or do_min_rmsd_recon) and coords is not None:
+                        if (do_min_rmsd or do_min_rmsd_recon or do_q or do_q_recon) and coords is not None:
                             if seed_test_to_train_holder[0] is None:
                                 # Seed-level cache: always saved when used (independent of analysis save_data).
                                 _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, "test_to_train_rmsd.npz")
@@ -1644,7 +1740,7 @@ def _run_one_distmap_group(
                                 )
                             _tt, _train_c, _test_c = seed_test_to_train_holder[0]
                             analysis_phase_start = time.time()
-                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD)...", since_start=time.time() - pipeline_start, style="info")
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD + Q)...", since_start=time.time() - pipeline_start, style="info")
                             gen_cfg = analysis_cfg["min_rmsd_gen"]
                             plot_cfg_analysis = {
                                 "plot_dpi": plot_dpi,
@@ -1742,6 +1838,103 @@ def _run_one_distmap_group(
                                             )
                                         elif resume and visualize_latent and n_recon == 1 and os.path.isfile(latent_fig):
                                             _log(f"  [skip] latent distribution", since_start=time.time() - pipeline_start, style="skip")
+                            if do_q and q_max_train is not None and q_max_test is not None and q_num_samples_list and q_variance_list is not None:
+                                _cache_path_q = os.path.join(output_dir, EXP_STATS_CACHE_DIR, f"q_test_to_train_{q_max_train}_{q_max_test}.npz")
+                                _tt_q, _train_q, _test_q = get_or_compute_test_to_train_q(
+                                    coords_np, coords, training_split, split_seed,
+                                    _cache_path_q, max_train=q_max_train, max_test=q_max_test,
+                                    delta=q_delta, query_batch_size=analysis_cfg["q_gen"]["query_batch_size"],
+                                    display_root=base_output_dir,
+                                )
+                                q_gen_cfg = analysis_cfg["q_gen"]
+                                plot_cfg_q = {
+                                    "plot_dpi": plot_dpi,
+                                    "save_pdf_copy": q_gen_cfg["save_pdf_copy"],
+                                    "q_num_samples": q_gen_cfg["num_samples"],
+                                    "q_sample_variance": q_gen_cfg["sample_variance"],
+                                    "q_query_batch_size": q_gen_cfg["query_batch_size"],
+                                    "save_data": q_gen_cfg["save_data"],
+                                    "save_structures_gro": q_gen_cfg["save_structures_gro"],
+                                }
+                                for var_q in q_variance_list:
+                                    variance_suffix_q = f"_var{var_q}" if len(q_variance_list) > 1 else ""
+                                    any_missing_q = False
+                                    for n in q_num_samples_list:
+                                        run_name_q = (str(n) + variance_suffix_q) if variance_suffix_q else (str(n) if len(q_num_samples_list) > 1 else "default")
+                                        fig_path_q = _analysis_path(run_dir_eu, "q", f"gen/{run_name_q}/q_distributions.png")
+                                        if not (resume and os.path.isfile(fig_path_q)):
+                                            any_missing_q = True
+                                            break
+                                    if any_missing_q:
+                                        if len(q_num_samples_list) > 1:
+                                            run_q_analysis_multi(
+                                                coords_np, coords, training_split, split_seed,
+                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                                plot_cfg_q, num_samples_list=q_num_samples_list,
+                                                sample_variance=var_q, delta=q_delta, variance_suffix=variance_suffix_q,
+                                                display_root=base_output_dir,
+                                                precomputed_test_to_train_max_q=_tt_q,
+                                                train_coords_np=_train_q, test_coords_np=_test_q,
+                                            )
+                                        else:
+                                            n_q = q_num_samples_list[0]
+                                            run_name_single_q = (str(n_q) + variance_suffix_q) if (variance_suffix_q or len(q_num_samples_list) > 1) else "default"
+                                            output_suffix_q = ("_" + run_name_single_q) if run_name_single_q != "default" else ""
+                                            run_q_analysis(
+                                                coords_np, coords, training_split, split_seed,
+                                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                                plot_cfg_q, num_samples=n_q, sample_variance=var_q, delta=q_delta,
+                                                output_suffix=output_suffix_q, display_root=base_output_dir,
+                                                precomputed_test_to_train_max_q=_tt_q,
+                                                train_coords_np=_train_q, test_coords_np=_test_q,
+                                            )
+                                    else:
+                                        _log(f"  [skip] Q variance={var_q}", since_start=time.time() - pipeline_start, style="skip")
+                            if do_q_recon and q_max_recon_train_list and q_max_recon_test_list:
+                                n_q_recon = len(q_max_recon_train_list) * len(q_max_recon_test_list)
+                                for max_recon_train in q_max_recon_train_list:
+                                    for max_recon_test in q_max_recon_test_list:
+                                        _cache_path_q_recon = os.path.join(output_dir, EXP_STATS_CACHE_DIR, f"q_test_to_train_{max_recon_train}_{max_recon_test}.npz")
+                                        _tt_q_r, _train_q_r, _test_q_r = get_or_compute_test_to_train_q(
+                                            coords_np, coords, training_split, split_seed,
+                                            _cache_path_q_recon, max_train=max_recon_train, max_test=max_recon_test,
+                                            delta=q_recon_delta, query_batch_size=analysis_cfg["q_gen"]["query_batch_size"],
+                                            display_root=base_output_dir,
+                                        )
+                                        if n_q_recon == 1:
+                                            recon_subdir_q = ""
+                                            recon_fig_q = _analysis_path(run_dir_eu, "q", "recon/q_distributions.png")
+                                            latent_fig_q = _analysis_path(run_dir_eu, "q", "recon/latent_distribution.png")
+                                        else:
+                                            recon_subdir_q = f"train{max_recon_train}_test{max_recon_test}"
+                                            recon_fig_q = _analysis_path(run_dir_eu, "q", f"recon/{recon_subdir_q}/q_distributions.png")
+                                            latent_fig_q = _analysis_path(run_dir_eu, "q", f"recon/{recon_subdir_q}/latent_distribution.png")
+                                        if not (resume and os.path.isfile(recon_fig_q)):
+                                            train_recon_coords_q = _get_recon_coords_euclideanizer(
+                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
+                                                use_train=True, max_n=max_recon_train,
+                                            )
+                                            test_recon_coords_q = _get_recon_coords_euclideanizer(
+                                                embed, frozen_vae, device, coords, training_split, split_seed, utils,
+                                                use_train=False, max_n=max_recon_test,
+                                            )
+                                            run_q_recon_analysis(
+                                                _tt_q_r, _train_q_r, _test_q_r,
+                                                train_recon_coords_q, test_recon_coords_q,
+                                                run_dir_eu,
+                                                {"save_data": analysis_cfg["q_recon"]["save_data"], "plot_dpi": plot_dpi, "save_pdf_copy": analysis_cfg["q_recon"]["save_pdf_copy"]},
+                                                delta=q_recon_delta, display_root=base_output_dir, recon_subdir=recon_subdir_q,
+                                            )
+                                        if q_visualize_latent and not (resume and os.path.isfile(latent_fig_q)):
+                                            train_mu_q, test_mu_q = _get_latent_vectors_euclideanizer(
+                                                frozen_vae, device, coords, training_split, split_seed, utils,
+                                                max_train=max_recon_train, max_test=max_recon_test,
+                                            )
+                                            plot_latent_distribution(
+                                                train_mu_q, test_mu_q, latent_fig_q,
+                                                plot_dpi=plot_dpi, display_root=base_output_dir,
+                                                save_pdf_copy=analysis_cfg["q_recon"]["save_pdf_copy"],
+                                            )
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     
                         del embed, frozen_vae
@@ -1792,6 +1985,17 @@ def _run_one_seed(
     vis_enabled: bool,
     vis_cfg: dict,
     plot_cfg: dict,
+    do_q: bool = False,
+    do_q_recon: bool = False,
+    q_max_train: int | None = None,
+    q_max_test: int | None = None,
+    q_num_samples_list: list | None = None,
+    q_variance_list: list | None = None,
+    q_delta: float = 0.7071067811865475,
+    q_max_recon_train_list: list | None = None,
+    q_max_recon_test_list: list | None = None,
+    q_recon_delta: float = 0.7071067811865475,
+    q_visualize_latent: bool = False,
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
@@ -1810,7 +2014,7 @@ def _run_one_seed(
     _log(f"Seed {seed}  output_dir={output_dir}", since_start=time.time() - pipeline_start, style="info")
 
     train_stats = test_stats = None
-    if data_path and (do_plot or do_min_rmsd) and (coords is not None or (num_structures is not None and num_atoms is not None)):
+    if data_path and (do_plot or do_min_rmsd or do_q or do_q_recon) and (coords is not None or (num_structures is not None and num_atoms is not None)):
         train_stats, test_stats = _load_exp_stats_split_cache(
             output_dir, data_path, num_structures, num_atoms, split_seed, training_split
         )
@@ -1844,6 +2048,11 @@ def _run_one_seed(
             max_recon_train_list, max_recon_test_list,
             vis_enabled, vis_cfg, plot_cfg,
             train_stats, test_stats, seed_test_to_train_holder,
+            do_q=do_q, do_q_recon=do_q_recon,
+            q_max_train=q_max_train, q_max_test=q_max_test,
+            q_num_samples_list=q_num_samples_list or [], q_variance_list=q_variance_list or [],
+            q_delta=q_delta, q_max_recon_train_list=q_max_recon_train_list or [], q_max_recon_test_list=q_max_recon_test_list or [],
+            q_recon_delta=q_recon_delta, q_visualize_latent=q_visualize_latent,
             make_distmap_epoch_hook=make_distmap_epoch_hook,
             make_euclideanizer_epoch_hook=make_euclideanizer_epoch_hook,
             assemble_video_fn=assemble_video_fn,
@@ -1916,12 +2125,12 @@ def _worker(
         exp_stats = _load_exp_stats_cache(
             base_output_dir, data_path, num_structures, num_atoms
         )
-        if exp_stats is None and (shared_args["do_plot"] or shared_args["do_min_rmsd"]):
+        if exp_stats is None and (shared_args["do_plot"] or shared_args["do_min_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
             exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
         for seed, gidx in task_list:
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             train_stats = test_stats = None
-            if data_path and (shared_args["do_plot"] or shared_args["do_min_rmsd"]):
+            if data_path and (shared_args["do_plot"] or shared_args["do_min_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
                 train_stats, test_stats = _load_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms,
                     seed, shared_args["training_split"],
@@ -1963,6 +2172,17 @@ def _worker(
                 shared_args["max_recon_train_list"], shared_args["max_recon_test_list"],
                 shared_args["vis_enabled"], shared_args["vis_cfg"], shared_args["plot_cfg"],
                 train_stats, test_stats, seed_test_to_train_holder,
+                do_q=shared_args.get("do_q", False),
+                do_q_recon=shared_args.get("do_q_recon", False),
+                q_max_train=shared_args.get("q_max_train"),
+                q_max_test=shared_args.get("q_max_test"),
+                q_num_samples_list=shared_args.get("q_num_samples_list", []),
+                q_variance_list=shared_args.get("q_variance_list", []),
+                q_delta=shared_args.get("q_delta", 0.7071067811865475),
+                q_max_recon_train_list=shared_args.get("q_max_recon_train_list", []),
+                q_max_recon_test_list=shared_args.get("q_max_recon_test_list", []),
+                q_recon_delta=shared_args.get("q_recon_delta", 0.7071067811865475),
+                q_visualize_latent=shared_args.get("q_visualize_latent", False),
                 make_distmap_epoch_hook=shared_args.get("make_distmap_epoch_hook"),
                 make_euclideanizer_epoch_hook=shared_args.get("make_euclideanizer_epoch_hook"),
                 assemble_video_fn=shared_args.get("assemble_video_fn"),
@@ -2030,6 +2250,17 @@ def _run_multi_gpu_tasks(
     vis_enabled: bool,
     vis_cfg: dict,
     plot_cfg: dict,
+    do_q: bool = False,
+    do_q_recon: bool = False,
+    q_max_train: int | None = None,
+    q_max_test: int | None = None,
+    q_num_samples_list: list | None = None,
+    q_variance_list: list | None = None,
+    q_delta: float = 0.7071067811865475,
+    q_max_recon_train_list: list | None = None,
+    q_max_recon_test_list: list | None = None,
+    q_recon_delta: float = 0.7071067811865475,
+    q_visualize_latent: bool = False,
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
@@ -2042,7 +2273,7 @@ def _run_multi_gpu_tasks(
         effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed}}
         if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
             save_pipeline_config(effective_cfg, output_dir)
-        if data_path and coords is not None and (do_plot or do_min_rmsd):
+        if data_path and coords is not None and (do_plot or do_min_rmsd or do_q or do_q_recon):
             train_stats, test_stats = _load_exp_stats_split_cache(
                 output_dir, data_path, num_structures, num_atoms, seed, training_split
             )
@@ -2097,6 +2328,17 @@ def _run_multi_gpu_tasks(
         "vis_enabled": vis_enabled,
         "vis_cfg": vis_cfg,
         "plot_cfg": plot_cfg,
+        "do_q": do_q,
+        "do_q_recon": do_q_recon,
+        "q_max_train": q_max_train,
+        "q_max_test": q_max_test,
+        "q_num_samples_list": q_num_samples_list or [],
+        "q_variance_list": q_variance_list or [],
+        "q_delta": q_delta,
+        "q_max_recon_train_list": q_max_recon_train_list or [],
+        "q_max_recon_test_list": q_max_recon_test_list or [],
+        "q_recon_delta": q_recon_delta,
+        "q_visualize_latent": q_visualize_latent,
         "make_distmap_epoch_hook": make_distmap_epoch_hook,
         "make_euclideanizer_epoch_hook": make_euclideanizer_epoch_hook,
         "assemble_video_fn": assemble_video_fn,
@@ -2201,6 +2443,8 @@ def main():
     analysis_cfg = cfg["analysis"]
     do_min_rmsd = analysis_cfg["min_rmsd_gen"]["enabled"]
     do_min_rmsd_recon_cfg = analysis_cfg["min_rmsd_recon"]["enabled"]
+    do_q = analysis_cfg["q_gen"]["enabled"]
+    do_q_recon_cfg = analysis_cfg["q_recon"]["enabled"]
     training_split = cfg["data"]["training_split"]
     do_dashboard = cfg["dashboard"]["enabled"]
     if getattr(args, "no_dashboard", False):
@@ -2216,7 +2460,7 @@ def main():
 
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
     _log(f"config: {config_path}  output: {base_output_dir}  seeds: {seeds}", since_start=time.time() - pipeline_start, style="info")
-    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  min_rmsd_gen={do_min_rmsd}  min_rmsd_recon={do_min_rmsd_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
+    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  min_rmsd_gen={do_min_rmsd}  min_rmsd_recon={do_min_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     num_samples_list = analysis_cfg["min_rmsd_gen"]["num_samples"] if do_min_rmsd else []
     if not isinstance(num_samples_list, list):
@@ -2230,6 +2474,23 @@ def main():
     max_recon_test_list = analysis_cfg["min_rmsd_recon"]["max_recon_test"] if do_min_rmsd_recon_cfg else []
     if not isinstance(max_recon_test_list, list):
         max_recon_test_list = [max_recon_test_list]
+
+    q_max_train = analysis_cfg["q_gen"]["max_train"] if do_q else None
+    q_max_test = analysis_cfg["q_gen"]["max_test"] if do_q else None
+    q_num_samples_list = analysis_cfg["q_gen"]["num_samples"] if do_q else []
+    if not isinstance(q_num_samples_list, list):
+        q_num_samples_list = [q_num_samples_list]
+    q_variance_list = analysis_cfg["q_gen"]["sample_variance"] if do_q else []
+    if not isinstance(q_variance_list, list):
+        q_variance_list = [q_variance_list]
+    q_delta = analysis_cfg["q_gen"]["delta"] if do_q else (1.0 / (2.0 ** 0.5))
+    q_max_recon_train_list = analysis_cfg["q_recon"]["max_recon_train"] if do_q_recon_cfg else []
+    if not isinstance(q_max_recon_train_list, list):
+        q_max_recon_train_list = [q_max_recon_train_list]
+    q_max_recon_test_list = analysis_cfg["q_recon"]["max_recon_test"] if do_q_recon_cfg else []
+    if not isinstance(q_max_recon_test_list, list):
+        q_max_recon_test_list = [q_max_recon_test_list]
+    q_recon_delta = analysis_cfg["q_recon"].get("delta", q_delta)
     dm_groups = distmap_training_groups(cfg)
     eu_groups = euclideanizer_training_groups(cfg)
     plot_variances_for_scan = get_sample_variances(cfg) if do_plot else []
@@ -2242,6 +2503,10 @@ def main():
         to_overwrite.append("min_rmsd_gen")
     if do_min_rmsd_recon_cfg and analysis_cfg["min_rmsd_recon"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "min_rmsd_recon"):
         to_overwrite.append("min_rmsd_recon")
+    if do_q and analysis_cfg["q_gen"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "q_gen"):
+        to_overwrite.append("q_gen")
+    if do_q_recon_cfg and analysis_cfg["q_recon"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "q_recon"):
+        to_overwrite.append("q_recon")
     if to_overwrite:
         if not getattr(args, "yes_overwrite", False):
             _confirm_overwrite_outputs(to_overwrite)
@@ -2253,6 +2518,10 @@ def main():
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, "min_rmsd_gen")
             elif label == "min_rmsd_recon":
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, "min_rmsd_recon")
+            elif label == "q_gen":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "q_gen")
+            elif label == "q_recon":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "q_recon")
         _log("Done removing; will re-run these components.", since_start=time.time() - pipeline_start, style="success")
 
     # Pipeline config: strict match for training; if only plotting/analysis differ, prompt then delete and update saved config
@@ -2303,14 +2572,24 @@ def main():
                     chunks_to_update.add("min_rmsd_gen")
                 if s_analysis.get("min_rmsd_recon") != e_analysis.get("min_rmsd_recon"):
                     chunks_to_update.add("min_rmsd_recon")
-        chunks_to_update = sorted(chunks_to_update)  # stable order: min_rmsd_gen, min_rmsd_recon, plotting
+                if s_analysis.get("q_gen") != e_analysis.get("q_gen"):
+                    chunks_to_update.add("q_gen")
+                if s_analysis.get("q_recon") != e_analysis.get("q_recon"):
+                    chunks_to_update.add("q_recon")
+        chunks_to_update = sorted(chunks_to_update)  # stable order: min_rmsd_gen, min_rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
             chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
+        # Only prompt and delete for chunks that actually have existing outputs
+        chunk_labels = {"plotting": "Plotting", "min_rmsd_gen": "Min-RMSD (gen)", "min_rmsd_recon": "Min-RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)"}
+        chunks_with_outputs = [
+            c for c in chunks_still_to_delete
+            if (c == "plotting" and _has_any_plotting_output(base_output_dir, seeds))
+            or (c != "plotting" and _has_any_analysis_output(base_output_dir, seeds, c))
+        ]
         if chunks_to_update:
-            chunk_labels = {"plotting": "Plotting", "min_rmsd_gen": "Min-RMSD (gen)", "min_rmsd_recon": "Min-RMSD (recon)"}
-            for chunk in chunks_still_to_delete:
+            for chunk in chunks_with_outputs:
                 if not getattr(args, "yes_overwrite", False):
                     _confirm_replot_one_chunk(base_output_dir, chunk_labels[chunk])
                 _log(f"Removing existing {chunk_labels[chunk]} outputs (config changed).", since_start=time.time() - pipeline_start, style="info")
@@ -2333,8 +2612,9 @@ def main():
     if not resume or not data_path:
         do_min_rmsd_recon = analysis_cfg["min_rmsd_recon"]["enabled"]
         do_visualize_latent = analysis_cfg["min_rmsd_recon"]["visualize_latent"]
+        do_q_recon = analysis_cfg["q_recon"]["enabled"]
         needs = PipelineDataNeeds(
-            need_coords=(need_train or do_plot or do_min_rmsd or do_min_rmsd_recon),
+            need_coords=(need_train or do_plot or do_min_rmsd or do_min_rmsd_recon or do_q or do_q_recon),
             need_exp_stats=do_plot,
             need_train_test_stats=do_plot,
         ) if data_path else PipelineDataNeeds(need_coords=False, need_exp_stats=False, need_train_test_stats=False)
@@ -2345,6 +2625,10 @@ def main():
             plot_variances_for_scan, variance_list, num_samples_list,
             do_min_rmsd_recon=analysis_cfg["min_rmsd_recon"]["enabled"], visualize_latent=analysis_cfg["min_rmsd_recon"]["visualize_latent"],
             max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
+            do_q=do_q, do_q_recon=do_q_recon_cfg,
+            q_variance_list=q_variance_list, q_num_samples_list=q_num_samples_list,
+            q_max_recon_train_list=q_max_recon_train_list, q_max_recon_test_list=q_max_recon_test_list,
+            q_visualize_latent=analysis_cfg["q_recon"].get("visualize_latent", False),
         )
     need_any = needs.need_any() and data_path
 
@@ -2441,6 +2725,8 @@ def main():
             or (coords is None and exp_stats is not None)
         ))
         or (do_min_rmsd and coords is not None)
+        or (do_q and coords is not None)
+        or (do_q_recon_cfg and coords is not None)
     )
     save_structures_gro_plot = plot_cfg["save_structures_gro"]
     analysis_save_data = analysis_cfg["min_rmsd_gen"]["save_data"]
@@ -2456,11 +2742,9 @@ def main():
         _log(f"Detected {n_gpus} GPU(s). Using multi-GPU with {n_workers} worker(s).", since_start=time.time() - pipeline_start, style="info")
     else:
         _log(f"Detected {n_gpus} GPU(s). Using single process.", since_start=time.time() - pipeline_start, style="info")
-        if n_gpus == 1 and (coords is not None) and len(tasks) > 1:
-            _log("Tip: to use multiple GPUs in parallel, ensure the process sees 2+ devices (e.g. set CUDA_VISIBLE_DEVICES=0,1,2,3 in your run script).", since_start=time.time() - pipeline_start, style="skip")
 
     # Multi-GPU: ensure per-seed train/test stats caches exist, then free main-process data so only workers hold copies (reduces memory use).
-    if use_multi_gpu and data_path and coords is not None and (do_plot or do_min_rmsd):
+    if use_multi_gpu and data_path and coords is not None and (do_plot or do_min_rmsd or do_q or do_q_recon_cfg):
         for seed in seeds:
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             train_stats, test_stats = _load_exp_stats_split_cache(
@@ -2525,6 +2809,17 @@ def main():
             vis_enabled=vis_enabled,
             vis_cfg=vis_cfg,
             plot_cfg=plot_cfg,
+            do_q=do_q,
+            do_q_recon=do_q_recon_cfg,
+            q_max_train=q_max_train,
+            q_max_test=q_max_test,
+            q_num_samples_list=q_num_samples_list,
+            q_variance_list=q_variance_list,
+            q_delta=q_delta,
+            q_max_recon_train_list=q_max_recon_train_list,
+            q_max_recon_test_list=q_max_recon_test_list,
+            q_recon_delta=q_recon_delta,
+            q_visualize_latent=analysis_cfg["q_recon"].get("visualize_latent", False),
             make_distmap_epoch_hook=make_dm_hook,
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
@@ -2574,6 +2869,17 @@ def main():
             vis_enabled=vis_enabled,
             vis_cfg=vis_cfg,
             plot_cfg=plot_cfg,
+            do_q=do_q,
+            do_q_recon=do_q_recon_cfg,
+            q_max_train=q_max_train,
+            q_max_test=q_max_test,
+            q_num_samples_list=q_num_samples_list,
+            q_variance_list=q_variance_list,
+            q_delta=q_delta,
+            q_max_recon_train_list=q_max_recon_train_list,
+            q_max_recon_test_list=q_max_recon_test_list,
+            q_recon_delta=q_recon_delta,
+            q_visualize_latent=analysis_cfg["q_recon"].get("visualize_latent", False),
             make_distmap_epoch_hook=make_dm_hook,
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,

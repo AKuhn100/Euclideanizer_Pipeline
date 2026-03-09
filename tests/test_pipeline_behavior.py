@@ -663,6 +663,69 @@ def test_euclideanizer_analysis_all_present_true_when_no_min_rmsd(tmp_path):
     ) is True
 
 
+def test_euclideanizer_analysis_all_present_true_when_no_q(tmp_path):
+    """When do_q and do_q_recon are False, Q analysis is considered all present (nothing to check)."""
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=False, do_q_recon=False,
+    ) is True
+
+
+def test_euclideanizer_analysis_all_present_true_when_q_gen_outputs_exist(tmp_path):
+    """When do_q is True and gen outputs exist at analysis/q/gen/<run_name>/q_distributions.png, Q gen is present."""
+    run_dir = tmp_path / "analysis" / "q" / "gen" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "q_distributions.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=True, do_q_recon=False,
+        q_variance_list=[1.0], q_num_samples_list=[10],
+    ) is True
+
+
+def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missing(tmp_path):
+    """When do_q_recon is True and recon figure is missing, analysis is not all present."""
+    (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=True, do_q_recon=True,
+        q_variance_list=[1.0], q_num_samples_list=[10],
+        q_max_recon_train_list=[500], q_max_recon_test_list=[200],
+    ) is False
+
+
+def test_euclideanizer_analysis_all_present_true_when_q_recon_and_latent_exist(tmp_path):
+    """When do_q_recon and q_visualize_latent are True, recon and latent figures must exist."""
+    (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "q" / "recon").mkdir(parents=True)
+    (tmp_path / "analysis" / "q" / "recon" / "q_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "q" / "recon" / "latent_distribution.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=True, do_q_recon=True, q_visualize_latent=True,
+        q_variance_list=[1.0], q_num_samples_list=[10],
+        q_max_recon_train_list=[500], q_max_recon_test_list=[200],
+    ) is True
+
+
+def test_pipeline_data_needs_need_coords_true_when_q_enabled_and_outputs_missing(tmp_path, cfg):
+    """When do_q is True and Q analysis outputs are missing, need_coords is True."""
+    dm_groups, eu_groups = _all_runs_complete_layout(tmp_path, cfg)
+    needs = _pipeline_data_needs(
+        str(tmp_path), [0], dm_groups, eu_groups,
+        resume=True, do_plot=False, do_min_rmsd=False,
+        do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
+        plot_variances=[], variance_list=[], num_samples_list=[],
+        do_min_rmsd_recon=False, max_recon_train_list=[], max_recon_test_list=[],
+        do_q=True, do_q_recon=False,
+        q_variance_list=[1.0], q_num_samples_list=[10],
+        q_max_recon_train_list=[], q_max_recon_test_list=[],
+    )
+    assert needs.need_coords is True
+
+
 def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path):
     """When do_min_rmsd is True and gen outputs exist at analysis/min_rmsd/gen/<run_name>/, analysis is all present."""
     # Single variance and single num_samples -> run_name is "default"
