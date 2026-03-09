@@ -1,5 +1,5 @@
 """
-Unit tests for config helpers, utils, metrics, and min_rmsd pure functions.
+Unit tests for config helpers, utils, metrics, and rmsd pure functions.
 
 No dataset or GPU; fast. Run from pipeline root: pytest tests/test_utils_and_config.py -v
 """
@@ -14,7 +14,7 @@ import torch
 from conftest import assert_exact_or_numerical
 from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
 from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
-from src.min_rmsd import _rmsd_matrix_batch, _recon_rmsd_one_to_one
+from src.rmsd import _rmsd_matrix_batch, _recon_rmsd_one_to_one
 from src.utils import (
     display_path,
     get_available_cuda_count,

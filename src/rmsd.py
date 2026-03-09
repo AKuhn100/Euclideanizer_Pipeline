@@ -1,6 +1,7 @@
 """
 Min-RMSD distributions: integrate into pipeline for each Euclideanizer run.
 Uses Kabsch alignment; computes test→train, gen→train, gen→test min-RMSD and saves a figure.
+Output under analysis/rmsd/; figure content keeps "min RMSD to training set" where relevant.
 """
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ def get_or_compute_test_to_train_rmsd(
     Same for all analyses in the seed (same split). Returns (test_to_train, train_coords_np, test_coords_np).
 
     The seed-level cache is always written when computed (independent of the analysis block's save_data).
-    Per-run outputs (min_rmsd_data.npz, min_rmsd_recon_data.npz) are still gated by save_data.
+    Per-run outputs (rmsd_data.npz, rmsd_recon_data.npz) are still gated by save_data.
     """
     if os.path.isfile(cache_path):
         try:
@@ -156,7 +157,7 @@ def _run_one_min_rmsd(
     axes[2].grid(True, alpha=0.3)
     plt.tight_layout()
     os.makedirs(run_dir_this, exist_ok=True)
-    out_path = os.path.join(run_dir_this, "min_rmsd_distributions.png")
+    out_path = os.path.join(run_dir_this, "rmsd_distributions.png")
     plt.savefig(out_path, dpi=dpi)
     if plot_cfg.get("save_pdf_copy", False):
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
@@ -165,7 +166,7 @@ def _run_one_min_rmsd(
     if save_data:
         data_dir = os.path.join(run_dir_this, "data")
         os.makedirs(data_dir, exist_ok=True)
-        data_path = os.path.join(data_dir, "min_rmsd_data.npz")
+        data_path = os.path.join(data_dir, "rmsd_data.npz")
         # test_to_train is stored at seed level (experimental_statistics/test_to_train_rmsd.npz), not duplicated here
         save_kw: dict = dict(
             gen_to_train=gen_to_train,
@@ -208,20 +209,20 @@ def run_min_rmsd_analysis(
     test_coords_np: np.ndarray | None = None,
 ) -> str:
     """
-    Compute min-RMSD distributions (test→train, gen→train, gen→test). Saves to run_dir/analysis/min_rmsd/<run_name>/
-    with: min_rmsd_distributions.png, data/ (if save_data), structures/ (if save_structures_gro).
+    Compute min-RMSD distributions (test→train, gen→train, gen→test). Saves to run_dir/analysis/rmsd/<run_name>/
+    with: rmsd_distributions.png, data/ (if save_data), structures/ (if save_structures_gro).
     When precomputed_test_to_train, train_coords_np, test_coords_np are provided (e.g. from seed-level cache), they are reused.
     """
     run_name = output_suffix.lstrip("_") if output_suffix else "default"
-    run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", "gen", run_name)
+    run_dir_this = os.path.join(run_dir, "analysis", "rmsd", "gen", run_name)
     save_data = plot_cfg["save_data"]
     save_structures_gro = plot_cfg["save_structures_gro"]
 
-    _n = plot_cfg["min_rmsd_num_samples"]
+    _n = plot_cfg["rmsd_num_samples"]
     n_gen = num_samples if num_samples is not None else (_n[0] if isinstance(_n, list) else _n)
-    _v = plot_cfg["min_rmsd_sample_variance"]
+    _v = plot_cfg["rmsd_sample_variance"]
     variance = sample_variance if sample_variance is not None else (_v[0] if isinstance(_v, list) else _v)
-    batch_size = query_batch_size if query_batch_size is not None else plot_cfg["min_rmsd_query_batch_size"]
+    batch_size = query_batch_size if query_batch_size is not None else plot_cfg["rmsd_query_batch_size"]
     print(f"  Min-RMSD: n_gen={n_gen}, variance={variance} (test→train, gen→train, gen→test)...")
 
     if precomputed_test_to_train is not None and train_coords_np is not None and test_coords_np is not None:
@@ -290,7 +291,7 @@ def run_min_rmsd_analysis_multi(
     from .distmap.sample import generate_samples
     import shutil
 
-    batch_size = query_batch_size or plot_cfg["min_rmsd_query_batch_size"]
+    batch_size = query_batch_size or plot_cfg["rmsd_query_batch_size"]
     save_data = plot_cfg["save_data"]
     save_structures_gro = plot_cfg["save_structures_gro"]
     sorted_n = sorted(set(num_samples_list))
@@ -328,9 +329,9 @@ def run_min_rmsd_analysis_multi(
     loaded_n = 0
     for n in reversed(sorted_n):
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
-        run_dir_n = os.path.join(run_dir, "analysis", "min_rmsd", "gen", run_name)
-        fig_p = os.path.join(run_dir_n, "min_rmsd_distributions.png")
-        data_p = os.path.join(run_dir_n, "data", "min_rmsd_data.npz")
+        run_dir_n = os.path.join(run_dir, "analysis", "rmsd", "gen", run_name)
+        fig_p = os.path.join(run_dir_n, "rmsd_distributions.png")
+        data_p = os.path.join(run_dir_n, "data", "rmsd_data.npz")
         if os.path.isfile(fig_p) and os.path.isfile(data_p):
             try:
                 loaded = np.load(data_p, allow_pickle=False)
@@ -377,7 +378,7 @@ def run_min_rmsd_analysis_multi(
             gen_coords_np = np.concatenate(acc_gen_coords, axis=0)
 
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
-        run_dir_this = os.path.join(run_dir, "analysis", "min_rmsd", "gen", run_name)
+        run_dir_this = os.path.join(run_dir, "analysis", "rmsd", "gen", run_name)
         print(f"  Min-RMSD: n={n}, variance={sample_variance} (merged from {len(acc_gen_to_train)} chunk(s))...")
         path = _run_one_min_rmsd(
             run_dir_this, test_to_train, gen_to_train, gen_to_test,
@@ -439,7 +440,7 @@ def _run_one_min_rmsd_recon(
     axes[2].grid(True, alpha=0.3)
     plt.tight_layout()
     os.makedirs(run_dir_recon, exist_ok=True)
-    out_path = os.path.join(run_dir_recon, "min_rmsd_distributions.png")
+    out_path = os.path.join(run_dir_recon, "rmsd_distributions.png")
     plt.savefig(out_path, dpi=dpi)
     if plot_cfg.get("save_pdf_copy", False):
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
@@ -448,7 +449,7 @@ def _run_one_min_rmsd_recon(
     if save_data:
         data_dir = os.path.join(run_dir_recon, "data")
         os.makedirs(data_dir, exist_ok=True)
-        data_path = os.path.join(data_dir, "min_rmsd_recon_data.npz")
+        data_path = os.path.join(data_dir, "rmsd_recon_data.npz")
         # test_to_train is at seed level (experimental_statistics/test_to_train_rmsd.npz), not duplicated here
         np.savez_compressed(
             data_path,
@@ -475,10 +476,10 @@ def run_min_rmsd_recon_analysis(
 ) -> str:
     """
     Compute recon min-RMSD figure: test→train (reused), train recon RMSD, test recon RMSD.
-    Saves to run_dir/analysis/min_rmsd/recon[/recon_subdir]/min_rmsd_distributions.png and optional data/.
+    Saves to run_dir/analysis/rmsd/recon[/recon_subdir]/rmsd_distributions.png and optional data/.
     When recon_subdir is non-empty (e.g. "train100_test50"), outputs go under recon/recon_subdir/.
     """
-    run_dir_recon = os.path.join(run_dir, "analysis", "min_rmsd", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "min_rmsd", "recon")
+    run_dir_recon = os.path.join(run_dir, "analysis", "rmsd", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "rmsd", "recon")
     save_data = plot_cfg["save_data"]
     # Ensure we have the same count (cap may have been applied to recon)
     n_train = min(train_coords_np.shape[0], train_recon_coords_np.shape[0])

@@ -70,18 +70,18 @@ plotting:
 # Analysis: full-pipeline metrics run after plotting for each Euclideanizer.
 # Each block: enabled, overwrite_existing, then params, then save_data, save_pdf_copy, save_structures_gro (or visualize_latent).
 analysis:
-  min_rmsd_gen:
+  rmsd_gen:
     enabled: true
-    overwrite_existing: false   # if true, prompt then remove existing min_rmsd gen outputs before re-running
+    overwrite_existing: false   # if true, prompt then remove existing rmsd gen outputs before re-running
     num_samples: [1]
     sample_variance: [1, 2]
     query_batch_size: 128
     save_data: true
-    save_pdf_copy: false   # if true, save a PDF copy of min-RMSD (gen) figures in a pdf/ subdir
+    save_pdf_copy: false   # if true, save a PDF copy of RMSD (gen) figures in a pdf/ subdir
     save_structures_gro: true
-  min_rmsd_recon:
+  rmsd_recon:
     enabled: true
-    overwrite_existing: false   # if true, prompt then remove existing min_rmsd recon outputs before re-running
+    overwrite_existing: false   # if true, prompt then remove existing rmsd recon outputs before re-running
     max_recon_train: null
     max_recon_test: null
     save_data: false

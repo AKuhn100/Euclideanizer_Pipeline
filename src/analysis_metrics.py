@@ -1,5 +1,5 @@
 """
-Analysis metric registry: pluggable metrics (min_rmsd, q) with a common interface.
+Analysis metric registry: pluggable metrics (rmsd, q) with a common interface.
 Used by run.py to drive a single analysis loop over registered metrics.
 """
 from __future__ import annotations
@@ -7,20 +7,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import min_rmsd
+from . import rmsd
 from . import q_analysis
 
 
-def _min_rmsd_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
+def _rmsd_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
     return "test_to_train_rmsd.npz"
 
 
-def _min_rmsd_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
-    gen = analysis_cfg.get("min_rmsd_gen") or {}
+def _rmsd_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
+    gen = analysis_cfg.get("rmsd_gen") or {}
     return {"query_batch_size": gen.get("query_batch_size", 128)}
 
 
-def _min_rmsd_get_or_compute(
+def _rmsd_get_or_compute(
     cache_path: str,
     coords_np,
     coords_tensor,
@@ -29,28 +29,28 @@ def _min_rmsd_get_or_compute(
     display_root: str | None,
     **kwargs: Any,
 ):
-    return min_rmsd.get_or_compute_test_to_train_rmsd(
+    return rmsd.get_or_compute_test_to_train_rmsd(
         coords_np, coords_tensor, training_split, split_seed, cache_path,
         query_batch_size=kwargs.get("query_batch_size", 128),
         display_root=display_root,
     )
 
 
-def _min_rmsd_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    gen = analysis_cfg.get("min_rmsd_gen") or {}
+def _rmsd_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    gen = analysis_cfg.get("rmsd_gen") or {}
     return {
         "plot_dpi": plot_dpi,
         "save_pdf_copy": gen.get("save_pdf_copy", False),
-        "min_rmsd_num_samples": gen.get("num_samples"),
-        "min_rmsd_sample_variance": gen.get("sample_variance"),
-        "min_rmsd_query_batch_size": gen.get("query_batch_size", 128),
+        "rmsd_num_samples": gen.get("num_samples"),
+        "rmsd_sample_variance": gen.get("sample_variance"),
+        "rmsd_query_batch_size": gen.get("query_batch_size", 128),
         "save_data": gen.get("save_data", False),
         "save_structures_gro": gen.get("save_structures_gro", False),
     }
 
 
-def _min_rmsd_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    recon = analysis_cfg.get("min_rmsd_recon") or {}
+def _rmsd_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    recon = analysis_cfg.get("rmsd_recon") or {}
     return {
         "save_data": recon.get("save_data", False),
         "plot_dpi": plot_dpi,
@@ -128,15 +128,15 @@ def _q_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
     }
 
 
-def _min_rmsd_gen_extra_kwargs(analysis_cfg: dict) -> dict:
+def _rmsd_gen_extra_kwargs(analysis_cfg: dict) -> dict:
     return {}
 
 
-def _min_rmsd_recon_extra_kwargs(analysis_cfg: dict) -> dict:
+def _rmsd_recon_extra_kwargs(analysis_cfg: dict) -> dict:
     return {}
 
 
-def _min_rmsd_precomputed_kwargs(tt, train_c, test_c):
+def _rmsd_precomputed_kwargs(tt, train_c, test_c):
     return {"precomputed_test_to_train": tt, "train_coords_np": train_c, "test_coords_np": test_c}
 
 
@@ -156,7 +156,7 @@ def _q_precomputed_kwargs(tt, train_c, test_c):
 
 @dataclass(frozen=True)
 class AnalysisMetricSpec:
-    """Single analysis metric (min_rmsd or q) for the unified analysis loop."""
+    """Single analysis metric (rmsd or q) for the unified analysis loop."""
     id: str
     gen_key: str
     recon_key: str
@@ -175,25 +175,25 @@ class AnalysisMetricSpec:
     recon_extra_kwargs: Callable[[dict], dict]
 
 
-# Order: min_rmsd first, then q (preserves cache and log order).
+# Order: rmsd first, then q (preserves cache and log order).
 ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
     AnalysisMetricSpec(
-        id="min_rmsd",
-        gen_key="min_rmsd_gen",
-        recon_key="min_rmsd_recon",
-        subdir="min_rmsd",
-        figure_filename="min_rmsd_distributions.png",
-        get_or_compute_test_to_train=_min_rmsd_get_or_compute,
-        run_gen_analysis=min_rmsd.run_min_rmsd_analysis,
-        run_gen_analysis_multi=min_rmsd.run_min_rmsd_analysis_multi,
-        run_recon_analysis=min_rmsd.run_min_rmsd_recon_analysis,
-        cache_filename=_min_rmsd_cache_filename,
-        kwargs_for_cache=_min_rmsd_kwargs_for_cache,
-        build_gen_plot_cfg=_min_rmsd_build_gen_plot_cfg,
-        build_recon_plot_cfg=_min_rmsd_build_recon_plot_cfg,
-        precomputed_kwargs=_min_rmsd_precomputed_kwargs,
-        gen_extra_kwargs=_min_rmsd_gen_extra_kwargs,
-        recon_extra_kwargs=_min_rmsd_recon_extra_kwargs,
+        id="rmsd",
+        gen_key="rmsd_gen",
+        recon_key="rmsd_recon",
+        subdir="rmsd",
+        figure_filename="rmsd_distributions.png",
+        get_or_compute_test_to_train=_rmsd_get_or_compute,
+        run_gen_analysis=rmsd.run_min_rmsd_analysis,
+        run_gen_analysis_multi=rmsd.run_min_rmsd_analysis_multi,
+        run_recon_analysis=rmsd.run_min_rmsd_recon_analysis,
+        cache_filename=_rmsd_cache_filename,
+        kwargs_for_cache=_rmsd_kwargs_for_cache,
+        build_gen_plot_cfg=_rmsd_build_gen_plot_cfg,
+        build_recon_plot_cfg=_rmsd_build_recon_plot_cfg,
+        precomputed_kwargs=_rmsd_precomputed_kwargs,
+        gen_extra_kwargs=_rmsd_gen_extra_kwargs,
+        recon_extra_kwargs=_rmsd_recon_extra_kwargs,
     ),
     AnalysisMetricSpec(
         id="q",

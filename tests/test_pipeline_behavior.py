@@ -11,7 +11,7 @@ Sections:
     optional last checkpoint for multi-segment).
   - need_data: when the pipeline must load something vs can skip (all runs complete, no
     missing plots/analysis). _pipeline_need_data() is need_any() from _pipeline_data_needs().
-  - Data needs (structured): need_coords (training, reconstruction, recon_statistics, min_rmsd),
+  - Data needs (structured): need_coords (training, reconstruction, recon_statistics, rmsd),
     need_exp_stats (gen_variance), need_train_test_stats (recon_statistics, gen_variance).
   - Resume logic (DistMap / Euclideanizer): skip, from_scratch, resume_from_best (first or
     later segment), resume_from_prev_last.
@@ -128,7 +128,7 @@ def test_run_completed_multi_segment_last_optional_on_final_stretch(tmp_path):
 def test_pipeline_need_data_true_when_seed_dir_missing(tmp_path, cfg):
     """need_data is True when the seed output directory does not exist."""
     dm_groups, eu_groups = _get_dm_eu_groups(cfg)
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=True,
+    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=True,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
         plot_variances=[1.0], variance_list=[1.0], num_samples_list=[10]) is True
 
@@ -151,13 +151,13 @@ def test_pipeline_need_data_true_when_run_incomplete(tmp_path, cfg):
             save_run_config({"euclideanizer": {"epochs": eu_ev}}, str(d), last_epoch_trained=eu_ev, best_epoch=1, best_val=0.5)
             (d / "euclideanizer.pt").write_bytes(b"x")
             (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_min_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is True
 
 
 def test_pipeline_need_data_false_when_all_complete_no_plot_rmsd(tmp_path, cfg):
-    """need_data is False when all runs are complete and plotting/min_rmsd are disabled."""
+    """need_data is False when all runs are complete and plotting/rmsd are disabled."""
     dm_groups, eu_groups = _get_dm_eu_groups(cfg)
     (tmp_path / "seed_0").mkdir()
     for ri, ev in [(0, 1), (1, 2)]:
@@ -175,7 +175,7 @@ def test_pipeline_need_data_false_when_all_complete_no_plot_rmsd(tmp_path, cfg):
             (d / "euclideanizer.pt").write_bytes(b"x")
             if eu_ev == 1:
                 (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_min_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is False
 
@@ -199,7 +199,7 @@ def test_pipeline_need_data_true_when_plot_missing(tmp_path, cfg):
             (d / "euclideanizer.pt").write_bytes(b"x")
             if eu_ev == 1:
                 (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
         plot_variances=[1.0], variance_list=[], num_samples_list=[]) is True
 
@@ -243,7 +243,7 @@ def test_pipeline_data_needs_need_any_matches_need_data(tmp_path, cfg):
             (tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model" / "euclideanizer_last.pt").write_bytes(b"x")
     base = str(tmp_path)
     seeds = [0]
-    kwargs = dict(resume=True, do_plot=True, do_min_rmsd=True, do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, plot_variances=[1.0], variance_list=[1.0], num_samples_list=[10])
+    kwargs = dict(resume=True, do_plot=True, do_rmsd=True, do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, plot_variances=[1.0], variance_list=[1.0], num_samples_list=[10])
     assert _pipeline_data_needs(base, seeds, dm_groups, eu_groups, **kwargs).need_any() is _pipeline_need_data(base, seeds, dm_groups, eu_groups, **kwargs)
 
 
@@ -272,7 +272,7 @@ def test_pipeline_data_needs_only_reconstruction_missing(tmp_path, cfg):
     (run_dir_dm_1 / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
     (run_dir_dm_1 / "plots" / "gen_variance").mkdir(parents=True)
     (run_dir_dm_1 / "plots" / "gen_variance" / "gen_variance_1.0.png").write_bytes(b"x")
-    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=False,
+    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
         plot_variances=[1.0], variance_list=[], num_samples_list=[])
     assert needs.need_coords is True
@@ -297,7 +297,7 @@ def test_pipeline_data_needs_only_gen_variance_missing(tmp_path, cfg):
             (eu_run / "plots" / "recon_statistics").mkdir(parents=True)
             (eu_run / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
             (eu_run / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
-    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_min_rmsd=False,
+    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True,
         plot_variances=[1.0], variance_list=[], num_samples_list=[])
     assert needs.need_coords is False
@@ -330,7 +330,7 @@ def test_pipeline_data_needs_run_incomplete_sets_need_coords(tmp_path, cfg):
         save_run_config({"euclideanizer": {"epochs": 1}}, str(ed), last_epoch_trained=1, best_epoch=1, best_val=0.5)
         (ed / "euclideanizer.pt").write_bytes(b"x")
         (ed / "euclideanizer_last.pt").write_bytes(b"x")
-    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_min_rmsd=False,
+    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
         plot_variances=[], variance_list=[], num_samples_list=[])
     assert needs.need_coords is True
@@ -348,9 +348,9 @@ def test_distmap_plotting_all_present_resume_false(tmp_path):
     assert _distmap_plotting_all_present(str(tmp_path), resume=False, do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, sample_variances=[1.0]) is False
 
 
-def test_euclideanizer_analysis_all_present_no_min_rmsd():
-    """When min_rmsd is disabled, analysis is considered all present (nothing to generate)."""
-    assert _euclideanizer_analysis_all_present("/any", resume=True, do_min_rmsd=False, variance_list=[1.0], num_samples_list=[10]) is True
+def test_euclideanizer_analysis_all_present_no_rmsd():
+    """When rmsd is disabled, analysis is considered all present (nothing to generate)."""
+    assert _euclideanizer_analysis_all_present("/any", resume=True, do_rmsd=False, variance_list=[1.0], num_samples_list=[10]) is True
 
 
 # ---------------------------------------------------------------------------
@@ -656,17 +656,17 @@ def test_euclideanizer_plotting_all_present_true_when_all_exist(tmp_path):
     ) is True
 
 
-def test_euclideanizer_analysis_all_present_true_when_no_min_rmsd(tmp_path):
-    """When do_min_rmsd is False, analysis is considered all present (no analysis outputs to check)."""
+def test_euclideanizer_analysis_all_present_true_when_no_rmsd(tmp_path):
+    """When do_rmsd is False, analysis is considered all present (no analysis outputs to check)."""
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[1.0], num_samples_list=[10]
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[1.0], num_samples_list=[10]
     ) is True
 
 
 def test_euclideanizer_analysis_all_present_true_when_no_q(tmp_path):
     """When do_q and do_q_recon are False, Q analysis is considered all present (nothing to check)."""
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=False, do_q_recon=False,
     ) is True
 
@@ -677,7 +677,7 @@ def test_euclideanizer_analysis_all_present_true_when_q_gen_outputs_exist(tmp_pa
     run_dir.mkdir(parents=True)
     (run_dir / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=True, do_q_recon=False,
         q_variance_list=[1.0], q_num_samples_list=[10],
     ) is True
@@ -688,7 +688,7 @@ def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missi
     (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=True, do_q_recon=True,
         q_variance_list=[1.0], q_num_samples_list=[10],
         q_max_recon_train_list=[500], q_max_recon_test_list=[200],
@@ -703,7 +703,7 @@ def test_euclideanizer_analysis_all_present_true_when_q_recon_and_latent_exist(t
     (tmp_path / "analysis" / "q" / "recon" / "q_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "q" / "recon" / "latent_distribution.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=False, variance_list=[], num_samples_list=[],
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=True, do_q_recon=True, q_visualize_latent=True,
         q_variance_list=[1.0], q_num_samples_list=[10],
         q_max_recon_train_list=[500], q_max_recon_test_list=[200],
@@ -715,10 +715,10 @@ def test_pipeline_data_needs_need_coords_true_when_q_enabled_and_outputs_missing
     dm_groups, eu_groups = _all_runs_complete_layout(tmp_path, cfg)
     needs = _pipeline_data_needs(
         str(tmp_path), [0], dm_groups, eu_groups,
-        resume=True, do_plot=False, do_min_rmsd=False,
+        resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
         plot_variances=[], variance_list=[], num_samples_list=[],
-        do_min_rmsd_recon=False, max_recon_train_list=[], max_recon_test_list=[],
+        do_rmsd_recon=False, max_recon_train_list=[], max_recon_test_list=[],
         do_q=True, do_q_recon=False,
         q_variance_list=[1.0], q_num_samples_list=[10],
         q_max_recon_train_list=[], q_max_recon_test_list=[],
@@ -727,39 +727,39 @@ def test_pipeline_data_needs_need_coords_true_when_q_enabled_and_outputs_missing
 
 
 def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path):
-    """When do_min_rmsd is True and gen outputs exist at analysis/min_rmsd/gen/<run_name>/, analysis is all present."""
+    """When do_rmsd is True and gen outputs exist at analysis/rmsd/gen/<run_name>/, analysis is all present."""
     # Single variance and single num_samples -> run_name is "default"
-    run_dir = tmp_path / "analysis" / "min_rmsd" / "gen" / "default"
+    run_dir = tmp_path / "analysis" / "rmsd" / "gen" / "default"
     run_dir.mkdir(parents=True)
-    (run_dir / "min_rmsd_distributions.png").write_bytes(b"x")
+    (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_min_rmsd_recon=False, visualize_latent=False,
+        str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        do_rmsd_recon=False, visualize_latent=False,
     ) is True
 
 
 def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing(tmp_path):
-    """When do_min_rmsd_recon is True and recon figure is missing, analysis is not all present."""
-    run_dir = tmp_path / "analysis" / "min_rmsd" / "gen" / "default"
+    """When do_rmsd_recon is True and recon figure is missing, analysis is not all present."""
+    run_dir = tmp_path / "analysis" / "rmsd" / "gen" / "default"
     run_dir.mkdir(parents=True)
-    (run_dir / "min_rmsd_distributions.png").write_bytes(b"x")
+    (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_min_rmsd_recon=True, visualize_latent=False,
+        str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        do_rmsd_recon=True, visualize_latent=False,
         max_recon_train_list=[None], max_recon_test_list=[None],
     ) is False
 
 
 def test_euclideanizer_analysis_all_present_true_when_recon_and_latent_exist(tmp_path):
-    """When do_min_rmsd_recon and visualize_latent are True, recon and latent figures must exist."""
-    (tmp_path / "analysis" / "min_rmsd" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "min_rmsd" / "gen" / "default" / "min_rmsd_distributions.png").write_bytes(b"x")
-    (tmp_path / "analysis" / "min_rmsd" / "recon").mkdir(parents=True)
-    (tmp_path / "analysis" / "min_rmsd" / "recon" / "min_rmsd_distributions.png").write_bytes(b"x")
-    (tmp_path / "analysis" / "min_rmsd" / "recon" / "latent_distribution.png").write_bytes(b"x")
+    """When do_rmsd_recon and visualize_latent are True, recon and latent figures must exist."""
+    (tmp_path / "analysis" / "rmsd" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "rmsd" / "gen" / "default" / "rmsd_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "rmsd" / "recon").mkdir(parents=True)
+    (tmp_path / "analysis" / "rmsd" / "recon" / "rmsd_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "rmsd" / "recon" / "latent_distribution.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_min_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_min_rmsd_recon=True, visualize_latent=True,
+        str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        do_rmsd_recon=True, visualize_latent=True,
         max_recon_train_list=[None], max_recon_test_list=[None],
     ) is True
 
@@ -784,6 +784,6 @@ def test_pipeline_need_data_false_only_when_all_runs_and_outputs_present(tmp_pat
             (d / "euclideanizer.pt").write_bytes(b"x")
             if eu_ev == 1:
                 (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_min_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is False
