@@ -172,10 +172,11 @@ def train_euclideanizer(
         last_state = {k: v.cpu().clone() for k, v in embed.state_dict().items()}
         torch.save(last_state, os.path.join(model_dir, "euclideanizer_last.pt"))
     if not memory_efficient:
+        if best_state is None:
+            best_state = {k: v.cpu().clone() for k, v in embed.state_dict().items()}
         embed.load_state_dict(best_state)
+        torch.save(best_state, os.path.join(model_dir, "euclideanizer.pt"))
     model_path = os.path.join(model_dir, "euclideanizer.pt")
-    if not memory_efficient:
-        torch.save(best_state, model_path)
     save_run_config(
         {"euclideanizer": eu_cfg}, model_dir,
         last_epoch_trained=eu_cfg["epochs"], best_epoch=best_epoch, best_val=best_val,

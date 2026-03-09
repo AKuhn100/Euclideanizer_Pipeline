@@ -24,9 +24,12 @@ def calc_diagonal_wasserstein(gts, generated, num_diags=DEFAULT_NUM_DIAGS):
     For each separation k = 1..num_diags, we sort the k-th diagonal
     values across the batch dimension and compute W1.  This directly
     penalises deviations in the genomic scaling curve P(s).
+    When num_diags is 0, returns 0.0 (no diagonal penalty).
     """
     B, N, _ = gts.shape
-    num_diags = min(num_diags, N - 1)
+    num_diags = min(max(0, num_diags), N - 1)
+    if num_diags <= 0:
+        return torch.tensor(0.0, device=gts.device)
     total_w = torch.tensor(0.0, device=gts.device)
 
     for k in range(1, num_diags + 1):
