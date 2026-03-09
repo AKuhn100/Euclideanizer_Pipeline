@@ -212,6 +212,8 @@ When **2+ CUDA devices** are available, the pipeline splits work into independen
 
 **Memory:** Each worker loads its own copy of the dataset and experimental statistics. The main process precomputes and caches per-seed train/test statistics, then frees its copy before spawning workers so that only the workers hold data (avoiding 1 + N copies and OOM). If you are still killed by the system (e.g. OOM killer) on large datasets, run with `**--no-multi-gpu`** or `**--gpus 1`** so only one copy is in memory.
 
+**CPU RAM (host memory):** Multi-GPU runs use **CPU RAM** as well as GPU memory. Each worker keeps the full dataset in host memory and, during Euclideanizer plotting (e.g. recon_statistics, gen_variance), builds large NumPy arrays (e.g. full train/test reconstruction distance maps). With two workers doing heavy plotting or training at the same time, total host usage can exceed 64 GB on large runs; one worker may then block waiting for memory or the job may be killed. If one worker appears to stop making progress during Euclideanizer plotting (especially when resuming with only some plots present), **increase job CPU RAM** (e.g. 128–256 GB for 2 workers and thousands of structures). Alternatively run with `--no-multi-gpu` so only one process runs and peak CPU RAM is lower.
+
 - **When it runs**: Automatically when `torch.cuda.is_available()` and `torch.cuda.device_count() >= 2`. Single-GPU and CPU (or MPS) runs use the same single-process loop as before.
 - **Restrict devices**: Set `CUDA_VISIBLE_DEVICES` (e.g. `CUDA_VISIBLE_DEVICES=0,1`) to limit which GPUs are seen. You can also use `--no-multi-gpu` to force the single-process path, or `--gpus N` to use at most N devices.
 

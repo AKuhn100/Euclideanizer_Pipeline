@@ -2200,6 +2200,7 @@ def main():
     do_avg_gen = plot_cfg["avg_gen_vs_exp"]
     analysis_cfg = cfg["analysis"]
     do_min_rmsd = analysis_cfg["min_rmsd_gen"]["enabled"]
+    do_min_rmsd_recon_cfg = analysis_cfg["min_rmsd_recon"]["enabled"]
     training_split = cfg["data"]["training_split"]
     do_dashboard = cfg["dashboard"]["enabled"]
     if getattr(args, "no_dashboard", False):
@@ -2215,7 +2216,7 @@ def main():
 
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
     _log(f"config: {config_path}  output: {base_output_dir}  seeds: {seeds}", since_start=time.time() - pipeline_start, style="info")
-    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  min_rmsd={do_min_rmsd}", since_start=time.time() - pipeline_start, style="info")
+    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  min_rmsd_gen={do_min_rmsd}  min_rmsd_recon={do_min_rmsd_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     num_samples_list = analysis_cfg["min_rmsd_gen"]["num_samples"] if do_min_rmsd else []
     if not isinstance(num_samples_list, list):
@@ -2223,7 +2224,6 @@ def main():
     variance_list = analysis_cfg["min_rmsd_gen"]["sample_variance"] if do_min_rmsd else []
     if not isinstance(variance_list, list):
         variance_list = [variance_list]
-    do_min_rmsd_recon_cfg = analysis_cfg["min_rmsd_recon"]["enabled"]
     max_recon_train_list = analysis_cfg["min_rmsd_recon"]["max_recon_train"] if do_min_rmsd_recon_cfg else []
     if not isinstance(max_recon_train_list, list):
         max_recon_train_list = [max_recon_train_list]
