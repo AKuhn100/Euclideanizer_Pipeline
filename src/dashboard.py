@@ -218,6 +218,7 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
                         "blocks": eu_blocks,
                         "run_root": eu_run_root,
                         "params": eu_cfg.get("euclideanizer", {}) if eu_cfg else {},
+                        "parent_params": dm_cfg.get("distmap", {}) if dm_cfg else {},
                     })
                     dm_children.append(eu_id)
                     for b in eu_blocks:
@@ -320,6 +321,7 @@ def _copy_assets_and_update_paths(runs: list[dict], assets_dir: str) -> list[dic
             "children_ids": run["children_ids"],
             "blocks": blocks_out,
             "params": run.get("params") or {},
+            "parent_params": run.get("parent_params") or {},
         })
     return out_runs
 
@@ -383,6 +385,7 @@ def _html_content(manifest: dict) -> str:
     .compare .column { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; background: var(--bg-card); }
     .compare .column .run-card { margin-bottom: 0; }
     .compare .column-header { font-size: 0.9rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.75rem; padding-bottom: 0.35rem; border-bottom: 1px solid var(--border); }
+    .compare-param-wrap { margin-bottom: 1rem; }
     .content-single { max-width: 56rem; margin: 0 auto; }
     .block img, .block video { max-width: 100%; height: auto; display: block; margin-left: auto; margin-right: auto; }
     .block .placeholder { padding: 2rem; text-align: center; background: #2a2a2a; border-radius: 8px; color: var(--text-muted); }
@@ -390,12 +393,12 @@ def _html_content(manifest: dict) -> str:
     .aspect-section h3 { font-size: 1.15rem; font-weight: 600; color: var(--text-secondary); margin: 0 0 0.75rem 0; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); letter-spacing: 0.02em; }
     .aspect-axis-caption { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
     .aspect-axis-table-wrap { overflow-x: auto; }
-    .aspect-axis-table { width: 100%; border-collapse: collapse; min-width: 400px; }
+    .aspect-axis-table { width: max-content; min-width: 100%; border-collapse: collapse; }
     .aspect-axis-table th { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); padding: 0.5rem; text-align: center; border-bottom: 1px solid var(--border); }
     .aspect-axis-table tbody tr:hover { background: rgba(255,255,255,0.02); }
     .aspect-axis-table td { padding: 0.5rem; vertical-align: top; border-bottom: 1px solid #333; }
-    .aspect-axis-table td.context-label { font-size: 0.85rem; color: var(--text-secondary); min-width: 11rem; max-width: 14rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .aspect-axis-table .aspect-cell { text-align: center; }
+    .aspect-axis-table td.context-label { font-size: 0.8rem; color: var(--text-secondary); min-width: 11rem; max-width: 28rem; white-space: pre-wrap; word-wrap: break-word; vertical-align: top; }
+    .aspect-axis-table .aspect-cell { text-align: center; min-width: 320px; max-width: 420px; }
     .aspect-axis-table .aspect-cell img, .aspect-axis-table .aspect-cell video { max-width: 100%; height: auto; display: block; margin: 0 auto; }
     .aspect-axis-table .aspect-cell .empty { min-height: 4rem; background: var(--bg-card); border-radius: 4px; color: var(--text-muted); font-size: 0.8rem; display: flex; align-items: center; justify-content: center; }
     .aspect-section-nav { position: sticky; top: 0; z-index: 10; background: var(--bg-toolbar); border-bottom: 1px solid var(--border); padding: 0.5rem 0; margin: -0.5rem 0 1rem 0; }
@@ -410,6 +413,29 @@ def _html_content(manifest: dict) -> str:
     .seed-group-title { font-size: 0.9rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.5rem; padding-bottom: 0.25rem; }
     .skip-link { position: absolute; left: -9999px; z-index: 100; padding: 0.5rem 1rem; background: var(--accent); color: #111; font-weight: 600; border-radius: 4px; }
     .skip-link:focus { left: 1rem; top: 1rem; }
+    .breadcrumb { font-size: 0.9rem; color: var(--text-muted); margin: 0 0 1rem 0; padding: 0.35rem 0; }
+    .breadcrumb a { color: var(--accent); text-decoration: none; }
+    .breadcrumb a:hover { text-decoration: underline; }
+    .breadcrumb span { color: var(--text-secondary); margin: 0 0.35rem; }
+    .run-list { list-style: none; margin: 0; padding: 0; }
+    .run-list li { border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem 1rem; margin-bottom: 0.5rem; background: var(--bg-card); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; }
+    .run-list li:hover { border-color: var(--accent); background: #2a2a2a; }
+    .run-list .run-list-params { font-size: 0.8rem; color: var(--text-secondary); font-family: ui-monospace, monospace; flex: 1 1 100%; margin-top: 0.25rem; }
+    .run-list .run-list-actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
+    .run-list .btn { padding: 0.35rem 0.75rem; font-size: 0.85rem; border-radius: 4px; cursor: pointer; border: 1px solid var(--border); background: #2a2a2a; color: var(--text); }
+    .run-list .btn:hover { background: var(--accent); color: #111; border-color: var(--accent); }
+    .run-list .btn-primary { background: var(--accent); color: #111; border-color: var(--accent); }
+    .param-panel { background: #1e1e1e; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 1.25rem; overflow: hidden; }
+    .param-panel summary { padding: 0.6rem 1rem; cursor: pointer; font-weight: 600; font-size: 0.9rem; color: var(--text-secondary); }
+    .param-panel summary:hover { background: #2a2a2a; }
+    .param-panel table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .param-panel th { text-align: left; padding: 0.4rem 1rem; color: var(--text-muted); font-weight: 500; width: 12rem; }
+    .param-panel td { padding: 0.4rem 1rem; color: var(--text); }
+    .param-panel tr.section-row th { padding-top: 0.75rem; color: var(--accent); }
+    .browse-level-title { font-size: 1.1rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.75rem; }
+    .filter-bar { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-bottom: 1rem; padding: 0.5rem 0; }
+    .filter-bar label { font-size: 0.85rem; color: var(--text-muted); }
+    .filter-bar select { min-width: 100px; }
     @media (max-width: 768px) {
       .compare { grid-template-columns: 1fr; }
       .content { margin-left: 1rem; margin-right: 1rem; }
@@ -428,35 +454,40 @@ def _html_content(manifest: dict) -> str:
     <div class="controls">
       <span class="control-group control-group-primary">
         <label for="viewMode">View</label>
-        <select id="viewMode" aria-label="View mode: compare runs or vary by parameter">
-          <option value="compare">Compare runs</option>
+        <select id="viewMode" aria-label="View mode">
+          <option value="browse">Browse</option>
+          <option value="detail">Detail</option>
+          <option value="compare">Compare</option>
           <option value="aspect">Vary aspect</option>
         </select>
       </span>
       <span class="control-group control-group-sep" aria-hidden="true">|</span>
-      <span class="view-compare control-group" id="viewCompare">
+      <span class="view-browse control-group" id="viewBrowse"></span>
+      <span class="view-compare control-group" id="viewCompare" style="display:none;">
         <span class="control-group-label">Compare</span>
-        <label for="level">Level</label>
-        <select id="level" aria-label="Level: seed, distmap, or euclideanizer"><option value="seed">Seed</option><option value="distmap">DistMap</option><option value="euclideanizer">Euclideanizer</option></select>
+        <label for="level">Type</label>
+        <select id="level"><option value="distmap">DistMaps</option><option value="euclideanizer">Euclideanizers</option></select>
         <span id="levelRunCount" class="control-group-label" aria-live="polite"></span>
-        <label for="runA">Run A</label>
-        <select id="runA" aria-label="Run A"></select>
-        <label for="runB">Run B</label>
-        <select id="runB" aria-label="Run B (optional)"><option value="">— none —</option></select>
+        <label for="runA">Run A (left)</label>
+        <select id="runA"></select>
+        <label for="runB">Run B (right)</label>
+        <select id="runB"><option value="">— none —</option></select>
       </span>
-      <span class="view-aspect control-group" id="viewAspect">
+      <span class="view-aspect control-group" id="viewAspect" style="display:none;">
         <span class="control-group-label">Vary by</span>
         <label for="levelAspect">Level</label>
-        <select id="levelAspect" aria-label="Level for vary aspect"><option value="distmap">DistMap</option><option value="euclideanizer">Euclideanizer</option></select>
+        <select id="levelAspect"><option value="distmap">DistMap</option><option value="euclideanizer">Euclideanizer</option></select>
         <label for="aspect">Aspect (x-axis)</label>
-        <select id="aspect" aria-label="Parameter to vary on x-axis"></select>
+        <select id="aspect"></select>
       </span>
     </div>
   </div>
+  <div id="breadcrumb" class="breadcrumb" style="display:none;"></div>
   <main class="content" id="content" role="main"></main>
   <script>window.__DASHBOARD_MANIFEST__ = """ + manifest_js + """;</script>
   <script>
     let manifest = null;
+    const state = { viewMode: 'browse', browseSeedId: null, browseDmId: null, detailRunId: null, compareRunA: null, compareRunB: null, compareLevel: 'euclideanizer' };
     const levelEl = document.getElementById('level');
     const runAEl = document.getElementById('runA');
     const runBEl = document.getElementById('runB');
@@ -464,10 +495,77 @@ def _html_content(manifest: dict) -> str:
     const titleEl = document.getElementById('title');
     const generatedEl = document.getElementById('generated');
     const viewModeEl = document.getElementById('viewMode');
+    const viewBrowseEl = document.getElementById('viewBrowse');
     const viewCompareEl = document.getElementById('viewCompare');
     const viewAspectEl = document.getElementById('viewAspect');
     const levelAspectEl = document.getElementById('levelAspect');
     const aspectEl = document.getElementById('aspect');
+    const breadcrumbEl = document.getElementById('breadcrumb');
+
+    function getRunById(id) {
+      if (!manifest || !manifest.runs || !id) return null;
+      return manifest.runs.find(r => r.id === id) || null;
+    }
+    function getSeeds() {
+      if (!manifest || !manifest.runs) return [];
+      return manifest.runs.filter(r => r.level === 'seed').sort((a, b) => a.id.localeCompare(b.id));
+    }
+    function getDistMapsForSeed(seedId) {
+      if (!manifest || !manifest.runs || !seedId) return [];
+      const seed = getRunById(seedId);
+      if (!seed || !seed.children_ids) return [];
+      return seed.children_ids.map(dmId => getRunById(dmId)).filter(Boolean);
+    }
+    function getEuclideanizersForDistMap(dmId) {
+      if (!manifest || !manifest.runs || !dmId) return [];
+      const dm = getRunById(dmId);
+      if (!dm || !dm.children_ids) return [];
+      return dm.children_ids.map(euId => getRunById(euId)).filter(Boolean);
+    }
+    function formatParams(params) {
+      if (!params || typeof params !== 'object') return '';
+      return Object.keys(params).sort().map(k => k + '=' + params[k]).join(', ');
+    }
+    function paramPanelHtml(run) {
+      if (!run) return '';
+      let html = '<details class="param-panel" open><summary>Parameters</summary><table>';
+      if (run.parent_params && Object.keys(run.parent_params).length) {
+        html += '<tr class="section-row"><th colspan="2">Frozen DistMap</th></tr>';
+        Object.keys(run.parent_params).sort().forEach(k => { html += '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(String(run.parent_params[k])) + '</td></tr>'; });
+      }
+      if (run.params && Object.keys(run.params).length) {
+        html += '<tr class="section-row"><th colspan="2">' + (run.level === 'distmap' ? 'DistMap' : 'Euclideanizer') + '</th></tr>';
+        Object.keys(run.params).sort().forEach(k => { html += '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(String(run.params[k])) + '</td></tr>'; });
+      }
+      html += '</table></details>';
+      return html;
+    }
+    function renderBreadcrumb(parts) {
+      if (!breadcrumbEl) return;
+      if (!parts || parts.length === 0) { breadcrumbEl.style.display = 'none'; breadcrumbEl.innerHTML = ''; return; }
+      breadcrumbEl.style.display = 'block';
+      let html = '';
+      parts.forEach((p, i) => {
+        if (i) html += '<span> \u203a </span>';
+        if (p.runId) html += '<a href="#" data-run-id="' + escapeHtml(p.runId) + '">' + escapeHtml(p.label) + '</a>';
+        else if (p.label === 'Seeds') html += '<a href="#" data-reset-browse="1">' + escapeHtml(p.label) + '</a>';
+        else html += '<span>' + escapeHtml(p.label) + '</span>';
+      });
+      breadcrumbEl.innerHTML = html;
+      breadcrumbEl.querySelectorAll('a[data-run-id]').forEach(a => {
+        a.addEventListener('click', function(e) {
+          e.preventDefault();
+          const runId = this.getAttribute('data-run-id');
+          const run = getRunById(runId);
+          if (run && run.level === 'seed') { state.browseSeedId = runId; state.browseDmId = null; state.viewMode = 'browse'; viewModeEl.value = 'browse'; renderBrowse(); }
+          else if (run && run.level === 'distmap') { state.browseSeedId = run.parent_id || null; state.browseDmId = runId; state.viewMode = 'browse'; viewModeEl.value = 'browse'; renderBrowse(); }
+          else { state.detailRunId = runId; state.viewMode = 'detail'; viewModeEl.value = 'detail'; updateContent(); }
+        });
+      });
+      breadcrumbEl.querySelectorAll('a[data-reset-browse]').forEach(a => {
+        a.addEventListener('click', function(e) { e.preventDefault(); state.browseSeedId = null; state.browseDmId = null; renderBrowse(); });
+      });
+    }
 
     function formatGeneratedAt(iso) {
       if (!iso) return '';
@@ -485,6 +583,7 @@ def _html_content(manifest: dict) -> str:
     function getRunsByLevel() {
       if (!manifest || !manifest.runs) return [];
       const level = levelEl.value;
+      if (level === 'seed') return manifest.runs.filter(r => r.level === 'seed');
       return manifest.runs.filter(r => r.level === level);
     }
 
@@ -551,7 +650,7 @@ def _html_content(manifest: dict) -> str:
       runs.forEach(r => { (r.blocks || []).forEach(b => { if (b.name && !seen[b.name]) { seen[b.name] = true; allBlockNames.push(b.name); } }); });
       const blockToType = {};
       runs.forEach(r => { (r.blocks || []).forEach(b => { if (b.name && !blockToType[b.name]) blockToType[b.name] = b.type || ''; }); });
-      allBlockNames.sort((a, b) => blockTypeOrder(blockToType[a] || '') - blockTypeOrder(blockToType[b] || '') || a.localeCompare(b));
+      allBlockNames.sort((a, b) => blockTypeOrder(blockToType[a] || '', a) - blockTypeOrder(blockToType[b] || '', b) || a.localeCompare(b));
       const axisCaption = aspect + ' \u2192';
       let navHtml = '<div class="aspect-section-nav"><div class="aspect-section-nav-inner"><span class="control-group-label">Sections:</span>';
       allBlockNames.forEach(blockName => {
@@ -568,9 +667,14 @@ def _html_content(manifest: dict) -> str:
         html += '</tr></thead><tbody>';
         contextKeys.forEach(ck => {
           const runList = byContext[ck];
-          const fullLabel = runList[0] ? (runList[0].label_short || runList[0].id) : ck.slice(0, 80);
-          const contextLabel = shortLabel(fullLabel, 42);
-          html += '<tr><td class="context-label" title="' + escapeHtml(fullLabel) + '">' + escapeHtml(contextLabel) + '</td>';
+          const run0 = runList[0];
+          let contextLabel = '';
+          if (run0) {
+            const paramsMinusAspect = Object.keys(run0.params || {}).filter(k => k !== aspect).sort().reduce((o, k) => { o[k] = run0.params[k]; return o; }, {});
+            if (run0.parent_params && Object.keys(run0.parent_params).length) contextLabel += 'Frozen DistMap: ' + formatParams(run0.parent_params) + '\\n';
+            contextLabel += (run0.level === 'distmap' ? 'DistMap' : 'Euclideanizer') + ': ' + formatParams(paramsMinusAspect);
+          } else contextLabel = ck.slice(0, 200);
+          html += '<tr><td class="context-label">' + escapeHtml(contextLabel) + '</td>';
           aspectValues.forEach(aspectVal => {
             const run = runList.find(r => (r.params && (r.params[aspect] === aspectVal || (typeof r.params[aspect] === 'number' && Number(r.params[aspect]) === Number(aspectVal)))));
             const block = run ? getBlockByName(run, blockName) : null;
@@ -623,10 +727,16 @@ def _html_content(manifest: dict) -> str:
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    function blockTypeOrder(type) {
-      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon', 'latent_distribution'];
+    function blockTypeOrder(type, name) {
+      const n = (name || '').toUpperCase();
+      if (type === 'latent_distribution') {
+        if (n.indexOf('RMSD') >= 0) return 6;
+        if (n.indexOf('(Q)') >= 0 || n.indexOf(' Q)') >= 0) return 9;
+        return 10;
+      }
+      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon'];
       const i = order.indexOf(type);
-      return i >= 0 ? i : order.length;
+      return i >= 0 ? i : 10;
     }
 
     function renderBlocks(run, container, label) {
@@ -634,7 +744,7 @@ def _html_content(manifest: dict) -> str:
         container.innerHTML = '<div class="empty-state"><span class="empty-state-title">No outputs</span><p>This run has no plots or videos.</p></div>';
         return;
       }
-      const sorted = [...run.blocks].sort((a, b) => blockTypeOrder(a.type) - blockTypeOrder(b.type) || (a.name || '').localeCompare(b.name || ''));
+      const sorted = [...run.blocks].sort((a, b) => blockTypeOrder(a.type, a.name) - blockTypeOrder(b.type, b.name) || (a.name || '').localeCompare(b.name || ''));
       let html = '<div class="run-card"><h2 class="run-card-title">' + escapeHtml(run.label_short || run.id || 'Run') + '</h2>';
       sorted.forEach(b => {
         html += '<div class="block"><div class="block-title">' + escapeHtml(b.name) + '</div>';
@@ -716,33 +826,213 @@ def _html_content(manifest: dict) -> str:
       }
     }
 
+    function applyFilters(runs, filters) {
+      if (!runs.length || !filters) return runs;
+      return runs.filter(r => {
+        const p = r.params || {};
+        for (const k in filters) {
+          if (filters[k] === '' || filters[k] == null) continue;
+          const v = p[k];
+          if (v === undefined || v === null) return false;
+          if (String(v) !== String(filters[k])) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderBrowse() {
+      const runs = manifest.runs || [];
+      const seedId = state.browseSeedId;
+      const dmId = state.browseDmId;
+      const seeds = getSeeds();
+      if (!seeds.length) { contentEl.innerHTML = '<div class="empty-state"><span class="empty-state-title">No runs</span><p>No seed runs found in manifest.</p></div>'; return; }
+      if (!seedId) {
+        renderBreadcrumb([{ label: 'Seeds' }]);
+        let html = '<div class="browse-level-title">Seeds</div><ul class="run-list">';
+        seeds.forEach(s => {
+          const dms = getDistMapsForSeed(s.id);
+          const euCount = dms.reduce((n, dm) => n + (dm.children_ids ? dm.children_ids.length : 0), 0);
+          html += '<li><span>' + escapeHtml(s.label_short || s.id) + '</span><span class="run-list-params">' + dms.length + ' DistMap(s), ' + euCount + ' Euclideanizer(s)</span>';
+          html += '<div class="run-list-actions"><button type="button" class="btn btn-primary" data-browse-seed="' + escapeHtml(s.id) + '">Open</button></div></li>';
+        });
+        html += '</ul>';
+        contentEl.innerHTML = html;
+        contentEl.querySelectorAll('[data-browse-seed]').forEach(btn => {
+          btn.addEventListener('click', function() { state.browseSeedId = this.getAttribute('data-browse-seed'); state.browseDmId = null; renderBrowse(); });
+        });
+        return;
+      }
+      const dms = getDistMapsForSeed(seedId);
+      const seedRun = getRunById(seedId);
+      if (!dmId) {
+        renderBreadcrumb([{ label: 'Seeds', runId: null }, { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId }]);
+        let html = '<div class="browse-level-title">DistMap runs</div><ul class="run-list">';
+        dms.forEach(dm => {
+          const paramStr = formatParams(dm.params);
+          const euCount = (dm.children_ids || []).length;
+          html += '<li><span>' + escapeHtml(dm.label_short || dm.id) + '</span><span class="run-list-params">' + escapeHtml(paramStr) + (paramStr ? ' \u2022 ' : '') + euCount + ' Euclideanizer(s)</span>';
+          html += '<div class="run-list-actions"><button type="button" class="btn" data-view-dm="' + escapeHtml(dm.id) + '">View DistMap</button><button type="button" class="btn" data-set-compare-a="' + escapeHtml(dm.id) + '">Set as A</button><button type="button" class="btn" data-set-compare-b="' + escapeHtml(dm.id) + '">Set as B</button><button type="button" class="btn btn-primary" data-browse-dm="' + escapeHtml(dm.id) + '">Euclideanizers</button></div></li>';
+        });
+        html += '</ul>';
+        contentEl.innerHTML = html;
+        contentEl.querySelectorAll('[data-browse-dm]').forEach(btn => {
+          btn.addEventListener('click', function() { state.browseDmId = this.getAttribute('data-browse-dm'); renderBrowse(); });
+        });
+        contentEl.querySelectorAll('[data-view-dm]').forEach(btn => {
+          btn.addEventListener('click', function() { state.detailRunId = this.getAttribute('data-view-dm'); state.viewMode = 'detail'; viewModeEl.value = 'detail'; updateContent(); });
+        });
+        contentEl.querySelectorAll('[data-set-compare-a]').forEach(btn => {
+          btn.addEventListener('click', function() {
+            const id = this.getAttribute('data-set-compare-a');
+            const run = getRunById(id);
+            if (!run || run.level === 'seed') return;
+            state.compareLevel = run.level; state.compareRunA = id; state.compareRunB = null;
+            state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = id; runBEl.value = '';
+            updateContent();
+          });
+        });
+        contentEl.querySelectorAll('[data-set-compare-b]').forEach(btn => {
+          btn.addEventListener('click', function() {
+            const id = this.getAttribute('data-set-compare-b');
+            const run = getRunById(id);
+            if (!run || run.level === 'seed') return;
+            if (run.level !== state.compareLevel) state.compareRunA = null;
+            state.compareLevel = run.level; state.compareRunB = id;
+            state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = id;
+            updateContent();
+          });
+        });
+        return;
+      }
+      const eus = getEuclideanizersForDistMap(dmId);
+      const dmRun = getRunById(dmId);
+      renderBreadcrumb([
+        { label: 'Seeds', runId: null },
+        { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId },
+        { label: dmRun ? (dmRun.label_short || dmId) : dmId, runId: dmId }
+      ]);
+      let html = '<div class="browse-level-title">Euclideanizer runs</div><p style="margin-bottom:0.75rem;"><button type="button" class="btn" id="btnBackToDms">\u2190 Back to DistMap runs</button></p><ul class="run-list">';
+      eus.forEach(eu => {
+        const paramStr = formatParams(eu.params);
+        html += '<li><span>' + escapeHtml(eu.label_short || eu.id) + '</span><span class="run-list-params">' + escapeHtml(paramStr) + '</span>';
+        html += '<div class="run-list-actions"><button type="button" class="btn btn-primary" data-view-run="' + escapeHtml(eu.id) + '">View</button><button type="button" class="btn" data-set-compare-a="' + escapeHtml(eu.id) + '">Set as A</button><button type="button" class="btn" data-set-compare-b="' + escapeHtml(eu.id) + '">Set as B</button></div></li>';
+      });
+      html += '</ul>';
+      contentEl.innerHTML = html;
+      const backBtn = contentEl.querySelector('#btnBackToDms');
+      if (backBtn) backBtn.addEventListener('click', function() { state.browseDmId = null; renderBrowse(); });
+      contentEl.querySelectorAll('[data-view-run]').forEach(btn => {
+        btn.addEventListener('click', function() { state.detailRunId = this.getAttribute('data-view-run'); state.viewMode = 'detail'; viewModeEl.value = 'detail'; updateContent(); });
+      });
+      contentEl.querySelectorAll('[data-set-compare-a]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const id = this.getAttribute('data-set-compare-a');
+          const run = getRunById(id);
+          if (!run || run.level === 'seed') return;
+          state.compareLevel = run.level; state.compareRunA = id; state.compareRunB = null;
+          state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = id; runBEl.value = '';
+          updateContent();
+        });
+      });
+      contentEl.querySelectorAll('[data-set-compare-b]').forEach(btn => {
+        btn.addEventListener('click', function() {
+          const id = this.getAttribute('data-set-compare-b');
+          const run = getRunById(id);
+          if (!run || run.level === 'seed') return;
+          if (run.level !== state.compareLevel) state.compareRunA = null;
+          state.compareLevel = run.level; state.compareRunB = id;
+          state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = id;
+          updateContent();
+        });
+      });
+    }
+
+    function renderDetail() {
+      const run = getRunById(state.detailRunId);
+      if (!run) { contentEl.innerHTML = '<div class="empty-state"><span class="empty-state-title">Run not found</span></div>'; return; }
+      const parts = [];
+      if (run.level === 'euclideanizer' && run.parent_id) {
+        const dm = getRunById(run.parent_id);
+        const seedId = dm && dm.parent_id ? dm.parent_id : null;
+        const seed = seedId ? getRunById(seedId) : null;
+        if (seed) parts.push({ label: seed.label_short || seedId, runId: seedId });
+        if (dm) parts.push({ label: dm.label_short || run.parent_id, runId: dm.id });
+      } else if (run.level === 'distmap' && run.parent_id) {
+        const seed = getRunById(run.parent_id);
+        if (seed) parts.push({ label: seed.label_short || run.parent_id, runId: run.parent_id });
+      }
+      parts.push({ label: run.label_short || run.id, runId: null });
+      renderBreadcrumb([{ label: 'Seeds', runId: null }].concat(parts.map(p => ({ label: p.label, runId: p.runId }))));
+      let html = '<div class="run-card"><h2 class="run-card-title">' + escapeHtml(run.label_short || run.id) + '</h2>';
+      html += '<details class="param-panel" open><summary>Parameters</summary><table>';
+      if (run.parent_params && Object.keys(run.parent_params).length) {
+        html += '<tr class="section-row"><th colspan="2">Frozen DistMap</th></tr>';
+        Object.keys(run.parent_params).sort().forEach(k => { html += '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(String(run.parent_params[k])) + '</td></tr>'; });
+      }
+      if (run.params && Object.keys(run.params).length) {
+        html += '<tr class="section-row"><th colspan="2">' + (run.level === 'distmap' ? 'DistMap' : 'Euclideanizer') + '</th></tr>';
+        Object.keys(run.params).sort().forEach(k => { html += '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(String(run.params[k])) + '</td></tr>'; });
+      }
+      html += '</table></details>';
+      html += '<div class="run-list-actions" style="margin-bottom:1rem;"><button type="button" class="btn" id="btnSetCompareA">Set as A (left)</button><button type="button" class="btn" id="btnSetCompareB">Set as B (right)</button></div>';
+      html += '<div id="detailBlocks"></div></div>';
+      contentEl.innerHTML = html;
+      document.getElementById('btnSetCompareA').addEventListener('click', function() {
+        state.compareLevel = run.level; state.compareRunA = run.id; state.compareRunB = null;
+        state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = run.id; runBEl.value = '';
+        updateContent();
+      });
+      document.getElementById('btnSetCompareB').addEventListener('click', function() {
+        if (run.level !== state.compareLevel) state.compareRunA = null;
+        state.compareLevel = run.level; state.compareRunB = run.id;
+        state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = run.id;
+        updateContent();
+      });
+      renderBlocks(run, document.getElementById('detailBlocks'));
+    }
+
     function updateContent() {
       if (!manifest) return;
+      state.viewMode = viewModeEl ? viewModeEl.value : state.viewMode;
       const runs = manifest.runs || [];
-      if (viewModeEl && viewModeEl.value === 'aspect') {
-        viewCompareEl.style.display = 'none';
-        viewAspectEl.classList.add('visible');
+      viewCompareEl.style.display = state.viewMode === 'compare' ? 'inline-flex' : 'none';
+      viewAspectEl.style.display = state.viewMode === 'aspect' ? 'inline-flex' : 'none';
+      viewBrowseEl.style.display = state.viewMode === 'browse' ? 'inline-flex' : 'none';
+      if (state.viewMode === 'browse') {
+        breadcrumbEl.style.display = 'block';
+        renderBrowse();
+        return;
+      }
+      if (state.viewMode === 'detail') {
+        if (state.detailRunId) { renderDetail(); return; }
+        breadcrumbEl.style.display = 'none';
+        contentEl.innerHTML = '<div class="empty-state"><span class="empty-state-title">No run selected</span><p>Click &quot;View&quot; on a run in Browse to see details.</p></div>';
+        return;
+      }
+      if (state.viewMode === 'aspect') {
+        breadcrumbEl.style.display = 'none';
         const aspectRuns = getRunsByLevelForAspect();
         const aspect = aspectEl && aspectEl.value;
         contentEl.innerHTML = '<div class="content-single"><div id="colAspect"></div></div>';
         renderAspectView(document.getElementById('colAspect'), aspectRuns, aspect);
-      } else {
-        viewCompareEl.style.display = 'inline-flex';
-        viewAspectEl.classList.remove('visible');
-        const runAId = runAEl.value;
-        const runBId = runBEl.value;
-        const runA = runAId ? runs.find(r => r.id === runAId) : null;
-        const runB = runBId ? runs.find(r => r.id === runBId) : null;
-        if (runB) {
-          const labelA = runA ? shortLabel(runA.label_short || runA.id, 45) : '—';
-          const labelB = runB ? shortLabel(runB.label_short || runB.id, 45) : '—';
-          contentEl.innerHTML = '<div class="compare"><div class="column"><div class="column-header" id="colHeaderA">Run A: ' + escapeHtml(labelA) + '</div><div id="colA"></div></div><div class="column"><div class="column-header" id="colHeaderB">Run B: ' + escapeHtml(labelB) + '</div><div id="colB"></div></div></div>';
+        return;
+      }
+      if (state.viewMode === 'compare') {
+        breadcrumbEl.style.display = 'none';
+        state.compareLevel = levelEl.value;
+        const runAId = runAEl.value || state.compareRunA;
+        const runBId = runBEl.value || state.compareRunB;
+        const compareLevel = levelEl.value;
+        const runA = runAId ? runs.find(r => r.id === runAId && r.level === compareLevel) : null;
+        const runB = runBId ? runs.find(r => r.id === runBId && r.level === compareLevel) : null;
+        if (runA && runB) {
+          const labelA = shortLabel(runA.label_short || runA.id, 45);
+          const labelB = shortLabel(runB.label_short || runB.id, 45);
+          contentEl.innerHTML = '<div class="compare"><div class="column"><div class="column-header">Run A (left): ' + escapeHtml(labelA) + '</div><div class="compare-param-wrap">' + paramPanelHtml(runA) + '</div><div id="colA"></div></div><div class="column"><div class="column-header">Run B (right): ' + escapeHtml(labelB) + '</div><div class="compare-param-wrap">' + paramPanelHtml(runB) + '</div><div id="colB"></div></div></div>';
           renderRunOrSeedRuns(runA, document.getElementById('colA'), runs);
           renderRunOrSeedRuns(runB, document.getElementById('colB'), runs);
         } else {
-          const singleLabel = runA ? (runA.label_short || runA.id) : '—';
-          contentEl.innerHTML = '<div class="content-single"><div class="column-header single-run-header">' + escapeHtml(singleLabel) + '</div><div id="colSingle"></div></div>';
-          renderRunOrSeedRuns(runA, document.getElementById('colSingle'), runs);
+          contentEl.innerHTML = '<div class="content-single"><p class="empty-state">Select Run A (left) and Run B (right) above. Use &quot;Set as A&quot; or &quot;Set as B&quot; from Browse or Detail to choose each side.</p></div>';
         }
       }
     }
@@ -768,11 +1058,15 @@ def _html_content(manifest: dict) -> str:
         manifest = data;
         titleEl.textContent = (data.base_path || 'Pipeline') + ' — Dashboard';
         generatedEl.textContent = 'Generated: ' + formatGeneratedAt(data.generated_at);
+        viewModeEl.value = 'browse';
+        state.viewMode = 'browse';
         levelEl.addEventListener('change', () => { fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); updateContent(); });
         runAEl.addEventListener('change', updateContent);
         runBEl.addEventListener('change', updateContent);
         viewModeEl.addEventListener('change', () => {
-          if (viewModeEl.value === 'aspect') { fillAspectDropdown(); }
+          state.viewMode = viewModeEl.value;
+          if (viewModeEl.value === 'aspect') fillAspectDropdown();
+          if (viewModeEl.value === 'compare') { levelEl.value = state.compareLevel || 'euclideanizer'; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; if (state.compareRunB) runBEl.value = state.compareRunB; }
           updateContent();
         });
         levelAspectEl.addEventListener('change', () => { fillAspectDropdown(); updateContent(); });

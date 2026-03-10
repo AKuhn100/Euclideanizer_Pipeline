@@ -138,6 +138,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 | **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights and `num_diags`.                                                                |
 | **plotting**               | `enabled`, `overwrite_existing`, reconstruction / bond_rg_scaling / avg_gen_vs_exp, numeric params, `plot_dpi`, then `save_data`, `save_pdf_copy`, `save_structures_gro`.             |
 | **training_visualization** | `enabled`, `n_probe`, `n_quick`, `gen_sample_variance`, `fps`, frame size/dpi, `delete_frames_after_video`                                                                             |
+| **dashboard**             | `enabled` (when true, build interactive HTML report in `output_dir/dashboard/`).                                                                                                       |
 | **analysis**               | Nested blocks: same key order as plotting (enabled, overwrite_existing, params, save_data, save_pdf_copy, save_structures_gro or visualize_latent). `rmsd_gen`, `rmsd_recon`, `q_gen`, `q_recon`. |
 
 
@@ -349,6 +350,8 @@ All outputs live under `output_dir` (from config or `--output-dir`). With multip
 
 Index `i` is the run index in the expanded DistMap grid; `j` is the Euclideanizer config index. When `plotting.save_data` is true, many plots also write a `data/` subdir with `.npz` files (see **Saved plot data**).
 
+When **dashboard.enabled** is true, the pipeline writes **dashboard/** in the run root (`output_dir/dashboard/`): `index.html`, `manifest.json`, and `assets/` (copies of plots and videos). Open `index.html` in a browser for an interactive report. Views: **Browse** (hierarchical drill-down: seeds → DistMap runs → Euclideanizer runs, with full parameters at each level), **Detail** (single run with full parameter panel and all blocks), **Compare** (side-by-side comparison of two DistMap runs or two Euclideanizer runs, with parameter panels and “Set as A” / “Set as B” from Browse or Detail), and **Vary aspect** (sweep one parameter on the x-axis with full context config per row; horizontal scroll when needed). Block order groups RMSD latent analysis after RMSD plots and Q latent analysis after Q plots.
+
 ### Example tree (2 DistMap runs, 2 Euclideanizer configs)
 
 ```
@@ -374,6 +377,7 @@ output_dir/
 base_output_dir/
 ├── pipeline_config.yaml
 ├── pipeline.log
+├── dashboard/             # when dashboard.enabled: index.html, manifest.json, assets/
 ├── experimental_statistics/
 │   ├── meta.json
 │   └── exp_stats.npz
@@ -460,6 +464,7 @@ Euclideanizer_Pipeline/
     q_analysis.py        # Q / max Q analysis (optional, via analysis.q_gen / q_recon)
     gro_io.py            # Write 3D structures to GROMACS GRO format
     training_visualization.py  # Training videos (optional, requires ffmpeg)
+    dashboard.py         # Interactive HTML dashboard (Browse, Detail, Compare, Vary aspect)
     distmap/             # DistMap VAE (model, loss, sampling)
     euclideanizer/       # Euclideanizer model and frozen VAE loader
 ```
@@ -518,6 +523,7 @@ All keys below are **required** (no defaults in code). Omit any and the pipeline
 - **euclideanizer**: `epochs`, `batch_size`, `learning_rate`, same lambdas plus `lambda_w_diag_recon`, `lambda_w_diag_gen`, `num_diags` (diagonals for diagonal Wasserstein), `memory_efficient`, `save_final_models_per_stretch`.
 - **plotting**: `enabled`, `overwrite_existing`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `plot_dpi`, `save_data`, `save_pdf_copy`, `save_structures_gro`. (Key order standardized: behavior then save options.)
 - **training_visualization**: `enabled`, `n_probe`, `n_quick`, `gen_sample_variance`, `fps`, `frame_width`, `frame_height`, `frame_dpi`, `delete_frames_after_video`.
+- **dashboard**: `enabled` (interactive HTML report in `output_dir/dashboard/` when true).
 - **analysis**: Nested blocks; same key order (enabled, overwrite_existing, params, then save_data, save_pdf_copy, save_structures_gro or visualize_latent). **rmsd_gen**: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. **rmsd_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`. **q_gen**: `enabled`, `overwrite_existing`, `max_train`, `max_test`, `num_samples`, `sample_variance`, `delta`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. **q_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `save_pdf_copy`, `visualize_latent`.
 
 For full structure and comments, use `samples/config_sample.yaml` as the template.
