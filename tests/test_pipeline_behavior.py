@@ -751,7 +751,6 @@ def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing
 
 
 def test_euclideanizer_analysis_all_present_true_when_recon_and_latent_exist(tmp_path):
-    """When do_rmsd_recon and visualize_latent are True, recon and latent figures must exist."""
     (tmp_path / "analysis" / "rmsd" / "gen" / "default").mkdir(parents=True)
     (tmp_path / "analysis" / "rmsd" / "gen" / "default" / "rmsd_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "rmsd" / "recon").mkdir(parents=True)
@@ -762,6 +761,32 @@ def test_euclideanizer_analysis_all_present_true_when_recon_and_latent_exist(tmp
         do_rmsd_recon=True, visualize_latent=True,
         max_recon_train_list=[None], max_recon_test_list=[None],
     ) is True
+
+
+def test_euclideanizer_analysis_all_present_true_when_clustering_gen_exists(tmp_path):
+    """When do_clustering_gen is True and primary figure exists at analysis/clustering/gen/<run_name>/mixed_dendrograms.png, clustering gen is present."""
+    run_dir = tmp_path / "analysis" / "clustering" / "gen" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=False, do_q_recon=False,
+        do_clustering_gen=True, do_clustering_recon=False,
+        clustering_variance_list=[1.0], clustering_num_samples_list=[10],
+    ) is True
+
+
+def test_euclideanizer_analysis_all_present_false_when_clustering_recon_enabled_but_missing(tmp_path):
+    """When do_clustering_recon is True and recon figure is missing, analysis is not all present."""
+    (tmp_path / "analysis" / "clustering" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "clustering" / "gen" / "default" / "mixed_dendrograms.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=False, do_q_recon=False,
+        do_clustering_gen=True, do_clustering_recon=True,
+        clustering_variance_list=[1.0], clustering_num_samples_list=[10],
+        clustering_max_recon_train_list=[None], clustering_max_recon_test_list=[None],
+    ) is False
 
 
 def test_pipeline_need_data_false_only_when_all_runs_and_outputs_present(tmp_path):

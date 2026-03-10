@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from . import rmsd
 from . import q_analysis
+from . import clustering
 
 
 def _rmsd_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
@@ -154,6 +155,83 @@ def _q_precomputed_kwargs(tt, train_c, test_c):
     return {"precomputed_test_to_train_max_q": tt, "train_coords_np": train_c, "test_coords_np": test_c}
 
 
+def _clustering_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
+    gen = analysis_cfg.get("clustering_gen") or {}
+    n = gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE)
+    return f"clustering_train_test_feats_n{n}.npz"
+
+
+def _clustering_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
+    gen = analysis_cfg.get("clustering_gen") or {}
+    return {
+        "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+        "batch_size": gen.get("feats_batch_size", gen.get("query_batch_size", 64)),
+        "fps_seed": clustering.FPS_SEED,
+    }
+
+
+def _clustering_get_or_compute(
+    cache_path: str,
+    coords_np,
+    coords_tensor,
+    training_split: float,
+    split_seed: int,
+    display_root: str | None,
+    **kwargs: Any,
+):
+    return clustering.get_or_compute_clustering_feats(
+        cache_path, coords_np, coords_tensor, training_split, split_seed,
+        n_subsample=kwargs["n_subsample"],
+        batch_size=kwargs.get("batch_size", 64),
+        fps_seed=kwargs.get("fps_seed", clustering.FPS_SEED),
+        display_root=display_root,
+    )
+
+
+def _clustering_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    gen = analysis_cfg.get("clustering_gen") or {}
+    return {
+        "plot_dpi": plot_dpi,
+        "save_pdf_copy": gen.get("save_pdf_copy", False),
+        "save_data": gen.get("save_data", False),
+    }
+
+
+def _clustering_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    recon = analysis_cfg.get("clustering_recon") or {}
+    return {
+        "save_data": recon.get("save_data", False),
+        "plot_dpi": plot_dpi,
+        "save_pdf_copy": recon.get("save_pdf_copy", False),
+    }
+
+
+def _clustering_precomputed_kwargs(tt, train_c, test_c):
+    return {"clustering_seed_feats_path": tt, "train_coords_np": train_c, "test_coords_np": test_c}
+
+
+def _clustering_gen_extra_kwargs(analysis_cfg: dict) -> dict:
+    gen = analysis_cfg.get("clustering_gen") or {}
+    return {
+        "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+        "k_mixing": gen.get("k_mixing", clustering.DEFAULT_K_MIXING),
+        "n_clusters": gen.get("n_clusters", clustering.DEFAULT_N_CLUSTERS),
+        "linkage_method": gen.get("linkage_method", clustering.LINKAGE_METHOD),
+        "feats_batch_size": gen.get("feats_batch_size", gen.get("query_batch_size", 64)),
+    }
+
+
+def _clustering_recon_extra_kwargs(analysis_cfg: dict) -> dict:
+    recon = analysis_cfg.get("clustering_recon") or {}
+    return {
+        "n_subsample": recon.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+        "k_mixing": recon.get("k_mixing", clustering.DEFAULT_K_MIXING),
+        "n_clusters": recon.get("n_clusters", clustering.DEFAULT_N_CLUSTERS),
+        "linkage_method": recon.get("linkage_method", clustering.LINKAGE_METHOD),
+        "feats_batch_size": recon.get("feats_batch_size", recon.get("query_batch_size", 64)),
+    }
+
+
 @dataclass(frozen=True)
 class AnalysisMetricSpec:
     """Single analysis metric (rmsd or q) for the unified analysis loop."""
@@ -212,5 +290,23 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         precomputed_kwargs=_q_precomputed_kwargs,
         gen_extra_kwargs=_q_gen_extra_kwargs,
         recon_extra_kwargs=_q_recon_extra_kwargs,
+    ),
+    AnalysisMetricSpec(
+        id="clustering",
+        gen_key="clustering_gen",
+        recon_key="clustering_recon",
+        subdir="clustering",
+        figure_filename="mixed_dendrograms.png",
+        get_or_compute_test_to_train=_clustering_get_or_compute,
+        run_gen_analysis=clustering.run_clustering_gen_analysis,
+        run_gen_analysis_multi=clustering.run_clustering_gen_analysis_multi,
+        run_recon_analysis=clustering.run_clustering_recon_analysis,
+        cache_filename=_clustering_cache_filename,
+        kwargs_for_cache=_clustering_kwargs_for_cache,
+        build_gen_plot_cfg=_clustering_build_gen_plot_cfg,
+        build_recon_plot_cfg=_clustering_build_recon_plot_cfg,
+        precomputed_kwargs=_clustering_precomputed_kwargs,
+        gen_extra_kwargs=_clustering_gen_extra_kwargs,
+        recon_extra_kwargs=_clustering_recon_extra_kwargs,
     ),
 ]

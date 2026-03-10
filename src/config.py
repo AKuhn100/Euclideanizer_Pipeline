@@ -37,7 +37,7 @@ REQUIRED_KEYS = {
         "num_reconstruction_samples", "plot_dpi",
         "save_data", "save_pdf_copy", "save_structures_gro",
     ],
-    "analysis": ["rmsd_gen", "rmsd_recon", "q_gen", "q_recon"],
+    "analysis": ["rmsd_gen", "rmsd_recon", "q_gen", "q_recon", "clustering_gen", "clustering_recon"],
 }
 # Required keys inside each analysis sub-block (validated when top-level key exists).
 REQUIRED_ANALYSIS_SUBKEYS = {
@@ -62,10 +62,21 @@ REQUIRED_ANALYSIS_SUBKEYS = {
         "max_recon_train", "max_recon_test", "delta",
         "save_data", "save_pdf_copy", "visualize_latent",
     ],
+    "clustering_gen": [
+        "enabled", "overwrite_existing",
+        "num_samples", "sample_variance", "n_subsample",
+        "query_batch_size",
+        "save_data", "save_pdf_copy",
+    ],
+    "clustering_recon": [
+        "enabled", "overwrite_existing",
+        "max_recon_train", "max_recon_test", "n_subsample",
+        "save_data", "save_pdf_copy", "visualize_latent",
+    ],
 }
 REQUIRED_KEYS = {
     **{k: v for k, v in REQUIRED_KEYS.items() if k != "analysis"},
-    "analysis": ["rmsd_gen", "rmsd_recon", "q_gen", "q_recon"],
+    "analysis": ["rmsd_gen", "rmsd_recon", "q_gen", "q_recon", "clustering_gen", "clustering_recon"],
     "training_visualization": [
         "enabled",
         "n_probe", "n_quick", "gen_sample_variance",

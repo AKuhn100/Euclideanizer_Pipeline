@@ -31,6 +31,9 @@ _RMSD_DIR = "rmsd"
 _RMSD_FIG = "rmsd_distributions.png"
 _ANALYSIS_Q_DIR = "q"
 _Q_FIG = "q_distributions.png"
+_CLUSTERING_DIR = "clustering"
+_CLUSTERING_FIG = "mixed_dendrograms.png"
+_CLUSTERING_EXTRA_FIGS = ("pure_dendrograms.png", "mixing_analysis.png", "rmse_similarity.png")
 
 DASHBOARD_DIR = "dashboard"
 ASSETS_DIR = "assets"
@@ -157,7 +160,52 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                 if os.path.isfile(latent_sub):
                     rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_distribution.png")
                     blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Q) {subdir}", "source_path": rel})
+    _append_clustering_analysis_blocks(run_root, blocks)
     return blocks
+
+
+def _append_clustering_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) -> None:
+    """Append Clustering dashboard blocks from analysis/clustering/ (gen run_name dirs, recon, latent)."""
+    clust_root = os.path.join(run_root, _ANALYSIS_DIR, _CLUSTERING_DIR)
+    if not os.path.isdir(clust_root):
+        return
+    base_rel = os.path.join(_ANALYSIS_DIR, _CLUSTERING_DIR)
+    gen_dir = os.path.join(clust_root, "gen")
+    if os.path.isdir(gen_dir):
+        for run_name in sorted(os.listdir(gen_dir)):
+            run_dir = os.path.join(gen_dir, run_name)
+            if not os.path.isdir(run_dir):
+                continue
+            for fig_name in (_CLUSTERING_FIG,) + _CLUSTERING_EXTRA_FIGS:
+                fig_path = os.path.join(run_dir, fig_name)
+                if os.path.isfile(fig_path):
+                    rel = os.path.join(base_rel, "gen", run_name, fig_name)
+                    label = fig_name.replace(".png", "").replace("_", " ").title()
+                    blocks.append({"type": "clustering_gen", "name": f"Clustering (gen) {run_name} — {label}", "source_path": rel})
+    recon_dir = os.path.join(clust_root, "recon")
+    main_recon_fig = os.path.join(recon_dir, _CLUSTERING_FIG)
+    if os.path.isfile(main_recon_fig):
+        rel = os.path.join(base_rel, "recon", _CLUSTERING_FIG)
+        blocks.append({"type": "clustering_recon", "name": "Clustering (recon)", "source_path": rel})
+    else:
+        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+            subdir_path = os.path.join(recon_dir, subdir)
+            if os.path.isdir(subdir_path):
+                subdir_fig = os.path.join(subdir_path, _CLUSTERING_FIG)
+                if os.path.isfile(subdir_fig):
+                    rel = os.path.join(base_rel, "recon", subdir, _CLUSTERING_FIG)
+                    blocks.append({"type": "clustering_recon", "name": f"Clustering (recon) {subdir}", "source_path": rel})
+    latent_fig = os.path.join(recon_dir, "latent_distribution.png")
+    if os.path.isfile(latent_fig):
+        rel = os.path.join(base_rel, "recon", "latent_distribution.png")
+        blocks.append({"type": "latent_distribution", "name": "Latent distribution (Clustering)", "source_path": rel})
+    else:
+        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+            subdir_path = os.path.join(recon_dir, subdir)
+            latent_sub = os.path.join(subdir_path, "latent_distribution.png")
+            if os.path.isfile(latent_sub):
+                rel = os.path.join(base_rel, "recon", subdir, "latent_distribution.png")
+                blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Clustering) {subdir}", "source_path": rel})
 
 
 def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
@@ -732,9 +780,10 @@ def _html_content(manifest: dict) -> str:
       if (type === 'latent_distribution') {
         if (n.indexOf('RMSD') >= 0) return 6;
         if (n.indexOf('(Q)') >= 0 || n.indexOf(' Q)') >= 0) return 9;
+        if (n.indexOf('CLUSTERING') >= 0) return 11;
         return 10;
       }
-      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon'];
+      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon', 'clustering_gen', 'clustering_recon'];
       const i = order.indexOf(type);
       return i >= 0 ? i : 10;
     }

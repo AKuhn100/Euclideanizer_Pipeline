@@ -321,6 +321,9 @@ def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) 
     elif component in ("q_gen", "q_recon"):
         subdir = "gen" if component == "q_gen" else "recon"
         target = os.path.join("analysis", "q", subdir)
+    elif component in ("clustering_gen", "clustering_recon"):
+        subdir = "gen" if component == "clustering_gen" else "recon"
+        target = os.path.join("analysis", "clustering", subdir)
     else:
         return False
     for seed in seeds:
@@ -385,6 +388,9 @@ def _delete_analysis_outputs_for_component(base_output_dir: str, seeds: list, co
     elif component in ("q_gen", "q_recon"):
         subdir = "gen" if component == "q_gen" else "recon"
         target = os.path.join("analysis", "q", subdir)
+    elif component in ("clustering_gen", "clustering_recon"):
+        subdir = "gen" if component == "clustering_gen" else "recon"
+        target = os.path.join("analysis", "clustering", subdir)
     else:
         return
     for seed in seeds:
@@ -884,6 +890,18 @@ def _analysis_cfg_from_legacy_kwargs(kw: dict) -> dict:
             "max_recon_test": kw.get("q_max_recon_test_list"),
             "visualize_latent": kw.get("q_visualize_latent", False),
         }
+    if kw.get("do_clustering_gen") or kw.get("do_clustering_recon"):
+        cfg["clustering_gen"] = {
+            "enabled": kw.get("do_clustering_gen", False),
+            "sample_variance": kw.get("clustering_variance_list") or [],
+            "num_samples": kw.get("clustering_num_samples_list") or [],
+        }
+        cfg["clustering_recon"] = {
+            "enabled": kw.get("do_clustering_recon", False),
+            "max_recon_train": kw.get("clustering_max_recon_train_list"),
+            "max_recon_test": kw.get("clustering_max_recon_test_list"),
+            "visualize_latent": kw.get("clustering_visualize_latent", False),
+        }
     return cfg
 
 
@@ -931,8 +949,15 @@ def _euclideanizer_analysis_all_present(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_visualize_latent: bool = False,
+    do_clustering_gen: bool = False,
+    do_clustering_recon: bool = False,
+    clustering_variance_list: list | None = None,
+    clustering_num_samples_list: list | None = None,
+    clustering_max_recon_train_list: list | None = None,
+    clustering_max_recon_test_list: list | None = None,
+    clustering_visualize_latent: bool = False,
 ) -> bool:
-    """True if resume and all enabled metric (rmsd, q) analysis outputs we would generate already exist."""
+    """True if resume and all enabled metric (rmsd, q, clustering) analysis outputs we would generate already exist."""
     if not resume:
         return True
     if analysis_cfg is None:
@@ -951,6 +976,13 @@ def _euclideanizer_analysis_all_present(
             "q_max_recon_train_list": q_max_recon_train_list,
             "q_max_recon_test_list": q_max_recon_test_list,
             "q_visualize_latent": q_visualize_latent,
+            "do_clustering_gen": do_clustering_gen,
+            "do_clustering_recon": do_clustering_recon,
+            "clustering_variance_list": clustering_variance_list or [],
+            "clustering_num_samples_list": clustering_num_samples_list or [],
+            "clustering_max_recon_train_list": clustering_max_recon_train_list,
+            "clustering_max_recon_test_list": clustering_max_recon_test_list,
+            "clustering_visualize_latent": clustering_visualize_latent,
         })
     specs = metrics if metrics is not None else ANALYSIS_METRICS
     for spec in specs:
@@ -1078,6 +1110,13 @@ def _pipeline_data_needs(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_visualize_latent: bool = False,
+    do_clustering_gen: bool = False,
+    do_clustering_recon: bool = False,
+    clustering_variance_list: list | None = None,
+    clustering_num_samples_list: list | None = None,
+    clustering_max_recon_train_list: list | None = None,
+    clustering_max_recon_test_list: list | None = None,
+    clustering_visualize_latent: bool = False,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
@@ -1103,6 +1142,13 @@ def _pipeline_data_needs(
         "q_max_recon_train_list": q_max_recon_train_list,
         "q_max_recon_test_list": q_max_recon_test_list,
         "q_visualize_latent": q_visualize_latent,
+        "do_clustering_gen": do_clustering_gen,
+        "do_clustering_recon": do_clustering_recon,
+        "clustering_variance_list": clustering_variance_list or [],
+        "clustering_num_samples_list": clustering_num_samples_list or [],
+        "clustering_max_recon_train_list": clustering_max_recon_train_list,
+        "clustering_max_recon_test_list": clustering_max_recon_test_list,
+        "clustering_visualize_latent": clustering_visualize_latent,
     })
     for seed in seeds:
         output_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -1820,24 +1866,32 @@ def _run_one_distmap_group(
                                                 **spec.kwargs_for_cache(analysis_cfg, None, None),
                                             )
                                         return _cache["rmsd"]
-                                    assert spec.id == "q"
-                                    if _cache.get("q") is None:
-                                        _cache["q"] = {}
-                                    key = (mt, mc)
-                                    if key not in _cache["q"]:
-                                        _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
-                                        _cache["q"][key] = spec.get_or_compute_test_to_train(
+                                    if spec.id == "q":
+                                        if _cache.get("q") is None:
+                                            _cache["q"] = {}
+                                        key = (mt, mc)
+                                        if key not in _cache["q"]:
+                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                                            _cache["q"][key] = spec.get_or_compute_test_to_train(
+                                                _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
+                                                **spec.kwargs_for_cache(analysis_cfg, mt, mc),
+                                            )
+                                        return _cache["q"][key]
+                                    assert spec.id == "clustering"
+                                    if _cache.get("clustering") is None:
+                                        _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, None, None))
+                                        _cache["clustering"] = spec.get_or_compute_test_to_train(
                                             _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
-                                            **spec.kwargs_for_cache(analysis_cfg, mt, mc),
+                                            **spec.kwargs_for_cache(analysis_cfg, None, None),
                                         )
-                                    return _cache["q"][key]
+                                    return _cache["clustering"]
 
                                 if do_gen:
                                     _mt_gen = _gen_max_train if spec.id == "q" else None
                                     _mc_gen = _gen_max_test if spec.id == "q" else None
                                     if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
                                         continue
-                                    _tt, _train_c, _test_c = _get_or_compute_cached(_mt_gen, _mc_gen)
+                                    _tt, _train_c, _test_c = _get_or_compute_cached(_mt_gen if spec.id == "q" else None, _mc_gen if spec.id == "q" else None)
                                     plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg, plot_dpi)
                                     pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                                     extra_kw = spec.gen_extra_kwargs(analysis_cfg)
@@ -2433,6 +2487,8 @@ def main():
     do_rmsd_recon_cfg = analysis_cfg["rmsd_recon"]["enabled"]
     do_q = analysis_cfg["q_gen"]["enabled"]
     do_q_recon_cfg = analysis_cfg["q_recon"]["enabled"]
+    do_clustering_gen = analysis_cfg.get("clustering_gen", {}).get("enabled", False)
+    do_clustering_recon_cfg = analysis_cfg.get("clustering_recon", {}).get("enabled", False)
     training_split = cfg["data"]["training_split"]
     do_dashboard = cfg["dashboard"]["enabled"]
     if getattr(args, "no_dashboard", False):
@@ -2479,6 +2535,18 @@ def main():
     if not isinstance(q_max_recon_test_list, list):
         q_max_recon_test_list = [q_max_recon_test_list]
     q_recon_delta = analysis_cfg["q_recon"].get("delta", q_delta)
+    clustering_num_samples_list = analysis_cfg.get("clustering_gen", {}).get("num_samples", []) if do_clustering_gen else []
+    if not isinstance(clustering_num_samples_list, list):
+        clustering_num_samples_list = [clustering_num_samples_list]
+    clustering_variance_list = analysis_cfg.get("clustering_gen", {}).get("sample_variance", []) if do_clustering_gen else []
+    if not isinstance(clustering_variance_list, list):
+        clustering_variance_list = [clustering_variance_list]
+    clustering_max_recon_train_list = analysis_cfg.get("clustering_recon", {}).get("max_recon_train") if do_clustering_recon_cfg else []
+    if not isinstance(clustering_max_recon_train_list, list):
+        clustering_max_recon_train_list = [clustering_max_recon_train_list]
+    clustering_max_recon_test_list = analysis_cfg.get("clustering_recon", {}).get("max_recon_test") if do_clustering_recon_cfg else []
+    if not isinstance(clustering_max_recon_test_list, list):
+        clustering_max_recon_test_list = [clustering_max_recon_test_list]
     dm_groups = distmap_training_groups(cfg)
     eu_groups = euclideanizer_training_groups(cfg)
     plot_variances_for_scan = get_sample_variances(cfg) if do_plot else []
@@ -2495,6 +2563,10 @@ def main():
         to_overwrite.append("q_gen")
     if do_q_recon_cfg and analysis_cfg["q_recon"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "q_recon"):
         to_overwrite.append("q_recon")
+    if do_clustering_gen and analysis_cfg.get("clustering_gen", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "clustering_gen"):
+        to_overwrite.append("clustering_gen")
+    if do_clustering_recon_cfg and analysis_cfg.get("clustering_recon", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "clustering_recon"):
+        to_overwrite.append("clustering_recon")
     if to_overwrite:
         if not getattr(args, "yes_overwrite", False):
             _confirm_overwrite_outputs(to_overwrite)
@@ -2511,6 +2583,10 @@ def main():
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, "q_gen")
             elif label == "q_recon":
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, "q_recon")
+            elif label == "clustering_gen":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "clustering_gen")
+            elif label == "clustering_recon":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "clustering_recon")
         _log("Done removing; will re-run these components.", since_start=time.time() - pipeline_start, style="success")
 
     # Pipeline config: strict match for training; if only plotting/analysis differ, prompt then delete and update saved config
@@ -2565,13 +2641,17 @@ def main():
                     chunks_to_update.add("q_gen")
                 if s_analysis.get("q_recon") != e_analysis.get("q_recon"):
                     chunks_to_update.add("q_recon")
+                if s_analysis.get("clustering_gen") != e_analysis.get("clustering_gen"):
+                    chunks_to_update.add("clustering_gen")
+                if s_analysis.get("clustering_recon") != e_analysis.get("clustering_recon"):
+                    chunks_to_update.add("clustering_recon")
         chunks_to_update = sorted(chunks_to_update)  # stable order: rmsd_gen, rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
             chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
         # Only prompt and delete for chunks that actually have existing outputs
-        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)"}
+        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "clustering_gen": "Clustering (gen)", "clustering_recon": "Clustering (recon)"}
         chunks_with_outputs = [
             c for c in chunks_still_to_delete
             if (c == "plotting" and _has_any_plotting_output(base_output_dir, seeds))
@@ -2604,7 +2684,7 @@ def main():
         do_visualize_latent = analysis_cfg["rmsd_recon"]["visualize_latent"]
         do_q_recon = analysis_cfg["q_recon"]["enabled"]
         needs = PipelineDataNeeds(
-            need_coords=(need_train or do_plot or do_rmsd or do_rmsd_recon or do_q or do_q_recon),
+            need_coords=(need_train or do_plot or do_rmsd or do_rmsd_recon or do_q or do_q_recon or do_clustering_gen or do_clustering_recon_cfg),
             need_exp_stats=do_plot,
             need_train_test_stats=do_plot,
         ) if data_path else PipelineDataNeeds(need_coords=False, need_exp_stats=False, need_train_test_stats=False)
@@ -2619,11 +2699,15 @@ def main():
             q_variance_list=q_variance_list, q_num_samples_list=q_num_samples_list,
             q_max_recon_train_list=q_max_recon_train_list, q_max_recon_test_list=q_max_recon_test_list,
             q_visualize_latent=analysis_cfg["q_recon"].get("visualize_latent", False),
+            do_clustering_gen=do_clustering_gen, do_clustering_recon=do_clustering_recon_cfg,
+            clustering_variance_list=clustering_variance_list, clustering_num_samples_list=clustering_num_samples_list,
+            clustering_max_recon_train_list=clustering_max_recon_train_list, clustering_max_recon_test_list=clustering_max_recon_test_list,
+            clustering_visualize_latent=analysis_cfg.get("clustering_recon", {}).get("visualize_latent", False),
         )
     need_any = needs.need_any() and data_path
 
     # Remove dashboard only when this run will actually execute at least one plotting or analysis step (so we don't delete when everything is already present and we skip)
-    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg):
+    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_clustering_gen or do_clustering_recon_cfg):
         _delete_dashboard(base_output_dir)
 
     stats_only_ok = False
