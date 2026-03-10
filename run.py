@@ -2578,8 +2578,7 @@ def main():
             or (c != "plotting" and _has_any_analysis_output(base_output_dir, seeds, c))
         ]
         if chunks_to_update:
-            if chunks_with_outputs:
-                _delete_dashboard(base_output_dir)
+            _delete_dashboard(base_output_dir)  # Remove dashboard whenever we will re-run any plotting/analysis (even if no outputs under new paths yet)
             for chunk in chunks_with_outputs:
                 if not getattr(args, "yes_overwrite", False):
                     _confirm_replot_one_chunk(base_output_dir, chunk_labels[chunk])
@@ -2622,6 +2621,10 @@ def main():
             q_visualize_latent=analysis_cfg["q_recon"].get("visualize_latent", False),
         )
     need_any = needs.need_any() and data_path
+
+    # Remove dashboard only when this run will actually execute at least one plotting or analysis step (so we don't delete when everything is already present and we skip)
+    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg):
+        _delete_dashboard(base_output_dir)
 
     stats_only_ok = False
     if need_any and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):

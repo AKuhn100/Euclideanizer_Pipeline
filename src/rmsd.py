@@ -497,6 +497,27 @@ def run_min_rmsd_recon_analysis(
     )
 
 
+def _latent_dim_xticks(n_dim: int, max_labels: int = 5):
+    """
+    Tick positions and string labels for latent dimension axis.
+    With large n_dim, label every dim is unreadable; use a few evenly spaced ticks only.
+    endpoint=False so we never force n_dim-1 as a tick—the axis still spans full range via xlim.
+    """
+    if n_dim <= 0:
+        return [], []
+    if n_dim <= max_labels:
+        positions = list(range(n_dim))
+        return positions, [str(i) for i in positions]
+    # Evenly spaced in [0, n_dim); do not label last dim explicitly
+    raw = np.linspace(0, n_dim - 1, max_labels, endpoint=False)
+    positions_int = np.clip(np.round(raw).astype(int), 0, n_dim - 1)
+    positions = []
+    for p in positions_int:
+        if not positions or positions[-1] != p:
+            positions.append(int(p))
+    return positions, [str(p) for p in positions]
+
+
 def plot_latent_distribution(
     train_mu_np: np.ndarray,
     test_mu_np: np.ndarray,
@@ -526,6 +547,10 @@ def plot_latent_distribution(
     ax1.set_title("Train latent distribution")
     ax1.set_xlabel("Dimension")
     ax1.set_xlim(-0.5, n_dim - 0.5)
+    _pos1, _lab1 = _latent_dim_xticks(n_dim)
+    if _pos1:
+        ax1.set_xticks(_pos1)
+        ax1.set_xticklabels(_lab1)
 
     ax2 = fig.add_subplot(3, 2, 2)
     ax2.boxplot(
@@ -538,6 +563,9 @@ def plot_latent_distribution(
     ax2.set_title("Test latent distribution")
     ax2.set_xlabel("Dimension")
     ax2.set_xlim(-0.5, n_dim - 0.5)
+    if _pos1:
+        ax2.set_xticks(_pos1)
+        ax2.set_xticklabels(_lab1)
     y_min = min(train_mu_np.min(), test_mu_np.min())
     y_max = max(train_mu_np.max(), test_mu_np.max())
     ax1.set_ylim(y_min, y_max)
@@ -553,6 +581,9 @@ def plot_latent_distribution(
     ax_mean.set_ylabel("Mean")
     ax_mean.legend()
     ax_mean.grid(True, alpha=0.3)
+    if n_dim > 5:
+        ax_mean.set_xticks(_pos1)
+        ax_mean.set_xticklabels(_lab1)
 
     # Bottom row: std per dimension (full width)
     ax_std = fig.add_subplot(3, 2, (5, 6))
@@ -564,6 +595,9 @@ def plot_latent_distribution(
     ax_std.set_ylabel("Std")
     ax_std.legend()
     ax_std.grid(True, alpha=0.3)
+    if n_dim > 5:
+        ax_std.set_xticks(_pos1)
+        ax_std.set_xticklabels(_lab1)
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
