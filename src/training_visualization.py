@@ -356,8 +356,9 @@ def make_distmap_epoch_hook(coords, dm_cfg, run_dir, device, utils_mod, vis_cfg,
     _exp_hist, _ = np.histogram(_exp_ok, bins=_rg_bins, density=True)
     rg_ylim = (0.0, float(np.max(_exp_hist) * 1.15) if _exp_hist.size else 1.0)
 
+    from .distmap.sample import generate_samples
     torch.manual_seed(12345)
-    z_rg_fixed = torch.randn(n_quick, latent_dim, device=device)
+    z_rg_fixed = generate_samples(n_quick, latent_dim, device, variance=vis_cfg["gen_sample_variance"])
 
     def on_epoch(epoch, model, train_losses, val_losses, run_dirs=None):
         model.eval()
@@ -451,7 +452,7 @@ def make_euclideanizer_epoch_hook(coords, eu_cfg, frozen_vae_path, frozen_latent
 
     from .distmap.sample import generate_samples
     torch.manual_seed(54321)
-    z_rg_fixed = generate_samples(n_quick, latent_dim, device, variance=2.0)
+    z_rg_fixed = generate_samples(n_quick, latent_dim, device, variance=vis_cfg["gen_sample_variance"])
 
     def on_epoch(epoch, embed, train_losses, val_losses, run_dirs=None):
         embed.eval()

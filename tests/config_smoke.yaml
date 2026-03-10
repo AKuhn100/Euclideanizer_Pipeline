@@ -54,6 +54,7 @@ training_visualization:
   enabled: false
   n_probe: 6
   n_quick: 500
+  gen_sample_variance: 1.0
   fps: 12
   frame_width: 16
   frame_height: 14

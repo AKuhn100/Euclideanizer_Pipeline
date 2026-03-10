@@ -68,7 +68,7 @@ REQUIRED_KEYS = {
     "analysis": ["rmsd_gen", "rmsd_recon", "q_gen", "q_recon"],
     "training_visualization": [
         "enabled",
-        "n_probe", "n_quick",
+        "n_probe", "n_quick", "gen_sample_variance",
         "fps", "frame_width", "frame_height", "frame_dpi",
         "delete_frames_after_video",
     ],

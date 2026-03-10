@@ -45,6 +45,7 @@ training_visualization:
   enabled: true
   n_probe: 6                     # number of probe structures shown per frame
   n_quick: 500                   # samples per epoch for Rg/scaling curves
+  gen_sample_variance: 1         # latent variance for video "Generated" Rg/scaling (use 1 to match gen_variance plots)
   fps: 12
   frame_width: 16
   frame_height: 14
