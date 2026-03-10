@@ -25,8 +25,10 @@ _RECON_STAT_TEST = os.path.join(_PLOTS_BASE, "recon_statistics", "recon_statisti
 _GEN_VARIANCE_PATTERN = os.path.join(_PLOTS_BASE, "gen_variance", "gen_variance_*.png")
 # Training video lives outside plots/ so plotting wipe does not remove it
 _TRAINING_VIDEO = os.path.join("training_video", "training_evolution.mp4")
-_ANALYSIS_MIN_RMSD_DIR = "analysis"
-_MIN_RMSD_FIG = "min_rmsd_distributions.png"
+_ANALYSIS_DIR = "analysis"
+# RMSD analysis: rmsd.py writes analysis/rmsd/gen/<run_name>/rmsd_distributions.png and analysis/rmsd/recon/...
+_RMSD_DIR = "rmsd"
+_RMSD_FIG = "rmsd_distributions.png"
 _ANALYSIS_Q_DIR = "q"
 _Q_FIG = "q_distributions.png"
 
@@ -80,54 +82,61 @@ def _blocks_for_distmap_run(run_root: str) -> list[dict[str, str]]:
     return blocks
 
 
+def _append_rmsd_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) -> None:
+    """Append RMSD dashboard blocks from analysis/rmsd/ (rmsd_distributions.png)."""
+    rmsd_root = os.path.join(run_root, _ANALYSIS_DIR, _RMSD_DIR)
+    if not os.path.isdir(rmsd_root):
+        return
+    base_rel = os.path.join(_ANALYSIS_DIR, _RMSD_DIR)
+    gen_dir = os.path.join(rmsd_root, "gen")
+    if os.path.isdir(gen_dir):
+        for run_name in sorted(os.listdir(gen_dir)):
+            fig_path = os.path.join(gen_dir, run_name, _RMSD_FIG)
+            if os.path.isfile(fig_path):
+                rel = os.path.join(base_rel, "gen", run_name, _RMSD_FIG)
+                blocks.append({"type": "rmsd_gen", "name": f"RMSD (gen) {run_name}", "source_path": rel})
+    recon_dir = os.path.join(rmsd_root, "recon")
+    recon_fig = os.path.join(recon_dir, _RMSD_FIG)
+    if os.path.isfile(recon_fig):
+        rel = os.path.join(base_rel, "recon", _RMSD_FIG)
+        blocks.append({"type": "rmsd_recon", "name": "RMSD (recon)", "source_path": rel})
+    else:
+        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+            subdir_path = os.path.join(recon_dir, subdir)
+            if os.path.isdir(subdir_path):
+                subdir_fig = os.path.join(subdir_path, _RMSD_FIG)
+                if os.path.isfile(subdir_fig):
+                    rel = os.path.join(base_rel, "recon", subdir, _RMSD_FIG)
+                    blocks.append({"type": "rmsd_recon", "name": f"RMSD (recon) {subdir}", "source_path": rel})
+    latent_fig = os.path.join(recon_dir, "latent_distribution.png")
+    if os.path.isfile(latent_fig):
+        rel = os.path.join(base_rel, "recon", "latent_distribution.png")
+        blocks.append({"type": "latent_distribution", "name": "Latent distribution (RMSD)", "source_path": rel})
+    else:
+        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+            subdir_path = os.path.join(recon_dir, subdir)
+            latent_sub = os.path.join(subdir_path, "latent_distribution.png")
+            if os.path.isfile(latent_sub):
+                rel = os.path.join(base_rel, "recon", subdir, "latent_distribution.png")
+                blocks.append({"type": "latent_distribution", "name": f"Latent distribution (RMSD) {subdir}", "source_path": rel})
+
+
 def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
     blocks = _blocks_for_distmap_run(run_root)
-    min_rmsd_root = os.path.join(run_root, _ANALYSIS_MIN_RMSD_DIR, "min_rmsd")
-    if os.path.isdir(min_rmsd_root):
-        gen_dir = os.path.join(min_rmsd_root, "gen")
-        if os.path.isdir(gen_dir):
-            for run_name in sorted(os.listdir(gen_dir)):
-                fig_path = os.path.join(gen_dir, run_name, _MIN_RMSD_FIG)
-                if os.path.isfile(fig_path):
-                    rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, "min_rmsd", "gen", run_name, _MIN_RMSD_FIG)
-                    blocks.append({"type": "min_rmsd_gen", "name": f"Min-RMSD (gen) {run_name}", "source_path": rel})
-        recon_dir = os.path.join(min_rmsd_root, "recon")
-        recon_fig = os.path.join(recon_dir, _MIN_RMSD_FIG)
-        if os.path.isfile(recon_fig):
-            rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, "min_rmsd", "recon", _MIN_RMSD_FIG)
-            blocks.append({"type": "min_rmsd_recon", "name": "Min-RMSD (recon)", "source_path": rel})
-        else:
-            for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-                subdir_path = os.path.join(recon_dir, subdir)
-                if os.path.isdir(subdir_path):
-                    subdir_fig = os.path.join(subdir_path, _MIN_RMSD_FIG)
-                    if os.path.isfile(subdir_fig):
-                        rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, "min_rmsd", "recon", subdir, _MIN_RMSD_FIG)
-                        blocks.append({"type": "min_rmsd_recon", "name": f"Min-RMSD (recon) {subdir}", "source_path": rel})
-        latent_fig = os.path.join(recon_dir, "latent_distribution.png")
-        if os.path.isfile(latent_fig):
-            rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, "min_rmsd", "recon", "latent_distribution.png")
-            blocks.append({"type": "latent_distribution", "name": "Latent distribution", "source_path": rel})
-        else:
-            for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-                subdir_path = os.path.join(recon_dir, subdir)
-                latent_sub = os.path.join(subdir_path, "latent_distribution.png")
-                if os.path.isfile(latent_sub):
-                    rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, "min_rmsd", "recon", subdir, "latent_distribution.png")
-                    blocks.append({"type": "latent_distribution", "name": f"Latent distribution {subdir}", "source_path": rel})
-    q_root = os.path.join(run_root, _ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR)
+    _append_rmsd_analysis_blocks(run_root, blocks)
+    q_root = os.path.join(run_root, _ANALYSIS_DIR, _ANALYSIS_Q_DIR)
     if os.path.isdir(q_root):
         gen_dir = os.path.join(q_root, "gen")
         if os.path.isdir(gen_dir):
             for run_name in sorted(os.listdir(gen_dir)):
                 fig_path = os.path.join(gen_dir, run_name, _Q_FIG)
                 if os.path.isfile(fig_path):
-                    rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "gen", run_name, _Q_FIG)
+                    rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "gen", run_name, _Q_FIG)
                     blocks.append({"type": "q_gen", "name": f"Q (gen) {run_name}", "source_path": rel})
         recon_dir = os.path.join(q_root, "recon")
         recon_fig = os.path.join(recon_dir, _Q_FIG)
         if os.path.isfile(recon_fig):
-            rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", _Q_FIG)
+            rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", _Q_FIG)
             blocks.append({"type": "q_recon", "name": "Q (recon)", "source_path": rel})
         else:
             for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
@@ -135,18 +144,18 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                 if os.path.isdir(subdir_path):
                     subdir_fig = os.path.join(subdir_path, _Q_FIG)
                     if os.path.isfile(subdir_fig):
-                        rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", subdir, _Q_FIG)
+                        rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, _Q_FIG)
                         blocks.append({"type": "q_recon", "name": f"Q (recon) {subdir}", "source_path": rel})
         latent_fig = os.path.join(recon_dir, "latent_distribution.png")
         if os.path.isfile(latent_fig):
-            rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", "latent_distribution.png")
+            rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", "latent_distribution.png")
             blocks.append({"type": "latent_distribution", "name": "Latent distribution (Q)", "source_path": rel})
         else:
             for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
                 subdir_path = os.path.join(recon_dir, subdir)
                 latent_sub = os.path.join(subdir_path, "latent_distribution.png")
                 if os.path.isfile(latent_sub):
-                    rel = os.path.join(_ANALYSIS_MIN_RMSD_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_distribution.png")
+                    rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_distribution.png")
                     blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Q) {subdir}", "source_path": rel})
     return blocks
 
@@ -256,10 +265,18 @@ def _block_asset_slug(block: dict, run_id: str) -> str:
         return f"gen_variance_{var}"
     if t == "training_video":
         return "training_video"
-    if t == "min_rmsd":
+    # rmsd_gen / rmsd_recon: stable slug from source_path so asset names don't depend on display name
+    if t == "rmsd_gen":
         run_name = source.split(os.sep)[-2] if os.sep in source else "default"
         safe = re.sub(r"[^\w.-]", "_", run_name)
-        return f"min_rmsd_{safe}"
+        return f"rmsd__gen__{safe}"
+    if t == "rmsd_recon":
+        if source.endswith(_RMSD_FIG):
+            parts = source.replace("\\", "/").split("/")
+            if len(parts) >= 2 and parts[-2] != "recon":
+                sub = re.sub(r"[^\w.-]", "_", parts[-2])
+                return f"rmsd__recon__{sub}"
+        return "rmsd__recon_"
     return re.sub(r"[^\w.-]", "_", name.lower().replace(" ", "_"))
 
 
@@ -607,7 +624,7 @@ def _html_content(manifest: dict) -> str:
     }
 
     function blockTypeOrder(type) {
-      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'min_rmsd', 'q_gen', 'q_recon', 'latent_distribution'];
+      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon', 'latent_distribution'];
       const i = order.indexOf(type);
       return i >= 0 ? i : order.length;
     }

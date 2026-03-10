@@ -171,7 +171,7 @@ class AnalysisMetricSpec:
     build_gen_plot_cfg: Callable[[dict, int], dict]
     build_recon_plot_cfg: Callable[[dict, int], dict]
     precomputed_kwargs: Callable[[Any, Any, Any], dict]  # (tt, train_coords, test_coords) -> kwargs for run_* and run_recon
-    gen_extra_kwargs: Callable[[dict], dict]   # e.g. {"delta": ...} for q; {} for min_rmsd
+    gen_extra_kwargs: Callable[[dict], dict]   # e.g. {"delta": ...} for q; {} for rmsd
     recon_extra_kwargs: Callable[[dict], dict]
 
 

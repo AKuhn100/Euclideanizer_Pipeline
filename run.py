@@ -112,7 +112,7 @@ def _style_code_for_line(line: str) -> str:
         return "\033[33m"
     if "saved:" in low or "video saved" in low or "finished" in low or "complete" in low:
         return "\033[32m"
-    if "assembling" in low or "epoch" in low or "loaded" in low or "generated" in low or "min-rmsd" in low or "min rmsd" in low:
+    if "assembling" in low or "epoch" in low or "loaded" in low or "generated" in low or "rmsd" in low:
         return "\033[36m"
     return "\033[2m"
 

@@ -1,7 +1,7 @@
 """
-Min-RMSD distributions: integrate into pipeline for each Euclideanizer run.
+RMSD distributions: integrate into pipeline for each Euclideanizer run.
 Uses Kabsch alignment; computes test→train, gen→train, gen→test min-RMSD and saves a figure.
-Output under analysis/rmsd/; figure content keeps "min RMSD to training set" where relevant.
+Output under analysis/rmsd/; figure axis labels describe the metric (e.g. min RMSD to training set).
 """
 from __future__ import annotations
 
@@ -223,7 +223,7 @@ def run_min_rmsd_analysis(
     _v = plot_cfg["rmsd_sample_variance"]
     variance = sample_variance if sample_variance is not None else (_v[0] if isinstance(_v, list) else _v)
     batch_size = query_batch_size if query_batch_size is not None else plot_cfg["rmsd_query_batch_size"]
-    print(f"  Min-RMSD: n_gen={n_gen}, variance={variance} (test→train, gen→train, gen→test)...")
+    print(f"  RMSD: n_gen={n_gen}, variance={variance} (test→train, gen→train, gen→test)...")
 
     if precomputed_test_to_train is not None and train_coords_np is not None and test_coords_np is not None:
         test_to_train = precomputed_test_to_train
@@ -345,7 +345,7 @@ def run_min_rmsd_analysis_multi(
                 else:
                     acc_gen_coords = []
                 loaded.close()
-                print(f"  Min-RMSD: resuming from n={n} (loaded {loaded_n} samples), generating remaining...")
+                print(f"  RMSD: resuming from n={n} (loaded {loaded_n} samples), generating remaining...")
             except Exception:
                 pass
             break
@@ -379,7 +379,7 @@ def run_min_rmsd_analysis_multi(
 
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
         run_dir_this = os.path.join(run_dir, "analysis", "rmsd", "gen", run_name)
-        print(f"  Min-RMSD: n={n}, variance={sample_variance} (merged from {len(acc_gen_to_train)} chunk(s))...")
+        print(f"  RMSD: n={n}, variance={sample_variance} (merged from {len(acc_gen_to_train)} chunk(s))...")
         path = _run_one_min_rmsd(
             run_dir_this, test_to_train, gen_to_train, gen_to_test,
             gen_coords_np if save_structures_gro else None,
@@ -488,7 +488,7 @@ def run_min_rmsd_recon_analysis(
     train_recon_coords_np = train_recon_coords_np[:n_train]
     test_coords_np = test_coords_np[:n_test]
     test_recon_coords_np = test_recon_coords_np[:n_test]
-    print(f"  Min-RMSD recon: train {n_train}, test {n_test} (test→train + recon RMSD)...")
+    print(f"  RMSD recon: train {n_train}, test {n_test} (test→train + recon RMSD)...")
     train_recon_rmsd = _recon_rmsd_one_to_one(train_coords_np, train_recon_coords_np)
     test_recon_rmsd = _recon_rmsd_one_to_one(test_coords_np, test_recon_coords_np)
     return _run_one_min_rmsd_recon(
