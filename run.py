@@ -962,8 +962,8 @@ def _ensure_list(val):
     return val if isinstance(val, list) else [val]
 
 
-def _analysis_cfg_from_legacy_kwargs(kw: dict) -> dict:
-    """Build analysis_cfg dict from legacy do_rmsd/do_q and per-metric list kwargs for presence checks."""
+def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
+    """Build analysis_cfg dict from flattened do_rmsd/do_q and per-metric list kwargs for presence checks."""
     cfg = {}
     if kw.get("do_rmsd") or kw.get("do_rmsd_recon"):
         cfg["rmsd_gen"] = {
@@ -1060,7 +1060,7 @@ def _euclideanizer_analysis_all_present(
     if not resume:
         return True
     if analysis_cfg is None:
-        analysis_cfg = _analysis_cfg_from_legacy_kwargs({
+        analysis_cfg = _analysis_cfg_from_need_data_kwargs({
             "do_rmsd": do_rmsd,
             "variance_list": variance_list or [],
             "num_samples_list": num_samples_list or [],
@@ -1226,7 +1226,7 @@ def _pipeline_data_needs(
     need_coords = False
     need_exp_stats = False
     need_train_test_stats = False
-    _analysis_cfg = _analysis_cfg_from_legacy_kwargs({
+    _analysis_cfg = _analysis_cfg_from_need_data_kwargs({
         "do_rmsd": do_rmsd,
         "variance_list": variance_list,
         "num_samples_list": num_samples_list,
@@ -1957,8 +1957,8 @@ def _run_one_distmap_group(
                                     _ref_mt = analysis_cfg.get("rmsd_max_train")
                                     _ref_mc = analysis_cfg.get("rmsd_max_test")
                                 elif spec.id == "q":
-                                    _ref_mt = analysis_cfg.get("q_max_train") or gen_cfg.get("max_train")
-                                    _ref_mc = analysis_cfg.get("q_max_test") or gen_cfg.get("max_test")
+                                    _ref_mt = analysis_cfg.get("q_max_train")
+                                    _ref_mc = analysis_cfg.get("q_max_test")
                                 else:
                                     _ref_mt = analysis_cfg.get("clustering_max_train")
                                     _ref_mc = analysis_cfg.get("clustering_max_test")
@@ -2658,8 +2658,8 @@ def main():
     if not isinstance(max_recon_test_list, list):
         max_recon_test_list = [max_recon_test_list]
 
-    q_max_train = (analysis_cfg.get("q_max_train") or (analysis_cfg.get("q_gen") or {}).get("max_train")) if do_q else None
-    q_max_test = (analysis_cfg.get("q_max_test") or (analysis_cfg.get("q_gen") or {}).get("max_test")) if do_q else None
+    q_max_train = analysis_cfg.get("q_max_train") if do_q else None
+    q_max_test = analysis_cfg.get("q_max_test") if do_q else None
     q_num_samples_list = analysis_cfg["q_gen"]["num_samples"] if do_q else []
     if not isinstance(q_num_samples_list, list):
         q_num_samples_list = [q_num_samples_list]

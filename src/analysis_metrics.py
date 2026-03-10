@@ -73,8 +73,8 @@ def _rmsd_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
 
 
 def _q_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
-    mt = max_train if max_train is not None else analysis_cfg.get("q_max_train") or (analysis_cfg.get("q_gen") or {}).get("max_train")
-    mc = max_test if max_test is not None else analysis_cfg.get("q_max_test") or (analysis_cfg.get("q_gen") or {}).get("max_test")
+    mt = max_train if max_train is not None else analysis_cfg.get("q_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("q_max_test")
     if mt is None and mc is None:
         return "q_test_to_train_500_200.npz"
     return f"q_test_to_train_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
@@ -83,8 +83,8 @@ def _q_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test
 def _q_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
     gen = analysis_cfg.get("q_gen") or {}
     recon = analysis_cfg.get("q_recon") or {}
-    mt = max_train if max_train is not None else analysis_cfg.get("q_max_train") or gen.get("max_train")
-    mc = max_test if max_test is not None else analysis_cfg.get("q_max_test") or gen.get("max_test")
+    mt = max_train if max_train is not None else analysis_cfg.get("q_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("q_max_test")
     return {
         "max_train": mt if mt is not None else 500,
         "max_test": mc if mc is not None else 200,
