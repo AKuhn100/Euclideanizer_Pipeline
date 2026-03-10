@@ -74,10 +74,13 @@ def get_or_compute_test_to_train_rmsd(
     cache_path: str,
     query_batch_size: int = 128,
     display_root: str | None = None,
+    max_train: int | None = None,
+    max_test: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load test→train min-RMSD (and train/test coords) from seed-level cache, or compute and save.
     Same for all analyses in the seed (same split). Returns (test_to_train, train_coords_np, test_coords_np).
+    max_train/max_test cap the reference set sizes (None = use all).
 
     The seed-level cache is always written when computed (independent of the analysis block's save_data).
     Per-run outputs (rmsd_data.npz, rmsd_recon_data.npz) are still gated by save_data.
@@ -104,6 +107,11 @@ def get_or_compute_test_to_train_rmsd(
         tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
     train_coords_np = coords_np[tr_idx]
     test_coords_np = coords_np[te_idx]
+    # Truncate to reference set size; slice uses at most available (no error if max_* > len)
+    if max_train is not None:
+        train_coords_np = train_coords_np[:max_train]
+    if max_test is not None:
+        test_coords_np = test_coords_np[:max_test]
     test_to_train = min_rmsd_batch(
         test_coords_np, train_coords_np, query_batch_size=query_batch_size, desc="Test → Train (min RMSD)"
     )

@@ -354,6 +354,91 @@ def _delete_dashboard(base_output_dir: str) -> None:
         shutil.rmtree(dashboard_dir, ignore_errors=True)
 
 
+def _reference_size_config(cfg: dict) -> dict:
+    """Extract reference-size keys for comparison. Used to detect when max_train/max_test (or equivalent) change."""
+    plot = cfg.get("plotting") or {}
+    ana = cfg.get("analysis") or {}
+    return {
+        "plotting": (plot.get("max_train"), plot.get("max_test")),
+        "rmsd": (ana.get("rmsd_max_train"), ana.get("rmsd_max_test")),
+        "q": (ana.get("q_max_train"), ana.get("q_max_test")),
+        "clustering": (ana.get("clustering_max_train"), ana.get("clustering_max_test")),
+    }
+
+
+def _reference_size_changed(saved_ref: dict, current_ref: dict) -> set:
+    """Return set of component names ('plotting', 'rmsd', 'q', 'clustering') whose reference-size config differs."""
+    out = set()
+    for key in ("plotting", "rmsd", "q", "clustering"):
+        if saved_ref.get(key) != current_ref.get(key):
+            out.add(key)
+    return out
+
+
+def _delete_reference_size_caches(base_output_dir: str, seeds: list, components: set) -> None:
+    """Remove cached data that depends on reference sizes so it can be recomputed. components: 'plotting', 'rmsd', 'q', 'clustering'."""
+    import glob as _glob
+    for seed in seeds:
+        seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+        cache_dir = os.path.join(seed_dir, EXP_STATS_CACHE_DIR)
+        if not os.path.isdir(cache_dir):
+            continue
+        if "plotting" in components:
+            for name in (EXP_STATS_SPLIT_META, EXP_STATS_TRAIN_NPZ, EXP_STATS_TEST_NPZ):
+                path = os.path.join(cache_dir, name)
+                if os.path.isfile(path):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+        if "rmsd" in components:
+            for path in _glob.glob(os.path.join(cache_dir, "test_to_train_rmsd*.npz")):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        if "q" in components:
+            for path in _glob.glob(os.path.join(cache_dir, "q_test_to_train_*.npz")):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        if "clustering" in components:
+            for path in _glob.glob(os.path.join(cache_dir, "clustering_train_test_feats_*.npz")):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+def _confirm_reference_size_cache_purge(components: set) -> None:
+    """Prompt user to confirm removal of cached data when reference-size config changed. Else abort."""
+    labels = sorted(components)
+    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "clustering": "Clustering (train/test feats)"}
+    line = "=" * 70
+    print()
+    print(_red(line))
+    print(_red("  REFERENCE SIZE CONFIG CHANGED  "))
+    print(_red(line))
+    print(_red("  max_train / max_test (or equivalent) differ from the saved config for:"))
+    for c in labels:
+        print(_red(f"    - {names.get(c, c)}"))
+    print(_red("  Cached data for these will be REMOVED so it can be recomputed with the new values."))
+    print(_red(""))
+    print(_red(f"  To CONFIRM: type exactly  {OVERWRITE_CONFIRM_PHRASE!r}  and press Enter."))
+    print(_red("  To ABORT:   type anything else, or press Ctrl+C."))
+    print(_red(line))
+    print()
+    try:
+        reply = input(_red("> ")).strip()
+    except (EOFError, KeyboardInterrupt):
+        print(_red("Aborted."))
+        sys.exit(1)
+    if reply.lower() != OVERWRITE_CONFIRM_PHRASE.lower():
+        print(_red("Aborted."))
+        sys.exit(1)
+
+
 def _delete_plotting_outputs_only(base_output_dir: str, seeds: list) -> None:
     """Remove all plots/ under base_output_dir for the given seeds (no analysis dirs, no dashboard)."""
     for seed in seeds:
@@ -542,10 +627,12 @@ def _try_load_stats_only(
     data_path: str,
     seeds: list,
     training_split: float,
+    max_train: int | None = None,
+    max_test: int | None = None,
 ) -> tuple[dict | None, int | None, int | None]:
     """
     Load exp_stats and train/test caches without loading coords.
-    Requires base cache meta to match data_path and all seeds to have valid train/test cache.
+    Requires base cache meta to match data_path and all seeds to have valid train/test cache (matching max_train/max_test).
     Returns (exp_stats, num_atoms, num_structures) or (None, None, None) if stats-only load is not possible.
     """
     meta = _load_exp_stats_cache_meta(base_output_dir, data_path)
@@ -565,7 +652,8 @@ def _try_load_stats_only(
     for seed in seeds:
         output_dir = os.path.join(base_output_dir, f"seed_{seed}")
         train_s, test_s = _load_exp_stats_split_cache(
-            output_dir, data_path, num_structures, num_atoms, seed, training_split
+            output_dir, data_path, num_structures, num_atoms, seed, training_split,
+            max_train=max_train, max_test=max_test,
         )
         if train_s is None or test_s is None:
             return None, None, None
@@ -595,8 +683,11 @@ def _load_exp_stats_split_cache(
     num_atoms: int,
     split_seed: int,
     training_split: float,
+    max_train: int | None = None,
+    max_test: int | None = None,
 ) -> tuple[dict | None, dict | None]:
-    """Load train and test exp stats from seed output_dir if cache valid. Returns (train_stats, test_stats) or (None, None)."""
+    """Load train and test exp stats from seed output_dir if cache valid. Returns (train_stats, test_stats) or (None, None).
+    max_train/max_test must match cached meta (None = use all)."""
     cache_dir = _exp_stats_cache_dir(output_dir)
     meta_path = os.path.join(cache_dir, EXP_STATS_SPLIT_META)
     train_path = os.path.join(cache_dir, EXP_STATS_TRAIN_NPZ)
@@ -611,6 +702,10 @@ def _load_exp_stats_split_cache(
         if meta.get("num_structures") != num_structures or meta.get("num_atoms") != num_atoms:
             return None, None
         if meta.get("split_seed") != split_seed or meta.get("training_split") != training_split:
+            return None, None
+        cached_mt = meta.get("max_train")
+        cached_mc = meta.get("max_test")
+        if cached_mt != max_train or cached_mc != max_test:
             return None, None
         with np.load(train_path, allow_pickle=False) as data:
             train_stats = {k: data[k] for k in data.files}
@@ -630,8 +725,10 @@ def _save_exp_stats_split_cache(
     training_split: float,
     train_stats: dict,
     test_stats: dict,
+    max_train: int | None = None,
+    max_test: int | None = None,
 ) -> None:
-    """Write per-seed train/test experimental statistics to cache."""
+    """Write per-seed train/test experimental statistics to cache. max_train/max_test stored in meta (None = use all)."""
     cache_dir = _exp_stats_cache_dir(output_dir)
     os.makedirs(cache_dir, exist_ok=True)
     meta_path = os.path.join(cache_dir, EXP_STATS_SPLIT_META)
@@ -641,6 +738,8 @@ def _save_exp_stats_split_cache(
         "num_atoms": num_atoms,
         "split_seed": split_seed,
         "training_split": training_split,
+        "max_train": max_train,
+        "max_test": max_test,
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
@@ -1854,18 +1953,28 @@ def _run_one_distmap_group(
                                 if not isinstance(_max_recon_test_list, list):
                                     _max_recon_test_list = [_max_recon_test_list]
                                 _visualize_latent = recon_cfg.get("visualize_latent", False)
-                                _gen_max_train = gen_cfg.get("max_train")
-                                _gen_max_test = gen_cfg.get("max_test")
+                                if spec.id == "rmsd":
+                                    _ref_mt = analysis_cfg.get("rmsd_max_train")
+                                    _ref_mc = analysis_cfg.get("rmsd_max_test")
+                                elif spec.id == "q":
+                                    _ref_mt = analysis_cfg.get("q_max_train") or gen_cfg.get("max_train")
+                                    _ref_mc = analysis_cfg.get("q_max_test") or gen_cfg.get("max_test")
+                                else:
+                                    _ref_mt = analysis_cfg.get("clustering_max_train")
+                                    _ref_mc = analysis_cfg.get("clustering_max_test")
 
                                 def _get_or_compute_cached(mt, mc):
                                     if spec.id == "rmsd":
                                         if _cache.get("rmsd") is None:
-                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, None, None))
-                                            _cache["rmsd"] = spec.get_or_compute_test_to_train(
+                                            _cache["rmsd"] = {}
+                                        key = (mt, mc)
+                                        if key not in _cache["rmsd"]:
+                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                                            _cache["rmsd"][key] = spec.get_or_compute_test_to_train(
                                                 _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
-                                                **spec.kwargs_for_cache(analysis_cfg, None, None),
+                                                **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                             )
-                                        return _cache["rmsd"]
+                                        return _cache["rmsd"][key]
                                     if spec.id == "q":
                                         if _cache.get("q") is None:
                                             _cache["q"] = {}
@@ -1879,19 +1988,22 @@ def _run_one_distmap_group(
                                         return _cache["q"][key]
                                     assert spec.id == "clustering"
                                     if _cache.get("clustering") is None:
-                                        _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, None, None))
-                                        _cache["clustering"] = spec.get_or_compute_test_to_train(
+                                        _cache["clustering"] = {}
+                                    key = (mt, mc)
+                                    if key not in _cache["clustering"]:
+                                        _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                                        _cache["clustering"][key] = spec.get_or_compute_test_to_train(
                                             _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
-                                            **spec.kwargs_for_cache(analysis_cfg, None, None),
+                                            **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                         )
-                                    return _cache["clustering"]
+                                    return _cache["clustering"][key]
 
                                 if do_gen:
-                                    _mt_gen = _gen_max_train if spec.id == "q" else None
-                                    _mc_gen = _gen_max_test if spec.id == "q" else None
+                                    _mt_gen = _ref_mt if spec.id == "q" else None
+                                    _mc_gen = _ref_mc if spec.id == "q" else None
                                     if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
                                         continue
-                                    _tt, _train_c, _test_c = _get_or_compute_cached(_mt_gen if spec.id == "q" else None, _mc_gen if spec.id == "q" else None)
+                                    _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
                                     plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg, plot_dpi)
                                     pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                                     extra_kw = spec.gen_extra_kwargs(analysis_cfg)
@@ -1939,7 +2051,7 @@ def _run_one_distmap_group(
                                     recon_extra = spec.recon_extra_kwargs(analysis_cfg)
                                     for max_recon_train in _max_recon_train_list:
                                         for max_recon_test in _max_recon_test_list:
-                                            _tt, _train_c, _test_c = _get_or_compute_cached(max_recon_train, max_recon_test)
+                                            _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
                                             if n_recon == 1:
                                                 recon_subdir = ""
                                                 recon_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{spec.figure_filename}")
@@ -2027,6 +2139,8 @@ def _run_one_seed(
     vis_enabled: bool,
     vis_cfg: dict,
     plot_cfg: dict,
+    plot_max_train: int | None = None,
+    plot_max_test: int | None = None,
     do_q: bool = False,
     do_q_recon: bool = False,
     q_max_train: int | None = None,
@@ -2058,19 +2172,26 @@ def _run_one_seed(
     train_stats = test_stats = None
     if data_path and (do_plot or do_rmsd or do_q or do_q_recon) and (coords is not None or (num_structures is not None and num_atoms is not None)):
         train_stats, test_stats = _load_exp_stats_split_cache(
-            output_dir, data_path, num_structures, num_atoms, split_seed, training_split
+            output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
+            max_train=plot_max_train, max_test=plot_max_test,
         )
         if train_stats is None or test_stats is None:
             if coords is not None:
                 train_ds, test_ds = utils.get_train_test_split(coords, training_split, split_seed)
                 train_indices = np.array(train_ds.indices)
                 test_indices = np.array(test_ds.indices)
+                # Cap to available structures (slice uses at most len(indices))
+                if plot_max_train is not None:
+                    train_indices = train_indices[: plot_max_train]
+                if plot_max_test is not None:
+                    test_indices = test_indices[: plot_max_test]
                 _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
                 train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
                 test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
                     train_stats, test_stats,
+                    max_train=plot_max_train, max_test=plot_max_test,
                 )
             else:
                 _log("Train/test statistics not in cache (stats-only run); skipping recon_statistics/gen_variance for this seed.", since_start=time.time() - pipeline_start, style="skip")
@@ -2173,9 +2294,12 @@ def _worker(
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             train_stats = test_stats = None
             if data_path and (shared_args["do_plot"] or shared_args["do_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
+                plot_mt = shared_args.get("plot_max_train")
+                plot_mc = shared_args.get("plot_max_test")
                 train_stats, test_stats = _load_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms,
                     seed, shared_args["training_split"],
+                    max_train=plot_mt, max_test=plot_mc,
                 )
                 if train_stats is None or test_stats is None:
                     train_ds, test_ds = utils.get_train_test_split(
@@ -2183,6 +2307,10 @@ def _worker(
                     )
                     train_indices = np.array(train_ds.indices)
                     test_indices = np.array(test_ds.indices)
+                    if plot_mt is not None:
+                        train_indices = train_indices[: plot_mt]
+                    if plot_mc is not None:
+                        test_indices = test_indices[: plot_mc]
                     train_stats = compute_exp_statistics(
                         coords_np, device, utils.get_distmaps, indices=train_indices
                     )
@@ -2193,6 +2321,7 @@ def _worker(
                         output_dir, data_path, num_structures, num_atoms,
                         seed, shared_args["training_split"],
                         train_stats, test_stats,
+                        max_train=plot_mt, max_test=plot_mc,
                     )
             seed_test_to_train_holder = [None]
             _run_one_distmap_group(
@@ -2316,18 +2445,26 @@ def _run_multi_gpu_tasks(
         if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
             save_pipeline_config(effective_cfg, output_dir)
         if data_path and coords is not None and (do_plot or do_rmsd or do_q or do_q_recon):
+            plot_mt = plot_cfg.get("max_train")
+            plot_mc = plot_cfg.get("max_test")
             train_stats, test_stats = _load_exp_stats_split_cache(
-                output_dir, data_path, num_structures, num_atoms, seed, training_split
+                output_dir, data_path, num_structures, num_atoms, seed, training_split,
+                max_train=plot_mt, max_test=plot_mc,
             )
             if train_stats is None or test_stats is None:
                 train_ds, test_ds = utils.get_train_test_split(coords.cpu(), training_split, seed)
                 train_indices = np.array(train_ds.indices)
                 test_indices = np.array(test_ds.indices)
+                if plot_mt is not None:
+                    train_indices = train_indices[: plot_mt]
+                if plot_mc is not None:
+                    test_indices = test_indices[: plot_mc]
                 train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
                 test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms,
                     seed, training_split, train_stats, test_stats,
+                    max_train=plot_mt, max_test=plot_mc,
                 )
     # Round-robin task assignment
     tasks_by_device = [list() for _ in range(n_gpus)]
@@ -2370,6 +2507,8 @@ def _run_multi_gpu_tasks(
         "vis_enabled": vis_enabled,
         "vis_cfg": vis_cfg,
         "plot_cfg": plot_cfg,
+        "plot_max_train": plot_cfg.get("max_train"),
+        "plot_max_test": plot_cfg.get("max_test"),
         "do_q": do_q,
         "do_q_recon": do_q_recon,
         "q_max_train": q_max_train,
@@ -2519,8 +2658,8 @@ def main():
     if not isinstance(max_recon_test_list, list):
         max_recon_test_list = [max_recon_test_list]
 
-    q_max_train = analysis_cfg["q_gen"]["max_train"] if do_q else None
-    q_max_test = analysis_cfg["q_gen"]["max_test"] if do_q else None
+    q_max_train = (analysis_cfg.get("q_max_train") or (analysis_cfg.get("q_gen") or {}).get("max_train")) if do_q else None
+    q_max_test = (analysis_cfg.get("q_max_test") or (analysis_cfg.get("q_gen") or {}).get("max_test")) if do_q else None
     q_num_samples_list = analysis_cfg["q_gen"]["num_samples"] if do_q else []
     if not isinstance(q_num_samples_list, list):
         q_num_samples_list = [q_num_samples_list]
@@ -2597,6 +2736,7 @@ def main():
 
     if need_train and resume and data_path:
         chunks_to_update = set()
+        saved_compare_for_ref = None
         for seed in seeds:
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             if os.path.isdir(output_dir):
@@ -2609,6 +2749,8 @@ def main():
                 saved_cfg = load_pipeline_config(output_dir)
                 saved_compare = _cfg_for_compare(saved_cfg) if saved_cfg else None
                 effective_compare = _cfg_for_compare(effective_cfg)
+                if saved_compare_for_ref is None:
+                    saved_compare_for_ref = saved_compare
                 if saved_compare is None:
                     raise RuntimeError(
                         f"Resume is enabled but pipeline config in {output_dir!r} could not be loaded. "
@@ -2648,6 +2790,30 @@ def main():
         chunks_to_update = sorted(chunks_to_update)  # stable order: rmsd_gen, rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
             chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
+        # Reference-size change: if max_train/max_test (or equivalent) changed and we'll run that component, purge caches (with approval) so data is recomputed
+        if saved_compare_for_ref is not None:
+            saved_ref = _reference_size_config(saved_compare_for_ref)
+            current_ref = _reference_size_config(_cfg_for_compare(cfg))
+            ref_changed = _reference_size_changed(saved_ref, current_ref)
+            purge_ref = set()
+            if "plotting" in ref_changed and do_plot:
+                purge_ref.add("plotting")
+            if "rmsd" in ref_changed and do_rmsd:
+                purge_ref.add("rmsd")
+            if "q" in ref_changed and do_q:
+                purge_ref.add("q")
+            if "clustering" in ref_changed and (do_clustering_gen or do_clustering_recon_cfg):
+                purge_ref.add("clustering")
+            if purge_ref:
+                if not getattr(args, "yes_overwrite", False):
+                    _confirm_reference_size_cache_purge(purge_ref)
+                _log(
+                    "Removing cached data (reference size changed): " + ", ".join(sorted(purge_ref)),
+                    since_start=time.time() - pipeline_start,
+                    style="info",
+                )
+                _delete_reference_size_caches(base_output_dir, seeds, purge_ref)
+                _delete_dashboard(base_output_dir)
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
         # Only prompt and delete for chunks that actually have existing outputs
@@ -2677,6 +2843,41 @@ def main():
                     )
             _log("Saved updated pipeline config; will skip training and re-run affected plotting/analysis.", since_start=time.time() - pipeline_start, style="success")
             need_train = False  # Skip training when only plotting/analysis config changed
+
+    # Reference-size purge when resume but we did not load saved config above (e.g. plotting/analysis-only run)
+    if (
+        resume
+        and data_path
+        and seeds
+        and not need_train
+        and (do_plot or do_rmsd or do_q or do_clustering_gen or do_clustering_recon_cfg)
+    ):
+        first_seed_dir = os.path.join(base_output_dir, f"seed_{seeds[0]}")
+        if os.path.isdir(first_seed_dir) and os.path.isfile(pipeline_config_path(first_seed_dir)):
+            saved_cfg_ref = load_pipeline_config(first_seed_dir)
+            if saved_cfg_ref is not None:
+                saved_ref = _reference_size_config(_cfg_for_compare(saved_cfg_ref))
+                current_ref = _reference_size_config(_cfg_for_compare(cfg))
+                ref_changed = _reference_size_changed(saved_ref, current_ref)
+                purge_ref = set()
+                if "plotting" in ref_changed and do_plot:
+                    purge_ref.add("plotting")
+                if "rmsd" in ref_changed and do_rmsd:
+                    purge_ref.add("rmsd")
+                if "q" in ref_changed and do_q:
+                    purge_ref.add("q")
+                if "clustering" in ref_changed and (do_clustering_gen or do_clustering_recon_cfg):
+                    purge_ref.add("clustering")
+                if purge_ref:
+                    if not getattr(args, "yes_overwrite", False):
+                        _confirm_reference_size_cache_purge(purge_ref)
+                    _log(
+                        "Removing cached data (reference size changed): " + ", ".join(sorted(purge_ref)),
+                        since_start=time.time() - pipeline_start,
+                        style="info",
+                    )
+                    _delete_reference_size_caches(base_output_dir, seeds, purge_ref)
+                    _delete_dashboard(base_output_dir)
 
     # Decide what to load from pipeline segments (resume) or from flags (no resume)
     if not resume or not data_path:
@@ -2712,7 +2913,10 @@ def main():
 
     stats_only_ok = False
     if need_any and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):
-        exp_st, num_at, num_stru = _try_load_stats_only(base_output_dir, data_path, seeds, training_split)
+        exp_st, num_at, num_stru = _try_load_stats_only(
+            base_output_dir, data_path, seeds, training_split,
+            max_train=plot_cfg.get("max_train"), max_test=plot_cfg.get("max_test"),
+        )
         if exp_st is not None:
             stats_only_ok = True
             phase_start = time.time()
@@ -2823,20 +3027,28 @@ def main():
 
     # Multi-GPU: ensure per-seed train/test stats caches exist, then free main-process data so only workers hold copies (reduces memory use).
     if use_multi_gpu and data_path and coords is not None and (do_plot or do_rmsd or do_q or do_q_recon_cfg):
+        plot_mt = plot_cfg.get("max_train")
+        plot_mc = plot_cfg.get("max_test")
         for seed in seeds:
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             train_stats, test_stats = _load_exp_stats_split_cache(
-                output_dir, data_path, num_structures, num_atoms, seed, training_split
+                output_dir, data_path, num_structures, num_atoms, seed, training_split,
+                max_train=plot_mt, max_test=plot_mc,
             )
             if train_stats is None or test_stats is None:
                 train_ds, test_ds = utils.get_train_test_split(coords, training_split, seed)
                 train_indices = np.array(train_ds.indices)
                 test_indices = np.array(test_ds.indices)
+                if plot_mt is not None:
+                    train_indices = train_indices[: plot_mt]
+                if plot_mc is not None:
+                    test_indices = test_indices[: plot_mc]
                 train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
                 test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms, seed, training_split,
                     train_stats, test_stats,
+                    max_train=plot_mt, max_test=plot_mc,
                 )
         _log("Freed main-process data before spawning workers (multi-GPU).", since_start=time.time() - pipeline_start, style="info")
         coords_np = coords = exp_stats = None
@@ -2887,6 +3099,8 @@ def main():
             vis_enabled=vis_enabled,
             vis_cfg=vis_cfg,
             plot_cfg=plot_cfg,
+            plot_max_train=plot_cfg.get("max_train"),
+            plot_max_test=plot_cfg.get("max_test"),
             do_q=do_q,
             do_q_recon=do_q_recon_cfg,
             q_max_train=q_max_train,

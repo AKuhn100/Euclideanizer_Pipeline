@@ -13,12 +13,23 @@ from . import clustering
 
 
 def _rmsd_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
-    return "test_to_train_rmsd.npz"
+    mt = max_train if max_train is not None else analysis_cfg.get("rmsd_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("rmsd_max_test")
+    if mt is None and mc is None:
+        return "test_to_train_rmsd.npz"
+    return f"test_to_train_rmsd_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
 
 
 def _rmsd_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
     gen = analysis_cfg.get("rmsd_gen") or {}
-    return {"query_batch_size": gen.get("query_batch_size", 128)}
+    mt = max_train if max_train is not None else analysis_cfg.get("rmsd_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("rmsd_max_test")
+    out = {"query_batch_size": gen.get("query_batch_size", 128)}
+    if mt is not None:
+        out["max_train"] = mt
+    if mc is not None:
+        out["max_test"] = mc
+    return out
 
 
 def _rmsd_get_or_compute(
@@ -34,6 +45,8 @@ def _rmsd_get_or_compute(
         coords_np, coords_tensor, training_split, split_seed, cache_path,
         query_batch_size=kwargs.get("query_batch_size", 128),
         display_root=display_root,
+        max_train=kwargs.get("max_train"),
+        max_test=kwargs.get("max_test"),
     )
 
 
@@ -60,30 +73,22 @@ def _rmsd_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
 
 
 def _q_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
-    if max_train is not None and max_test is not None:
-        return f"q_test_to_train_{max_train}_{max_test}.npz"
-    gen = analysis_cfg.get("q_gen") or {}
-    mt = gen.get("max_train")
-    mc = gen.get("max_test")
-    if mt is not None and mc is not None:
-        return f"q_test_to_train_{mt}_{mc}.npz"
-    return "q_test_to_train_500_200.npz"
+    mt = max_train if max_train is not None else analysis_cfg.get("q_max_train") or (analysis_cfg.get("q_gen") or {}).get("max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("q_max_test") or (analysis_cfg.get("q_gen") or {}).get("max_test")
+    if mt is None and mc is None:
+        return "q_test_to_train_500_200.npz"
+    return f"q_test_to_train_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
 
 
 def _q_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
     gen = analysis_cfg.get("q_gen") or {}
     recon = analysis_cfg.get("q_recon") or {}
-    if max_train is not None and max_test is not None:
-        return {
-            "max_train": max_train,
-            "max_test": max_test,
-            "delta": recon.get("delta", q_analysis.DEFAULT_DELTA),
-            "query_batch_size": gen.get("query_batch_size", 64),
-        }
+    mt = max_train if max_train is not None else analysis_cfg.get("q_max_train") or gen.get("max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("q_max_test") or gen.get("max_test")
     return {
-        "max_train": gen.get("max_train", 500),
-        "max_test": gen.get("max_test", 200),
-        "delta": gen.get("delta", q_analysis.DEFAULT_DELTA),
+        "max_train": mt if mt is not None else 500,
+        "max_test": mc if mc is not None else 200,
+        "delta": recon.get("delta", gen.get("delta", q_analysis.DEFAULT_DELTA)),
         "query_batch_size": gen.get("query_batch_size", 64),
     }
 
@@ -158,16 +163,27 @@ def _q_precomputed_kwargs(tt, train_c, test_c):
 def _clustering_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
     gen = analysis_cfg.get("clustering_gen") or {}
     n = gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE)
-    return f"clustering_train_test_feats_n{n}.npz"
+    mt = max_train if max_train is not None else analysis_cfg.get("clustering_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("clustering_max_test")
+    if mt is None and mc is None:
+        return f"clustering_train_test_feats_n{n}.npz"
+    return f"clustering_train_test_feats_n{n}_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
 
 
 def _clustering_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
     gen = analysis_cfg.get("clustering_gen") or {}
-    return {
+    mt = max_train if max_train is not None else analysis_cfg.get("clustering_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("clustering_max_test")
+    out = {
         "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
         "batch_size": gen.get("feats_batch_size", gen.get("query_batch_size", 64)),
         "fps_seed": clustering.FPS_SEED,
     }
+    if mt is not None:
+        out["max_train"] = mt
+    if mc is not None:
+        out["max_test"] = mc
+    return out
 
 
 def _clustering_get_or_compute(
@@ -185,6 +201,8 @@ def _clustering_get_or_compute(
         batch_size=kwargs.get("batch_size", 64),
         fps_seed=kwargs.get("fps_seed", clustering.FPS_SEED),
         display_root=display_root,
+        max_train=kwargs.get("max_train"),
+        max_test=kwargs.get("max_test"),
     )
 
 

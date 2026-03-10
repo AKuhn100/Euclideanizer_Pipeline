@@ -152,10 +152,13 @@ def get_or_compute_clustering_feats(
     batch_size: int = 64,
     fps_seed: int = FPS_SEED,
     display_root: str | None = None,
+    max_train: int | None = None,
+    max_test: int | None = None,
 ) -> tuple[str, np.ndarray, np.ndarray]:
     """
     Load or compute train/test subsampled feats; save to cache_path. Returns (cache_path, train_coords_np, test_coords_np).
     Cache stores train_feats, test_feats (FPS-subsampled to n_subsample) for reuse by gen and recon.
+    max_train/max_test cap the reference set sizes (None = use all).
     """
     if os.path.isfile(cache_path):
         try:
@@ -171,6 +174,10 @@ def get_or_compute_clustering_feats(
                 tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
             train_coords_np = coords_np[tr_idx]
             test_coords_np = coords_np[te_idx]
+            if max_train is not None:
+                train_coords_np = train_coords_np[:max_train]
+            if max_test is not None:
+                test_coords_np = test_coords_np[:max_test]
             if display_root is not None:
                 print(f"  Loaded seed-level clustering feats cache: {display_path(cache_path, display_root)}")
             return cache_path, train_coords_np, test_coords_np
@@ -185,6 +192,11 @@ def get_or_compute_clustering_feats(
         tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
     train_coords_np = coords_np[tr_idx]
     test_coords_np = coords_np[te_idx]
+    # Truncate to reference set size; slice uses at most available (no error if max_* > len)
+    if max_train is not None:
+        train_coords_np = train_coords_np[:max_train]
+    if max_test is not None:
+        test_coords_np = test_coords_np[:max_test]
     train_coords = torch.from_numpy(train_coords_np).float().to(device)
     test_coords = torch.from_numpy(test_coords_np).float().to(device)
     train_feats_full = _feats_from_coords(train_coords, device, num_atoms, batch_size)

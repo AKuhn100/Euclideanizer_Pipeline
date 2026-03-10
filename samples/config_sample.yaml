@@ -64,13 +64,22 @@ plotting:
   sample_variance: [1]         # list -> one plot set per value
   num_reconstruction_samples: 5
   plot_dpi: 150
+  max_train: null   # null = use all train structures for reference stats; or int to cap
+  max_test: null    # null = use all test structures for reference stats; or int to cap
   save_data: true    # if true, save NumPy .npz data for each plot (e.g. reconstruction_data.npz, loss_curves_data.npz)
   save_pdf_copy: true
   save_structures_gro: true    # if true, save generated structures for gen_variance plots (Euclideanizer only; plots/.../structures/)
 
 # Analysis: full-pipeline metrics run after plotting for each Euclideanizer.
 # Each block: enabled, overwrite_existing, then params, then save_data, save_pdf_copy, save_structures_gro (or visualize_latent).
+# Reference set sizes (shared by gen and recon): null = use all; int = cap train/test reference structures.
 analysis:
+  rmsd_max_train: null
+  rmsd_max_test: null
+  q_max_train: null
+  q_max_test: null
+  clustering_max_train: null
+  clustering_max_test: null
   rmsd_gen:
     enabled: true
     overwrite_existing: false   # if true, prompt then remove existing rmsd gen outputs before re-running
@@ -91,8 +100,6 @@ analysis:
   q_gen:
     enabled: false
     overwrite_existing: false
-    max_train: 500
-    max_test: 200
     num_samples: [500]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1

@@ -57,6 +57,13 @@ from run import (
     _dm_path_last,
     _eu_path,
     _eu_path_last,
+    _reference_size_config,
+    _reference_size_changed,
+    _delete_reference_size_caches,
+    EXP_STATS_CACHE_DIR,
+    EXP_STATS_SPLIT_META,
+    EXP_STATS_TRAIN_NPZ,
+    EXP_STATS_TEST_NPZ,
 )
 
 
@@ -812,3 +819,60 @@ def test_pipeline_need_data_false_only_when_all_runs_and_outputs_present(tmp_pat
     assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is False
+
+
+# ---------------------------------------------------------------------------
+# Reference-size config and cache purge
+# ---------------------------------------------------------------------------
+
+def test_reference_size_config_extracts_keys():
+    """_reference_size_config returns plotting and analysis reference-size keys."""
+    cfg = {
+        "plotting": {"max_train": 100, "max_test": 200},
+        "analysis": {
+            "rmsd_max_train": 500, "rmsd_max_test": 100,
+            "q_max_train": 300, "q_max_test": 50,
+            "clustering_max_train": 400, "clustering_max_test": 80,
+        },
+    }
+    ref = _reference_size_config(cfg)
+    assert ref["plotting"] == (100, 200)
+    assert ref["rmsd"] == (500, 100)
+    assert ref["q"] == (300, 50)
+    assert ref["clustering"] == (400, 80)
+
+
+def test_reference_size_changed_detects_differences():
+    """_reference_size_changed returns components whose ref config differs."""
+    saved = {"plotting": (100, 200), "rmsd": (500, 100), "q": (300, 50), "clustering": (400, 80)}
+    current = {"plotting": (100, 200), "rmsd": (500, 200), "q": (300, 50), "clustering": (400, 80)}
+    assert _reference_size_changed(saved, current) == {"rmsd"}
+    current["plotting"] = (50, 200)
+    assert _reference_size_changed(saved, current) == {"plotting", "rmsd"}
+    assert _reference_size_changed(saved, saved) == set()
+
+
+def test_delete_reference_size_caches_removes_plotting_split_files(tmp_path):
+    """_delete_reference_size_caches(plotting) removes split meta and train/test npz in each seed."""
+    base = str(tmp_path)
+    for seed in (0, 1):
+        cache_dir = os.path.join(base, f"seed_{seed}", EXP_STATS_CACHE_DIR)
+        os.makedirs(cache_dir, exist_ok=True)
+        for name in (EXP_STATS_SPLIT_META, EXP_STATS_TRAIN_NPZ, EXP_STATS_TEST_NPZ):
+            (tmp_path / f"seed_{seed}" / EXP_STATS_CACHE_DIR / name).write_bytes(b"x")
+    _delete_reference_size_caches(base, [0, 1], {"plotting"})
+    for seed in (0, 1):
+        for name in (EXP_STATS_SPLIT_META, EXP_STATS_TRAIN_NPZ, EXP_STATS_TEST_NPZ):
+            assert not os.path.isfile(os.path.join(base, f"seed_{seed}", EXP_STATS_CACHE_DIR, name))
+
+
+def test_delete_reference_size_caches_removes_rmsd_and_q_files(tmp_path):
+    """_delete_reference_size_caches(rmsd, q) removes test_to_train_rmsd*.npz and q_test_to_train_*.npz."""
+    base = str(tmp_path)
+    cache_dir = os.path.join(base, "seed_0", EXP_STATS_CACHE_DIR)
+    os.makedirs(cache_dir, exist_ok=True)
+    (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "test_to_train_rmsd.npz").write_bytes(b"x")
+    (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "q_test_to_train_500_200.npz").write_bytes(b"x")
+    _delete_reference_size_caches(base, [0], {"rmsd", "q"})
+    assert not os.path.isfile(os.path.join(cache_dir, "test_to_train_rmsd.npz"))
+    assert not os.path.isfile(os.path.join(cache_dir, "q_test_to_train_500_200.npz"))

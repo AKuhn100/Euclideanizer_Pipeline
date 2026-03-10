@@ -46,6 +46,8 @@ plotting:
   sample_variance: [1.0]
   num_reconstruction_samples: 2
   plot_dpi: 72
+  max_train: null
+  max_test: null
   save_data: false
   save_pdf_copy: false
   save_structures_gro: false
@@ -62,6 +64,12 @@ training_visualization:
   delete_frames_after_video: true
 
 analysis:
+  rmsd_max_train: null
+  rmsd_max_test: null
+  q_max_train: null
+  q_max_test: null
+  clustering_max_train: null
+  clustering_max_test: null
   rmsd_gen:
     enabled: true
     overwrite_existing: false
@@ -82,8 +90,6 @@ analysis:
   q_gen:
     enabled: false
     overwrite_existing: false
-    max_train: 500
-    max_test: 200
     num_samples: [500]
     sample_variance: [1]
     delta: 0.7071
