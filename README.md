@@ -136,7 +136,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 | **output_dir**             | Base directory for all outputs (each seed: `output_dir/seed_<n>/`)                                                                                                                    |
 | **distmap**                | VAE: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, lambda weights, `memory_efficient`, `save_final_models_per_stretch`                                            |
 | **euclideanizer**          | Same idea; no `latent_dim` (inherited from the frozen DistMap). Includes diagonal Wasserstein weights and `num_diags`.                                                                |
-| **plotting**               | `enabled`, `overwrite_existing`, reconstruction / bond_rg_scaling / avg_gen_vs_exp, numeric params, `plot_dpi`, `max_train`, `max_test` (null = use all; int = cap reference structures for train/test stats), then `save_data`, `save_pdf_copy`, `save_structures_gro`.             |
+| **plotting**               | `enabled`, `overwrite_existing`, reconstruction / bond_rg_scaling / avg_gen_vs_exp / bond_length_by_genomic_distance, numeric params, `plot_dpi`, `max_train`, `max_test` (null = use all; int = cap reference structures for train/test stats), then `save_data`, `save_pdf_copy`, `save_structures_gro`.             |
 | **training_visualization** | `enabled`, `n_probe`, `n_quick`, `gen_sample_variance`, `fps`, frame size/dpi, `delete_frames_after_video`                                                                             |
 | **dashboard**             | `enabled` (when true, build interactive HTML report in `output_dir/dashboard/`).                                                                                                       |
 | **analysis**               | Top-level reference-size keys: `rmsd_max_train`, `rmsd_max_test`, `q_max_train`, `q_max_test`, `clustering_max_train`, `clustering_max_test` (null = use all; int = cap reference set for that metric). Nested blocks: `rmsd_gen`, `rmsd_recon`, `q_gen`, `q_recon`, `clustering_gen`, `clustering_recon`. Recon blocks use `max_recon_train` / `max_recon_test` for how many structures to **reconstruct**; the shared max_* keys cap the **reference** set used for comparisons. |
@@ -230,9 +230,9 @@ When **2+ CUDA devices** are available, the pipeline splits work into independen
 | **euclideanizer** (any key single or list)                     | One Euclideanizer run per (DistMap run × euclideanizer combination). Same epoch-segment logic.                                                                                                                                     |
 | **plotting.enabled**                                           | If false (or `--no-plots`), no plotting.                                                                                                                                                                                           |
 | **plotting.overwrite_existing**                                | If true and plots exist: prompt then remove plots/dashboard up front and re-run plotting (use `--yes-overwrite` to skip prompt).                                                                                                   |
-| **plotting.reconstruction / bond_rg_scaling / avg_gen_vs_exp** | Toggle reconstruction, Rg/scaling stats, and gen-vs-exp plots.                                                                                                                                                                     |
+| **plotting.reconstruction / bond_rg_scaling / avg_gen_vs_exp / bond_length_by_genomic_distance** | Toggle reconstruction, Rg/scaling stats, gen-vs-exp plots, and pairwise-distance-by-lag (5×4 grid: train/test/gen overlayed per k).                                                                                                                                                                     |
 | **plotting.sample_variance**                                   | List → one gen_variance plot set per value.                                                                                                                                                                                        |
-| **plotting.max_train / max_test**                              | Optional; `null` = use all train/test structures for reference statistics (bond_rg_scaling, recon_statistics, gen_variance). Set to an int to cap the number of train or test structures used.                                  |
+| **plotting.max_train / max_test**                              | Optional; `null` = use all train/test structures for reference statistics (bond_rg_scaling, recon_statistics, gen_variance, bond_length_by_genomic_distance). Set to an int to cap the number of train or test structures used.                                  |
 | **analysis.rmsd_max_train / rmsd_max_test**                   | Optional; `null` = use all. Int = cap reference train/test set size for RMSD (gen and recon use the same reference).                                                                                                               |
 | **analysis.q_max_train / q_max_test**                          | Optional; `null` = use all. Int = cap reference set for Q (gen and recon).                                                                                                                                                        |
 | **analysis.clustering_max_train / clustering_max_test**       | Optional; `null` = use all. Int = cap reference set for clustering (gen and recon).                                                                                                                                                |
@@ -240,11 +240,11 @@ When **2+ CUDA devices** are available, the pipeline splits work into independen
 | **training_visualization.enabled**                             | One MP4 per DistMap and per Euclideanizer run (requires ffmpeg).                                                                                                                                                                   |
 | **training_visualization.gen_sample_variance**                 | Latent variance for the "Generated" Rg/scaling curve in the video (e.g. 1 to align with gen_variance plots).                                                                                                                       |
 | **analysis.rmsd_gen**                                          | Nested block: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. If enabled, RMSD (gen) outputs under `analysis/rmsd/gen/<run>/`. |
-| **analysis.rmsd_recon**                                        | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, recon figure and optional latent figure under `analysis/rmsd/recon/`.        |
+| **analysis.rmsd_recon**                                        | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, recon figure and optional latent figures under `analysis/rmsd/recon/` (`latent_distribution.png`, `latent_correlation.png` when `visualize_latent`).        |
 | **analysis.q_gen**                                             | Nested block: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `delta`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. Reference size from `analysis.q_max_train` / `q_max_test`. If enabled, max Q (gen) outputs under `analysis/q/gen/<run_name>/`. Default `delta`: 1/√2. |
 | **analysis.q_recon**                                           | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, max Q (recon) figure under `analysis/q/recon/`. Default `delta`: 1/√2. |
 | **analysis.clustering_gen**                                    | Nested block: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `n_subsample`, `query_batch_size`, `save_data`, `save_pdf_copy`. If enabled, clustering (gen) outputs under `analysis/clustering/gen/<run_name>/` (pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity). |
-| **analysis.clustering_recon**                                  | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `n_subsample`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, clustering (recon) figures under `analysis/clustering/recon/` and optional `latent_distribution.png`. |
+| **analysis.clustering_recon**                                  | Nested block: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `n_subsample`, `save_data`, `save_pdf_copy`, `visualize_latent`. If enabled, clustering (recon) figures under `analysis/clustering/recon/` and optional `latent_distribution.png`, `latent_correlation.png` when `visualize_latent`. |
 | **resume**                                                     | If true: skip complete runs and existing plot/analysis outputs. If false: confirm then delete output_dir and run from scratch (unless **--yes-overwrite**, which skips the prompt for non-interactive use).                        |
 | **CUDA devices**                                               | If 2+ available: tasks (seed × DistMap group) run in parallel, one process per GPU. Use `--no-multi-gpu` to disable or `--gpus N` to cap device count.                                                                             |
 | **--no-multi-gpu**                                             | Disable multi-GPU even when 2+ CUDA devices are available (single-process loop).                                                                                                                                                   |
@@ -258,11 +258,11 @@ When **2+ CUDA devices** are available, the pipeline splits work into independen
 3. **Per DistMap segment** (each segment = one epoch target, e.g. 100 then 300):
   - Train DistMap (from scratch or resume previous segment) → save to `distmap/<i>/`.
   - If enabled: assemble training video from frames (or generate frames then assemble); optionally delete frames.
-  - DistMap plotting: reconstruction, recon statistics (train + test), generation-variance plots.
+  - DistMap plotting: reconstruction, recon statistics (train + test), generation-variance plots, bond-length-by-genomic-distance (when enabled).
   - **Per Euclideanizer** (for this DistMap): for each epoch segment (e.g. 50 then 100):
     - Train Euclideanizer segment → save to `distmap/<i>/euclideanizer/<j>/`.
     - Assemble training video for this segment (if enabled).
-    - Plotting (reconstruction, recon statistics, gen-variance) and analysis (e.g. min-RMSD) for this segment.
+    - Plotting (reconstruction, recon statistics, gen-variance, bond-length-by-genomic-distance when enabled) and analysis (e.g. min-RMSD) for this segment.
 4. Repeat from step 3 for the next DistMap segment.
 
 So for DistMap `epochs: [300, 500]` and Euclideanizer `epochs: [50, 100]`: **DistMap 300** → video → plots → **EU** segment 50 (train → video → plots → analysis) → **EU** segment 100 (train → video → plots → analysis) → **DistMap 500** → same pattern.
@@ -298,7 +298,7 @@ flowchart LR
         P1 -->|No| P2["No plots"]
         P1 -->|Yes| P3{"resume and all present?"}
         P3 -->|Yes| P4["Skip"]
-        P3 -->|No| P5["Reconstruction, recon stats, gen_variance"]
+        P3 -->|No| P5["Reconstruction, recon stats, gen_variance, bond-length-by-lag (if enabled)"]
     end
 
     subgraph analysis["Analysis (Eucl. only)"]
@@ -330,7 +330,7 @@ A run is skipped only if (1) the best checkpoint file exists, (2) the saved run 
 **Resume and data loading:** For replot-only runs (e.g. after config diff or overwrite_existing), the pipeline assumes the same inputs as for a full run: the **root dataset file** (`data.path` / `--data`, e.g. the .gro) when any step needs coordinates, and the **experimental_statistics caches** when it can do a stats-only load (e.g. only gen_variance missing). If the .gro is moved or the caches are missing/invalid, the run can fail when it tries to load. What gets loaded is tied to which outputs are missing:
 
 - **Coords only:** When only training, reconstruction plots, recon_statistics, or RMSD analysis are missing, the pipeline loads the coordinate dataset and (if needed) computes or reuses train/test statistics from cache. It does *not* compute or load full experimental statistics (exp_stats) when only those outputs are needed.
-- **Stats only (no coords):** When only gen_variance plots are missing and the base experimental-statistics cache plus every seed’s train/test split cache are present and valid, the pipeline loads only those caches (no coordinate file). It then regenerates gen_variance from the saved models. If any cache is missing or invalid, it falls back to a full load.
+- **Stats only (no coords):** When only gen_variance or bond_length_by_genomic_distance plots are missing and the base experimental-statistics cache plus every seed’s train/test split cache are present and valid, the pipeline loads only those caches (no coordinate file). It then regenerates the missing plots from the saved models. If any cache is missing or invalid, it falls back to a full load.
 - **Full load:** When both coords-dependent and stats-dependent outputs are missing, or when stats-only is not possible, the pipeline loads the dataset and (if plotting/analysis need them) experimental statistics and train/test stats.
 - **No load:** When all runs are complete and all plot/analysis outputs are present (e.g. you only run to assemble training videos from existing frames), nothing is loaded.
 
@@ -350,11 +350,11 @@ All outputs live under `output_dir` (from config or `--output-dir`). With multip
 - **Experimental statistics cache**: `output_dir/experimental_statistics/` (full dataset) and per-seed under `output_dir/seed_<n>/experimental_statistics/` (train/test). Reused when path, dataset size, and (for split caches) plotting/analysis `max_train`/`max_test` match. Per-seed: `split_meta.json` + train/test npz for plotting reference stats; `test_to_train_rmsd[_{mt}_{mc}].npz` for RMSD; `q_test_to_train_{mt}_{mc}.npz` for Q; `clustering_train_test_feats_n{n}[_{mt}_{mc}].npz` for clustering (saved whenever used, independent of analysis `save_data`).
 - **DistMap run**: `output_dir/seed_<n>/distmap/<i>/`
   - `model/model.pt` (best), `model/model_last.pt` (last epoch; present only when there is a next segment or `save_final_models_per_stretch: true`), `model/run_config.yaml`
-  - `plots/reconstruction/`, `plots/recon_statistics/`, `plots/gen_variance/`, `plots/loss_curves/`
+  - `plots/reconstruction/`, `plots/recon_statistics/`, `plots/gen_variance/`, `plots/bond_length_by_genomic_distance/` (when enabled), `plots/loss_curves/`
   - `training_video/` (frames and `training_evolution.mp4`) — separate from `plots/` so a plotting wipe does not remove it
 - **Euclideanizer run**: `output_dir/seed_<n>/distmap/<i>/euclideanizer/<j>/`
   - Same idea: `model/euclideanizer.pt` (best), `model/euclideanizer_last.pt` (when not the last segment or `save_final_models_per_stretch: true`), `model/run_config.yaml`, plus the same plot types under `plots/`, and `training_video/` when enabled.
-  - When RMSD (gen) is enabled: `analysis/rmsd/gen/<run_name>/` per (num_samples, variance), with `rmsd_distributions.png`, optional `data/`, optional `structures/`. When RMSD recon is enabled: `analysis/rmsd/recon/` with `rmsd_distributions.png` and optional `latent_distribution.png` (if `visualize_latent`). When Q (gen) is enabled: `analysis/q/gen/<run_name>/` with `q_distributions.png` and optional `data/`, `structures/`. When Q (recon) is enabled: `analysis/q/recon/` (or `.../recon/<subdir>/` for multiple sizes) with `q_distributions.png` and optional `latent_distribution.png` (if `visualize_latent`). When Clustering (gen) is enabled: `analysis/clustering/gen/<run_name>/` with `pure_dendrograms.png`, `mixed_dendrograms.png`, `mixing_analysis.png`, `rmse_similarity.png`. When Clustering (recon) is enabled: `analysis/clustering/recon/` (or `.../recon/<subdir>/`) with the same four figures and optional `latent_distribution.png` (if `visualize_latent`).
+  - When RMSD (gen) is enabled: `analysis/rmsd/gen/<run_name>/` per (num_samples, variance), with `rmsd_distributions.png`, optional `data/`, optional `structures/`. When RMSD recon is enabled: `analysis/rmsd/recon/` with `rmsd_distributions.png` and optional `latent_distribution.png`, `latent_correlation.png` (if `visualize_latent`). When Q (gen) is enabled: `analysis/q/gen/<run_name>/` with `q_distributions.png` and optional `data/`, `structures/`. When Q (recon) is enabled: `analysis/q/recon/` (or `.../recon/<subdir>/` for multiple sizes) with `q_distributions.png` and optional `latent_distribution.png`, `latent_correlation.png` (if `visualize_latent`). When Clustering (gen) is enabled: `analysis/clustering/gen/<run_name>/` with `pure_dendrograms.png`, `mixed_dendrograms.png`, `mixing_analysis.png`, `rmse_similarity.png`. When Clustering (recon) is enabled: `analysis/clustering/recon/` (or `.../recon/<subdir>/`) with the same four figures and optional `latent_distribution.png`, `latent_correlation.png` (if `visualize_latent`).
   - When `plotting.save_structures_gro` is true, generated structures used for gen_variance plots are saved as one multi-frame GRO file per set under `plots/gen_variance/structures/<variance>/structures.gro` (Euclideanizer only; each structure is a frame/timestep).
 
 Index `i` is the run index in the expanded DistMap grid; `j` is the Euclideanizer config index. When `plotting.save_data` is true, many plots also write a `data/` subdir with `.npz` files (see **Saved plot data**).
@@ -373,7 +373,7 @@ output_dir/
     experimental_statistics/
     distmap/
       0/  model/, plots/, training_video/, euclideanizer/
-            0/  model/, plots/ (reconstruction, recon_statistics, gen_variance, loss_curves), training_video/, analysis/rmsd/gen/<run_name>/ (rmsd_distributions.png, data/, structures/), analysis/rmsd/recon/ (rmsd_distributions.png, optional latent_distribution.png), analysis/q/gen/<run_name>/ (q_distributions.png, optional data/, structures/), analysis/q/recon/ (q_distributions.png, optional latent_distribution.png), analysis/clustering/gen/<run_name>/ (pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity), analysis/clustering/recon/ (same four figures, optional latent_distribution.png)
+            0/  model/, plots/ (reconstruction, recon_statistics, gen_variance, bond_length_by_genomic_distance when enabled, loss_curves), training_video/, analysis/rmsd/gen/<run_name>/ (rmsd_distributions.png, data/, structures/), analysis/rmsd/recon/ (rmsd_distributions.png, optional latent_distribution.png, latent_correlation.png), analysis/q/gen/<run_name>/ (q_distributions.png, optional data/, structures/), analysis/q/recon/ (q_distributions.png, optional latent_distribution.png, latent_correlation.png), analysis/clustering/gen/<run_name>/ (pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity), analysis/clustering/recon/ (same four figures, optional latent_distribution.png, latent_correlation.png)
             1/  ...
       1/  model/, plots/, euclideanizer/
             0/  ...
@@ -407,6 +407,7 @@ base_output_dir/
         │   ├── reconstruction/
         │   ├── recon_statistics/
         │   ├── gen_variance/
+        │   ├── bond_length_by_genomic_distance/   # when plotting.bond_length_by_genomic_distance
         │   │   └── structures/      # if save_structures_gro
         │   └── loss_curves/
         ├── training_video/          # separate from plots/ so plotting wipe does not remove it
@@ -428,7 +429,8 @@ base_output_dir/
                 │   └── recon/
                 │       ├── rmsd_distributions.png
                 │       ├── data/        # if save_data
-                │       └── latent_distribution.png   # if visualize_latent
+                │       ├── latent_distribution.png   # if visualize_latent
+                │       └── latent_correlation.png    # if visualize_latent
                 └── q/
                     ├── gen/<run_name>/
                     │   ├── q_distributions.png
@@ -437,7 +439,8 @@ base_output_dir/
                     └── recon/   # or recon/<subdir>/ for multiple (max_recon_train, max_recon_test)
                         ├── q_distributions.png
                         ├── data/        # if save_data (q_recon_data.npz)
-                        └── latent_distribution.png   # if visualize_latent
+                        ├── latent_distribution.png   # if visualize_latent
+                        └── latent_correlation.png    # if visualize_latent
 ```
 
 ---
@@ -466,7 +469,7 @@ Euclideanizer_Pipeline/
     config.py            # Config load, validation, grid expansion
     utils.py             # Data loading (GRO-style), device, distance maps, tri/symmetric helpers
     metrics.py           # Experimental statistics (bonds, Rg, scaling)
-    plotting.py           # Reconstruction, recon stats, gen analysis, loss curves
+    plotting.py           # Reconstruction, recon stats, gen analysis, bond-length-by-genomic-distance, loss curves
     train_distmap.py     # One DistMap training run
     train_euclideanizer.py
     rmsd.py              # RMSD analysis (optional, via analysis.rmsd_gen / rmsd_recon)
@@ -495,6 +498,7 @@ The pipeline supports **pluggable analysis metrics**: RMSD, Q (max Q), and Clust
 | **Reconstruction**                 | Test-set samples: original vs reconstructed (DistMap) or original / VAE decode / Euclideanizer (Euclideanizer).                                                                                                                                                                                                                           |
 | **Recon statistics**               | Bond lengths, radius of gyration, genomic scaling: experimental vs reconstruction. Separate figures for **test** and **train** subsets.                                                                                                                                                                                                   |
 | **Generation (gen variance)**      | For each `plotting.sample_variance`: distributions (bonds, Rg, scaling) for full/train/test/generated; row of average distance maps (train, test, gen); row of difference maps (test−train, train−gen, test−gen).                                                                                                                         |
+| **Bond length by genomic distance**| When `plotting.bond_length_by_genomic_distance: true`: 5×4 grid of pairwise distance d(i, i+k) distributions for up to 20 evenly spaced lags k; train, test, and generated overlayed per panel (same style as gen variance). Uses same train/test/gen data as gen_variance (cached). |
 | **Loss curves**                    | Train and validation loss per epoch (saved under `plots/loss_curves/`).                                                                                                                                                                                                                                                                   |
 | **RMSD (gen)** (analysis)          | When `analysis.rmsd_gen.enabled: true`: histograms of min-RMSD (test→train, gen→train, gen→test) per (DistMap, Euclideanizer) pair. Outputs under `analysis/rmsd/gen/<run_name>/` (`rmsd_distributions.png`, optional `data/`, optional `structures/`). Use `num_samples`, `sample_variance`, `save_data`, `save_structures_gro` in the same block. |
 | **RMSD (recon)** (analysis)        | When `analysis.rmsd_recon.enabled: true`: one figure with test→train (reused), train recon RMSD, test recon RMSD under `analysis/rmsd/recon/` (`rmsd_distributions.png`). Use `max_recon_train` / `max_recon_test`, `save_data` in the same block.                                                                                                           |
@@ -502,7 +506,8 @@ The pipeline supports **pluggable analysis metrics**: RMSD, Q (max Q), and Clust
 | **Q (recon)** (analysis)           | When `analysis.q_recon.enabled: true`: one figure with test→train (max Q), train recon Q (one-to-one), test recon Q (one-to-one) under `analysis/q/recon/`. Use `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `visualize_latent`.                                                                                               |
 | **Clustering (gen)** (analysis)     | When `analysis.clustering_gen.enabled: true`: dendrograms and mixing (train/generated/test) under `analysis/clustering/gen/<run_name>/` (pure_dendrograms.png, mixed_dendrograms.png, mixing_analysis.png, rmse_similarity.png). Use `num_samples`, `sample_variance`, `n_subsample`, `query_batch_size`, `save_data`, `save_pdf_copy`. |
 | **Clustering (recon)** (analysis)   | When `analysis.clustering_recon.enabled: true`: dendrograms and mixing (train, train recon, test, test recon) under `analysis/clustering/recon/`. Use `max_recon_train`, `max_recon_test`, `n_subsample`, `save_data`, `save_pdf_copy`, `visualize_latent`.                                                                          |
-| **Latent distribution** (analysis) | When `analysis.rmsd_recon.visualize_latent: true` or `analysis.q_recon.visualize_latent: true`: box plots (train/test) and mean/std per dimension under the corresponding `analysis/.../recon/latent_distribution.png`.                                                                                                                                                   |
+| **Latent distribution** (analysis) | When `analysis.rmsd_recon.visualize_latent: true` (or q_recon / clustering_recon): box plots (train/test) and mean/std per dimension under `analysis/.../recon/latent_distribution.png`.                                                                                                                                                   |
+| **Latent correlation** (analysis)  | When `visualize_latent` is true for that recon block: two panels (train vs test mean, train vs test std) with Pearson r and R², dashed y=x; under `analysis/.../recon/latent_correlation.png`.                                                                                                                                            |
 
 
 ### Saved plot data (.npz)
@@ -533,7 +538,7 @@ All keys below are **required** (no defaults in code). Omit any and the pipeline
 - **data**: `path` (dataset file), `split_seed` (int or list of ints), `training_split` (e.g. 0.8).
 - **distmap**: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, `lambda_mse`, `lambda_w_recon`, `lambda_w_gen`, `memory_efficient`, `save_final_models_per_stretch`.
 - **euclideanizer**: `epochs`, `batch_size`, `learning_rate`, same lambdas plus `lambda_w_diag_recon`, `lambda_w_diag_gen`, `num_diags` (diagonals for diagonal Wasserstein), `memory_efficient`, `save_final_models_per_stretch`.
-- **plotting**: `enabled`, `overwrite_existing`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `plot_dpi`, `save_data`, `save_pdf_copy`, `save_structures_gro`. (Key order standardized: behavior then save options.)
+- **plotting**: `enabled`, `overwrite_existing`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `bond_length_by_genomic_distance`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `plot_dpi`, `max_train`, `max_test`, `save_data`, `save_pdf_copy`, `save_structures_gro`. (Key order standardized: behavior then save options.)
 - **training_visualization**: `enabled`, `n_probe`, `n_quick`, `gen_sample_variance`, `fps`, `frame_width`, `frame_height`, `frame_dpi`, `delete_frames_after_video`.
 - **dashboard**: `enabled` (interactive HTML report in `output_dir/dashboard/` when true).
 - **analysis**: Nested blocks; same key order (enabled, overwrite_existing, params, then save_data, save_pdf_copy, save_structures_gro or visualize_latent). **rmsd_gen**: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. **rmsd_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `save_data`, `save_pdf_copy`, `visualize_latent`. **q_gen**: `enabled`, `overwrite_existing`, `num_samples`, `sample_variance`, `delta`, `query_batch_size`, `save_data`, `save_pdf_copy`, `save_structures_gro`. Reference size from `analysis.q_max_train` / `q_max_test`. **q_recon**: `enabled`, `overwrite_existing`, `max_recon_train`, `max_recon_test`, `delta`, `save_data`, `save_pdf_copy`, `visualize_latent`.
