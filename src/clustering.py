@@ -568,7 +568,7 @@ def _fig_mixing_analysis(
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=10)
     ax_bar.set_ylabel("Mixing Score", fontsize=10)
-    ax_bar.set_title(f"Mixing Scores (k={k_mixing} Nearest Neighbours)", fontsize=11, fontweight="bold")
+    ax_bar.set_title(f"Mixing Scores (k={k_mixing} Nearest Neighbors)", fontsize=11, fontweight="bold")
     ax_bar.legend(fontsize=10)
     ax_bar.set_ylim(0, 1.05)
     ax_bar.spines["top"].set_visible(False)
@@ -705,9 +705,9 @@ def _write_clustering_figures(
 ) -> str:
     """Write pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity. Optionally save data/ when save_data. Returns path to primary figure."""
     os.makedirs(run_dir_this, exist_ok=True)
-    dpi = plot_cfg.get("plot_dpi", 150)
-    save_pdf = plot_cfg.get("save_pdf_copy", False)
-    save_data = plot_cfg.get("save_data", False)
+    dpi = plot_cfg["plot_dpi"]
+    save_pdf = plot_cfg["save_pdf_copy"]
+    save_data = plot_cfg["save_data"]
     pure_path = os.path.join(run_dir_this, "pure_dendrograms.png")
     mixed_path = os.path.join(run_dir_this, "mixed_dendrograms.png")
     mixing_path = os.path.join(run_dir_this, "mixing_analysis.png")

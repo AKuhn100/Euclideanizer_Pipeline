@@ -315,8 +315,8 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
                         "children_ids": [],
                         "blocks": eu_blocks,
                         "run_root": eu_run_root,
-                        "params": eu_cfg.get("euclideanizer", {}) if eu_cfg else {},
-                        "parent_params": dm_cfg.get("distmap", {}) if dm_cfg else {},
+                        "params": (eu_cfg["euclideanizer"] if eu_cfg else {}),
+                        "parent_params": (dm_cfg["distmap"] if dm_cfg else {}),
                     })
                     dm_children.append(eu_id)
                     for b in eu_blocks:
@@ -331,7 +331,7 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
                 "children_ids": dm_children,
                 "blocks": dm_blocks,
                 "run_root": dm_run_root,
-                "params": dm_cfg.get("distmap", {}) if dm_cfg else {},
+                "params": (dm_cfg["distmap"] if dm_cfg else {}),
             })
             seed_children.append(dm_id)
             for b in dm_blocks:
@@ -352,9 +352,9 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
 
 
 def _block_asset_slug(block: dict, run_id: str) -> str:
-    t = block.get("type", "unknown")
-    name = block.get("name", "")
-    source = block.get("source_path", "")
+    t = block["type"]
+    name = block["name"]
+    source = block["source_path"]
     if t == "reconstruction":
         return "reconstruction"
     if t == "recon_statistics":

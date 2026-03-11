@@ -97,6 +97,7 @@ def train_euclideanizer(
         prev_best = os.path.join(prev_model_dir, "euclideanizer.pt")
         resume_from_best = os.path.normpath(resume_from_path) == os.path.normpath(prev_best)
         if prev_cfg is not None:
+            # Run config may omit best_epoch / last_epoch_trained / best_val; use .get() for backward compatibility.
             best_val = prev_cfg.get("best_val", float("inf"))
             best_epoch = prev_cfg.get("best_epoch")
             start_epoch_offset = prev_cfg.get("best_epoch", 0) if resume_from_best else prev_cfg.get("last_epoch_trained", 0)

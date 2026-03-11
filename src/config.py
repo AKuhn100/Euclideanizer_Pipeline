@@ -304,7 +304,7 @@ def get_output_dir(cfg: Dict[str, Any]) -> str:
 
 def get_seeds(cfg: Dict[str, Any]) -> List[int]:
     """Return list of seeds (1 per full pipeline run). data.split_seed can be a single int or a list of ints."""
-    data = cfg.get("data", {})
+    data = cfg["data"]
     split_seed = data["split_seed"]
     out = _ensure_list(split_seed)
     return [int(s) for s in out]

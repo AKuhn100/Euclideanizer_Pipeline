@@ -376,7 +376,7 @@ output_dir/
     experimental_statistics/
     distmap/
       0/  model/, plots/, training_video/, euclideanizer/
-            0/  model/, plots/ (reconstruction, recon_statistics, gen_variance, bond_length_by_genomic_distance when enabled, loss_curves), training_video/, analysis/rmsd/gen/<run_name>/ (rmsd_distributions.png, data/, structures/), analysis/rmsd/recon/ (rmsd_distributions.png, optional latent_distribution.png, latent_correlation.png), analysis/q/gen/<run_name>/ (q_distributions.png, optional data/, structures/), analysis/q/recon/ (q_distributions.png, optional latent_distribution.png, latent_correlation.png), analysis/clustering/gen/<run_name>/ (pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity), analysis/clustering/recon/ (same four figures, optional latent_distribution.png, latent_correlation.png)
+            0/  model/, plots/ (reconstruction, recon_statistics, gen_variance, bond_length_by_genomic_distance when enabled, loss_curves), training_video/, analysis/rmsd/gen/<run_name>/ (rmsd_distributions.png, data/, structures/), analysis/rmsd/recon/ (rmsd_distributions.png, optional latent_distribution.png, latent_correlation.png), analysis/q/gen/<run_name>/ (q_distributions.png, optional data/, structures/), analysis/q/recon/ (q_distributions.png, optional latent_distribution.png, latent_correlation.png), analysis/coord_clustering/gen/<run_name>/ (pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity), analysis/coord_clustering/recon/ (same four figures, optional latent_distribution.png, latent_correlation.png), analysis/distmap_clustering/gen/<run_name>/ (same four figures), analysis/distmap_clustering/recon/ (same four figures, optional latent_distribution.png, latent_correlation.png)
             1/  ...
       1/  model/, plots/, euclideanizer/
             0/  ...
@@ -504,7 +504,7 @@ When **plotting.enabled** is true, the pipeline produces the following figures u
 
 ## Analysis
 
-The pipeline supports **pluggable analysis metrics**: RMSD, Q (max Q), and Clustering. Outputs live under `analysis/rmsd/...`, `analysis/q/...`, and `analysis/clustering/...`. Each metric has a **gen** block (involving generated structures) and a **recon** block (train/test and their reconstructions). The implementation uses a single metric-agnostic loop in `run.py` over a registry in `src/analysis_metrics.py`; adding a new metric means implementing the interface and appending a spec, without changing the main driver.
+The pipeline supports **pluggable analysis metrics**: RMSD, Q (max Q), and Clustering. Outputs live under `analysis/rmsd/...`, `analysis/q/...`, `analysis/coord_clustering/...`, and `analysis/distmap_clustering/...`. Each metric has a **gen** block (involving generated structures) and a **recon** block (train/test and their reconstructions). The implementation uses a single metric-agnostic loop in `run.py` over a registry in `src/analysis_metrics.py`; adding a new metric means implementing the interface and appending a spec, without changing the main driver.
 
 ### RMSD (min-RMSD to reference)
 
@@ -520,7 +520,7 @@ The pipeline supports **pluggable analysis metrics**: RMSD, Q (max Q), and Clust
 
 Clustering compares **train**, **test**, and **generated** (or, for recon, **train**, **train recon**, **test**, **test recon**) in distance-map space. Each structure is represented by the upper triangle of its pairwise distance matrix; the **distance** between two structures is the RMSE between those vectors. To keep runtimes and figure sizes manageable, each population is **subsampled** to at most **n_subsample** structures (default 150) using **farthest-point sampling (FPS)** in PCA space, so the dendrograms are built on a diverse subset.
 
-- **Four figures** (gen: `analysis/clustering/gen/<run_name>/`; recon: `analysis/clustering/recon/` or `.../recon/<subdir>/`):
+- **Four figures** (gen: `analysis/coord_clustering/gen/<run_name>/` or `analysis/distmap_clustering/gen/<run_name>/`; recon: `analysis/coord_clustering/recon/` or `analysis/distmap_clustering/recon/` or `.../recon/<subdir>/` for each):
   - **pure_dendrograms.png** — One tree per population (e.g. Train only, Gen only, Test only). Each leaf is one subsampled structure; height is distance at which clusters are merged (UPGMA / average linkage). Each panel title includes **c** = cophenetic correlation coefficient: the correlation between the original pairwise distances and the distances implied by the tree (c ∈ [0, 1]; higher c means the dendrogram represents the distance matrix well). Shows how spread out each population is internally.
   - **mixed_dendrograms.png** — 2×2 panels combining two or three populations (e.g. Train+Test, Train+Gen, Gen+Test, Train+Gen+Test). One tree per panel; leaves are colored by source. If the model captures the same landscape, sources tend to **interleave** in the tree. Each panel reports a **mixing** score (fraction of each point’s k-NN that are from a different source, vs expected under random) and **c** (cophenetic correlation) as above.
   - **mixing_analysis.png** — Bar chart of mixing scores (observed vs expected) and cluster composition: when the combined tree is cut at **n_clusters** (default 8), what fraction of each cluster is from each source.

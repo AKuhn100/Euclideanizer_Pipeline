@@ -167,7 +167,7 @@ def _run_one_min_rmsd(
     os.makedirs(run_dir_this, exist_ok=True)
     out_path = os.path.join(run_dir_this, "rmsd_distributions.png")
     plt.savefig(out_path, dpi=dpi)
-    if plot_cfg.get("save_pdf_copy", False):
+    if plot_cfg["save_pdf_copy"]:
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
     plt.close()
 
@@ -181,7 +181,7 @@ def _run_one_min_rmsd(
             gen_to_test=gen_to_test,
             bins=bins,
         )
-        if gen_coords_np is not None and plot_cfg.get("save_gen_coords_in_npz", False):
+        if gen_coords_np is not None and plot_cfg["save_gen_coords_in_npz"]:
             save_kw["gen_coords"] = gen_coords_np
         np.savez_compressed(data_path, **save_kw)
         print(f"  Saved: {display_path(data_path, display_root)}")
@@ -461,7 +461,7 @@ def _run_one_min_rmsd_recon(
     os.makedirs(run_dir_recon, exist_ok=True)
     out_path = os.path.join(run_dir_recon, "rmsd_distributions.png")
     plt.savefig(out_path, dpi=dpi)
-    if plot_cfg.get("save_pdf_copy", False):
+    if plot_cfg["save_pdf_copy"]:
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
     plt.close()
 
