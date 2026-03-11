@@ -160,20 +160,106 @@ def _q_precomputed_kwargs(tt, train_c, test_c):
     return {"precomputed_test_to_train_max_q": tt, "train_coords_np": train_c, "test_coords_np": test_c}
 
 
-def _clustering_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
-    gen = analysis_cfg.get("clustering_gen") or {}
+def _coord_clustering_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
+    gen = analysis_cfg.get("coord_clustering_gen") or {}
     n = gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE)
-    mt = max_train if max_train is not None else analysis_cfg.get("clustering_max_train")
-    mc = max_test if max_test is not None else analysis_cfg.get("clustering_max_test")
+    mt = max_train if max_train is not None else analysis_cfg.get("coord_clustering_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("coord_clustering_max_test")
     if mt is None and mc is None:
-        return f"clustering_train_test_feats_n{n}.npz"
-    return f"clustering_train_test_feats_n{n}_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
+        return f"coord_clustering_train_test_feats_n{n}.npz"
+    return f"coord_clustering_train_test_feats_n{n}_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
 
 
-def _clustering_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
-    gen = analysis_cfg.get("clustering_gen") or {}
-    mt = max_train if max_train is not None else analysis_cfg.get("clustering_max_train")
-    mc = max_test if max_test is not None else analysis_cfg.get("clustering_max_test")
+def _coord_clustering_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
+    gen = analysis_cfg.get("coord_clustering_gen") or {}
+    mt = max_train if max_train is not None else analysis_cfg.get("coord_clustering_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("coord_clustering_max_test")
+    out = {
+        "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+        "fps_seed": clustering.FPS_SEED,
+    }
+    if mt is not None:
+        out["max_train"] = mt
+    if mc is not None:
+        out["max_test"] = mc
+    return out
+
+
+def _coord_clustering_get_or_compute(
+    cache_path: str,
+    coords_np,
+    coords_tensor,
+    training_split: float,
+    split_seed: int,
+    display_root: str | None,
+    **kwargs: Any,
+):
+    return clustering.get_or_compute_coord_clustering_feats(
+        cache_path, coords_np, coords_tensor, training_split, split_seed,
+        n_subsample=kwargs["n_subsample"],
+        fps_seed=kwargs.get("fps_seed", clustering.FPS_SEED),
+        display_root=display_root,
+        max_train=kwargs.get("max_train"),
+        max_test=kwargs.get("max_test"),
+    )
+
+
+def _coord_clustering_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    gen = analysis_cfg.get("coord_clustering_gen") or {}
+    return {
+        "plot_dpi": plot_dpi,
+        "save_pdf_copy": gen.get("save_pdf_copy", False),
+        "save_data": gen.get("save_data", False),
+    }
+
+
+def _coord_clustering_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    recon = analysis_cfg.get("coord_clustering_recon") or {}
+    return {
+        "save_data": recon.get("save_data", False),
+        "plot_dpi": plot_dpi,
+        "save_pdf_copy": recon.get("save_pdf_copy", False),
+    }
+
+
+def _coord_clustering_precomputed_kwargs(tt, train_c, test_c):
+    return {"coord_clustering_seed_feats_path": tt, "train_coords_np": train_c, "test_coords_np": test_c}
+
+
+def _coord_clustering_gen_extra_kwargs(analysis_cfg: dict) -> dict:
+    gen = analysis_cfg.get("coord_clustering_gen") or {}
+    return {
+        "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+        "k_mixing": gen.get("k_mixing", clustering.DEFAULT_K_MIXING),
+        "n_clusters": gen.get("n_clusters", clustering.DEFAULT_N_CLUSTERS),
+        "linkage_method": gen.get("linkage_method", clustering.LINKAGE_METHOD),
+    }
+
+
+def _coord_clustering_recon_extra_kwargs(analysis_cfg: dict) -> dict:
+    recon = analysis_cfg.get("coord_clustering_recon") or {}
+    return {
+        "n_subsample": recon.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+        "k_mixing": recon.get("k_mixing", clustering.DEFAULT_K_MIXING),
+        "n_clusters": recon.get("n_clusters", clustering.DEFAULT_N_CLUSTERS),
+        "linkage_method": recon.get("linkage_method", clustering.LINKAGE_METHOD),
+    }
+
+
+def _distmap_clustering_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
+    gen = analysis_cfg.get("distmap_clustering_gen") or {}
+    n = gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE)
+    mt = max_train if max_train is not None else analysis_cfg.get("distmap_clustering_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("distmap_clustering_max_test")
+    if mt is None and mc is None:
+        return f"distmap_clustering_train_test_feats_n{n}.npz"
+    return f"distmap_clustering_train_test_feats_n{n}_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
+
+
+def _distmap_clustering_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
+    gen = analysis_cfg.get("distmap_clustering_gen") or {}
+    mt = max_train if max_train is not None else analysis_cfg.get("distmap_clustering_max_train")
+    mc = max_test if max_test is not None else analysis_cfg.get("distmap_clustering_max_test")
     out = {
         "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
         "batch_size": gen.get("feats_batch_size", gen.get("query_batch_size", 64)),
@@ -186,7 +272,7 @@ def _clustering_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = Non
     return out
 
 
-def _clustering_get_or_compute(
+def _distmap_clustering_get_or_compute(
     cache_path: str,
     coords_np,
     coords_tensor,
@@ -195,7 +281,7 @@ def _clustering_get_or_compute(
     display_root: str | None,
     **kwargs: Any,
 ):
-    return clustering.get_or_compute_clustering_feats(
+    return clustering.get_or_compute_distmap_clustering_feats(
         cache_path, coords_np, coords_tensor, training_split, split_seed,
         n_subsample=kwargs["n_subsample"],
         batch_size=kwargs.get("batch_size", 64),
@@ -206,8 +292,8 @@ def _clustering_get_or_compute(
     )
 
 
-def _clustering_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    gen = analysis_cfg.get("clustering_gen") or {}
+def _distmap_clustering_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    gen = analysis_cfg.get("distmap_clustering_gen") or {}
     return {
         "plot_dpi": plot_dpi,
         "save_pdf_copy": gen.get("save_pdf_copy", False),
@@ -215,8 +301,8 @@ def _clustering_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
     }
 
 
-def _clustering_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    recon = analysis_cfg.get("clustering_recon") or {}
+def _distmap_clustering_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+    recon = analysis_cfg.get("distmap_clustering_recon") or {}
     return {
         "save_data": recon.get("save_data", False),
         "plot_dpi": plot_dpi,
@@ -224,12 +310,12 @@ def _clustering_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
     }
 
 
-def _clustering_precomputed_kwargs(tt, train_c, test_c):
+def _distmap_clustering_precomputed_kwargs(tt, train_c, test_c):
     return {"clustering_seed_feats_path": tt, "train_coords_np": train_c, "test_coords_np": test_c}
 
 
-def _clustering_gen_extra_kwargs(analysis_cfg: dict) -> dict:
-    gen = analysis_cfg.get("clustering_gen") or {}
+def _distmap_clustering_gen_extra_kwargs(analysis_cfg: dict) -> dict:
+    gen = analysis_cfg.get("distmap_clustering_gen") or {}
     return {
         "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
         "k_mixing": gen.get("k_mixing", clustering.DEFAULT_K_MIXING),
@@ -239,8 +325,8 @@ def _clustering_gen_extra_kwargs(analysis_cfg: dict) -> dict:
     }
 
 
-def _clustering_recon_extra_kwargs(analysis_cfg: dict) -> dict:
-    recon = analysis_cfg.get("clustering_recon") or {}
+def _distmap_clustering_recon_extra_kwargs(analysis_cfg: dict) -> dict:
+    recon = analysis_cfg.get("distmap_clustering_recon") or {}
     return {
         "n_subsample": recon.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
         "k_mixing": recon.get("k_mixing", clustering.DEFAULT_K_MIXING),
@@ -310,21 +396,39 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         recon_extra_kwargs=_q_recon_extra_kwargs,
     ),
     AnalysisMetricSpec(
-        id="clustering",
-        gen_key="clustering_gen",
-        recon_key="clustering_recon",
-        subdir="clustering",
+        id="coord_clustering",
+        gen_key="coord_clustering_gen",
+        recon_key="coord_clustering_recon",
+        subdir="coord_clustering",
         figure_filename="mixed_dendrograms.png",
-        get_or_compute_test_to_train=_clustering_get_or_compute,
-        run_gen_analysis=clustering.run_clustering_gen_analysis,
-        run_gen_analysis_multi=clustering.run_clustering_gen_analysis_multi,
-        run_recon_analysis=clustering.run_clustering_recon_analysis,
-        cache_filename=_clustering_cache_filename,
-        kwargs_for_cache=_clustering_kwargs_for_cache,
-        build_gen_plot_cfg=_clustering_build_gen_plot_cfg,
-        build_recon_plot_cfg=_clustering_build_recon_plot_cfg,
-        precomputed_kwargs=_clustering_precomputed_kwargs,
-        gen_extra_kwargs=_clustering_gen_extra_kwargs,
-        recon_extra_kwargs=_clustering_recon_extra_kwargs,
+        get_or_compute_test_to_train=_coord_clustering_get_or_compute,
+        run_gen_analysis=clustering.run_coord_clustering_gen_analysis,
+        run_gen_analysis_multi=clustering.run_coord_clustering_gen_analysis_multi,
+        run_recon_analysis=clustering.run_coord_clustering_recon_analysis,
+        cache_filename=_coord_clustering_cache_filename,
+        kwargs_for_cache=_coord_clustering_kwargs_for_cache,
+        build_gen_plot_cfg=_coord_clustering_build_gen_plot_cfg,
+        build_recon_plot_cfg=_coord_clustering_build_recon_plot_cfg,
+        precomputed_kwargs=_coord_clustering_precomputed_kwargs,
+        gen_extra_kwargs=_coord_clustering_gen_extra_kwargs,
+        recon_extra_kwargs=_coord_clustering_recon_extra_kwargs,
+    ),
+    AnalysisMetricSpec(
+        id="distmap_clustering",
+        gen_key="distmap_clustering_gen",
+        recon_key="distmap_clustering_recon",
+        subdir="distmap_clustering",
+        figure_filename="mixed_dendrograms.png",
+        get_or_compute_test_to_train=_distmap_clustering_get_or_compute,
+        run_gen_analysis=clustering.run_distmap_clustering_gen_analysis,
+        run_gen_analysis_multi=clustering.run_distmap_clustering_gen_analysis_multi,
+        run_recon_analysis=clustering.run_distmap_clustering_recon_analysis,
+        cache_filename=_distmap_clustering_cache_filename,
+        kwargs_for_cache=_distmap_clustering_kwargs_for_cache,
+        build_gen_plot_cfg=_distmap_clustering_build_gen_plot_cfg,
+        build_recon_plot_cfg=_distmap_clustering_build_recon_plot_cfg,
+        precomputed_kwargs=_distmap_clustering_precomputed_kwargs,
+        gen_extra_kwargs=_distmap_clustering_gen_extra_kwargs,
+        recon_extra_kwargs=_distmap_clustering_recon_extra_kwargs,
     ),
 ]

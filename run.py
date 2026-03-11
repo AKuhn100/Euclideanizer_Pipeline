@@ -322,9 +322,12 @@ def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) 
     elif component in ("q_gen", "q_recon"):
         subdir = "gen" if component == "q_gen" else "recon"
         target = os.path.join("analysis", "q", subdir)
-    elif component in ("clustering_gen", "clustering_recon"):
-        subdir = "gen" if component == "clustering_gen" else "recon"
-        target = os.path.join("analysis", "clustering", subdir)
+    elif component in ("coord_clustering_gen", "coord_clustering_recon"):
+        subdir = "gen" if component == "coord_clustering_gen" else "recon"
+        target = os.path.join("analysis", "coord_clustering", subdir)
+    elif component in ("distmap_clustering_gen", "distmap_clustering_recon"):
+        subdir = "gen" if component == "distmap_clustering_gen" else "recon"
+        target = os.path.join("analysis", "distmap_clustering", subdir)
     else:
         return False
     for seed in seeds:
@@ -363,21 +366,22 @@ def _reference_size_config(cfg: dict) -> dict:
         "plotting": (plot.get("max_train"), plot.get("max_test")),
         "rmsd": (ana.get("rmsd_max_train"), ana.get("rmsd_max_test")),
         "q": (ana.get("q_max_train"), ana.get("q_max_test")),
-        "clustering": (ana.get("clustering_max_train"), ana.get("clustering_max_test")),
+        "coord_clustering": (ana.get("coord_clustering_max_train"), ana.get("coord_clustering_max_test")),
+        "distmap_clustering": (ana.get("distmap_clustering_max_train"), ana.get("distmap_clustering_max_test")),
     }
 
 
 def _reference_size_changed(saved_ref: dict, current_ref: dict) -> set:
-    """Return set of component names ('plotting', 'rmsd', 'q', 'clustering') whose reference-size config differs."""
+    """Return set of component names ('plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering') whose reference-size config differs."""
     out = set()
-    for key in ("plotting", "rmsd", "q", "clustering"):
+    for key in ("plotting", "rmsd", "q", "coord_clustering", "distmap_clustering"):
         if saved_ref.get(key) != current_ref.get(key):
             out.add(key)
     return out
 
 
 def _delete_reference_size_caches(base_output_dir: str, seeds: list, components: set) -> None:
-    """Remove cached data that depends on reference sizes so it can be recomputed. components: 'plotting', 'rmsd', 'q', 'clustering'."""
+    """Remove cached data that depends on reference sizes so it can be recomputed. components: 'plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering'."""
     import glob as _glob
     for seed in seeds:
         seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -404,8 +408,14 @@ def _delete_reference_size_caches(base_output_dir: str, seeds: list, components:
                     os.remove(path)
                 except OSError:
                     pass
-        if "clustering" in components:
-            for path in _glob.glob(os.path.join(cache_dir, "clustering_train_test_feats_*.npz")):
+        if "coord_clustering" in components:
+            for path in _glob.glob(os.path.join(cache_dir, "coord_clustering_train_test_feats_*.npz")):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+        if "distmap_clustering" in components:
+            for path in _glob.glob(os.path.join(cache_dir, "distmap_clustering_train_test_feats_*.npz")):
                 try:
                     os.remove(path)
                 except OSError:
@@ -415,7 +425,7 @@ def _delete_reference_size_caches(base_output_dir: str, seeds: list, components:
 def _confirm_reference_size_cache_purge(components: set) -> None:
     """Prompt user to confirm removal of cached data when reference-size config changed. Else abort."""
     labels = sorted(components)
-    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "clustering": "Clustering (train/test feats)"}
+    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "coord_clustering": "Coord clustering (train/test feats)", "distmap_clustering": "Distmap clustering (train/test feats)"}
     line = "=" * 70
     print()
     print(_red(line))
@@ -474,9 +484,12 @@ def _delete_analysis_outputs_for_component(base_output_dir: str, seeds: list, co
     elif component in ("q_gen", "q_recon"):
         subdir = "gen" if component == "q_gen" else "recon"
         target = os.path.join("analysis", "q", subdir)
-    elif component in ("clustering_gen", "clustering_recon"):
-        subdir = "gen" if component == "clustering_gen" else "recon"
-        target = os.path.join("analysis", "clustering", subdir)
+    elif component in ("coord_clustering_gen", "coord_clustering_recon"):
+        subdir = "gen" if component == "coord_clustering_gen" else "recon"
+        target = os.path.join("analysis", "coord_clustering", subdir)
+    elif component in ("distmap_clustering_gen", "distmap_clustering_recon"):
+        subdir = "gen" if component == "distmap_clustering_gen" else "recon"
+        target = os.path.join("analysis", "distmap_clustering", subdir)
     else:
         return
     for seed in seeds:
@@ -994,17 +1007,29 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
             "max_recon_test": kw.get("q_max_recon_test_list"),
             "visualize_latent": kw.get("q_visualize_latent", False),
         }
-    if kw.get("do_clustering_gen") or kw.get("do_clustering_recon"):
-        cfg["clustering_gen"] = {
-            "enabled": kw.get("do_clustering_gen", False),
-            "sample_variance": kw.get("clustering_variance_list") or [],
-            "num_samples": kw.get("clustering_num_samples_list") or [],
+    if kw.get("do_coord_clustering_gen") or kw.get("do_coord_clustering_recon"):
+        cfg["coord_clustering_gen"] = {
+            "enabled": kw.get("do_coord_clustering_gen", False),
+            "sample_variance": kw.get("coord_clustering_variance_list") or [],
+            "num_samples": kw.get("coord_clustering_num_samples_list") or [],
         }
-        cfg["clustering_recon"] = {
-            "enabled": kw.get("do_clustering_recon", False),
-            "max_recon_train": kw.get("clustering_max_recon_train_list"),
-            "max_recon_test": kw.get("clustering_max_recon_test_list"),
-            "visualize_latent": kw.get("clustering_visualize_latent", False),
+        cfg["coord_clustering_recon"] = {
+            "enabled": kw.get("do_coord_clustering_recon", False),
+            "max_recon_train": kw.get("coord_clustering_max_recon_train_list"),
+            "max_recon_test": kw.get("coord_clustering_max_recon_test_list"),
+            "visualize_latent": kw.get("coord_clustering_visualize_latent", False),
+        }
+    if kw.get("do_distmap_clustering_gen") or kw.get("do_distmap_clustering_recon"):
+        cfg["distmap_clustering_gen"] = {
+            "enabled": kw.get("do_distmap_clustering_gen", False),
+            "sample_variance": kw.get("distmap_clustering_variance_list") or [],
+            "num_samples": kw.get("distmap_clustering_num_samples_list") or [],
+        }
+        cfg["distmap_clustering_recon"] = {
+            "enabled": kw.get("do_distmap_clustering_recon", False),
+            "max_recon_train": kw.get("distmap_clustering_max_recon_train_list"),
+            "max_recon_test": kw.get("distmap_clustering_max_recon_test_list"),
+            "visualize_latent": kw.get("distmap_clustering_visualize_latent", False),
         }
     return cfg
 
@@ -1056,15 +1081,22 @@ def _euclideanizer_analysis_all_present(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_visualize_latent: bool = False,
-    do_clustering_gen: bool = False,
-    do_clustering_recon: bool = False,
-    clustering_variance_list: list | None = None,
-    clustering_num_samples_list: list | None = None,
-    clustering_max_recon_train_list: list | None = None,
-    clustering_max_recon_test_list: list | None = None,
-    clustering_visualize_latent: bool = False,
+    do_coord_clustering_gen: bool = False,
+    do_coord_clustering_recon: bool = False,
+    coord_clustering_variance_list: list | None = None,
+    coord_clustering_num_samples_list: list | None = None,
+    coord_clustering_max_recon_train_list: list | None = None,
+    coord_clustering_max_recon_test_list: list | None = None,
+    coord_clustering_visualize_latent: bool = False,
+    do_distmap_clustering_gen: bool = False,
+    do_distmap_clustering_recon: bool = False,
+    distmap_clustering_variance_list: list | None = None,
+    distmap_clustering_num_samples_list: list | None = None,
+    distmap_clustering_max_recon_train_list: list | None = None,
+    distmap_clustering_max_recon_test_list: list | None = None,
+    distmap_clustering_visualize_latent: bool = False,
 ) -> bool:
-    """True if resume and all enabled metric (rmsd, q, clustering) analysis outputs we would generate already exist."""
+    """True if resume and all enabled metric (rmsd, q, coord_clustering, distmap_clustering) analysis outputs we would generate already exist."""
     if not resume:
         return True
     if analysis_cfg is None:
@@ -1083,13 +1115,20 @@ def _euclideanizer_analysis_all_present(
             "q_max_recon_train_list": q_max_recon_train_list,
             "q_max_recon_test_list": q_max_recon_test_list,
             "q_visualize_latent": q_visualize_latent,
-            "do_clustering_gen": do_clustering_gen,
-            "do_clustering_recon": do_clustering_recon,
-            "clustering_variance_list": clustering_variance_list or [],
-            "clustering_num_samples_list": clustering_num_samples_list or [],
-            "clustering_max_recon_train_list": clustering_max_recon_train_list,
-            "clustering_max_recon_test_list": clustering_max_recon_test_list,
-            "clustering_visualize_latent": clustering_visualize_latent,
+            "do_coord_clustering_gen": do_coord_clustering_gen,
+            "do_coord_clustering_recon": do_coord_clustering_recon,
+            "coord_clustering_variance_list": coord_clustering_variance_list or [],
+            "coord_clustering_num_samples_list": coord_clustering_num_samples_list or [],
+            "coord_clustering_max_recon_train_list": coord_clustering_max_recon_train_list,
+            "coord_clustering_max_recon_test_list": coord_clustering_max_recon_test_list,
+            "coord_clustering_visualize_latent": coord_clustering_visualize_latent,
+            "do_distmap_clustering_gen": do_distmap_clustering_gen,
+            "do_distmap_clustering_recon": do_distmap_clustering_recon,
+            "distmap_clustering_variance_list": distmap_clustering_variance_list or [],
+            "distmap_clustering_num_samples_list": distmap_clustering_num_samples_list or [],
+            "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
+            "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
+            "distmap_clustering_visualize_latent": distmap_clustering_visualize_latent,
         })
     specs = metrics if metrics is not None else ANALYSIS_METRICS
     for spec in specs:
@@ -1221,13 +1260,20 @@ def _pipeline_data_needs(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_visualize_latent: bool = False,
-    do_clustering_gen: bool = False,
-    do_clustering_recon: bool = False,
-    clustering_variance_list: list | None = None,
-    clustering_num_samples_list: list | None = None,
-    clustering_max_recon_train_list: list | None = None,
-    clustering_max_recon_test_list: list | None = None,
-    clustering_visualize_latent: bool = False,
+    do_coord_clustering_gen: bool = False,
+    do_coord_clustering_recon: bool = False,
+    coord_clustering_variance_list: list | None = None,
+    coord_clustering_num_samples_list: list | None = None,
+    coord_clustering_max_recon_train_list: list | None = None,
+    coord_clustering_max_recon_test_list: list | None = None,
+    coord_clustering_visualize_latent: bool = False,
+    do_distmap_clustering_gen: bool = False,
+    do_distmap_clustering_recon: bool = False,
+    distmap_clustering_variance_list: list | None = None,
+    distmap_clustering_num_samples_list: list | None = None,
+    distmap_clustering_max_recon_train_list: list | None = None,
+    distmap_clustering_max_recon_test_list: list | None = None,
+    distmap_clustering_visualize_latent: bool = False,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
@@ -1253,13 +1299,20 @@ def _pipeline_data_needs(
         "q_max_recon_train_list": q_max_recon_train_list,
         "q_max_recon_test_list": q_max_recon_test_list,
         "q_visualize_latent": q_visualize_latent,
-        "do_clustering_gen": do_clustering_gen,
-        "do_clustering_recon": do_clustering_recon,
-        "clustering_variance_list": clustering_variance_list or [],
-        "clustering_num_samples_list": clustering_num_samples_list or [],
-        "clustering_max_recon_train_list": clustering_max_recon_train_list,
-        "clustering_max_recon_test_list": clustering_max_recon_test_list,
-        "clustering_visualize_latent": clustering_visualize_latent,
+        "do_coord_clustering_gen": do_coord_clustering_gen,
+        "do_coord_clustering_recon": do_coord_clustering_recon,
+        "coord_clustering_variance_list": coord_clustering_variance_list or [],
+        "coord_clustering_num_samples_list": coord_clustering_num_samples_list or [],
+        "coord_clustering_max_recon_train_list": coord_clustering_max_recon_train_list,
+        "coord_clustering_max_recon_test_list": coord_clustering_max_recon_test_list,
+        "coord_clustering_visualize_latent": coord_clustering_visualize_latent,
+        "do_distmap_clustering_gen": do_distmap_clustering_gen,
+        "do_distmap_clustering_recon": do_distmap_clustering_recon,
+        "distmap_clustering_variance_list": distmap_clustering_variance_list or [],
+        "distmap_clustering_num_samples_list": distmap_clustering_num_samples_list or [],
+        "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
+        "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
+        "distmap_clustering_visualize_latent": distmap_clustering_visualize_latent,
     })
     for seed in seeds:
         output_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -1989,12 +2042,12 @@ def _run_one_distmap_group(
                                     _num_samples_list = [_num_samples_list]
                                 _max_recon_train_list = recon_cfg.get("max_recon_train")
                                 if _max_recon_train_list is None:
-                                    _max_recon_train_list = []
+                                    _max_recon_train_list = [None]  # one run with no cap
                                 if not isinstance(_max_recon_train_list, list):
                                     _max_recon_train_list = [_max_recon_train_list]
                                 _max_recon_test_list = recon_cfg.get("max_recon_test")
                                 if _max_recon_test_list is None:
-                                    _max_recon_test_list = []
+                                    _max_recon_test_list = [None]  # one run with no cap
                                 if not isinstance(_max_recon_test_list, list):
                                     _max_recon_test_list = [_max_recon_test_list]
                                 _visualize_latent = recon_cfg.get("visualize_latent", False)
@@ -2004,9 +2057,13 @@ def _run_one_distmap_group(
                                 elif spec.id == "q":
                                     _ref_mt = analysis_cfg.get("q_max_train")
                                     _ref_mc = analysis_cfg.get("q_max_test")
+                                elif spec.id == "coord_clustering":
+                                    _ref_mt = analysis_cfg.get("coord_clustering_max_train")
+                                    _ref_mc = analysis_cfg.get("coord_clustering_max_test")
                                 else:
-                                    _ref_mt = analysis_cfg.get("clustering_max_train")
-                                    _ref_mc = analysis_cfg.get("clustering_max_test")
+                                    assert spec.id == "distmap_clustering"
+                                    _ref_mt = analysis_cfg.get("distmap_clustering_max_train")
+                                    _ref_mc = analysis_cfg.get("distmap_clustering_max_test")
 
                                 def _get_or_compute_cached(mt, mc):
                                     if spec.id == "rmsd":
@@ -2031,17 +2088,28 @@ def _run_one_distmap_group(
                                                 **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                             )
                                         return _cache["q"][key]
-                                    assert spec.id == "clustering"
-                                    if _cache.get("clustering") is None:
-                                        _cache["clustering"] = {}
+                                    if spec.id == "coord_clustering":
+                                        if _cache.get("coord_clustering") is None:
+                                            _cache["coord_clustering"] = {}
+                                        key = (mt, mc)
+                                        if key not in _cache["coord_clustering"]:
+                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                                            _cache["coord_clustering"][key] = spec.get_or_compute_test_to_train(
+                                                _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
+                                                **spec.kwargs_for_cache(analysis_cfg, mt, mc),
+                                            )
+                                        return _cache["coord_clustering"][key]
+                                    assert spec.id == "distmap_clustering"
+                                    if _cache.get("distmap_clustering") is None:
+                                        _cache["distmap_clustering"] = {}
                                     key = (mt, mc)
-                                    if key not in _cache["clustering"]:
+                                    if key not in _cache["distmap_clustering"]:
                                         _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
-                                        _cache["clustering"][key] = spec.get_or_compute_test_to_train(
+                                        _cache["distmap_clustering"][key] = spec.get_or_compute_test_to_train(
                                             _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
                                             **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                         )
-                                    return _cache["clustering"][key]
+                                    return _cache["distmap_clustering"][key]
 
                                 if do_gen:
                                     _mt_gen = _ref_mt if spec.id == "q" else None
@@ -2681,8 +2749,10 @@ def main():
     do_rmsd_recon_cfg = analysis_cfg["rmsd_recon"]["enabled"]
     do_q = analysis_cfg["q_gen"]["enabled"]
     do_q_recon_cfg = analysis_cfg["q_recon"]["enabled"]
-    do_clustering_gen = analysis_cfg.get("clustering_gen", {}).get("enabled", False)
-    do_clustering_recon_cfg = analysis_cfg.get("clustering_recon", {}).get("enabled", False)
+    do_coord_clustering_gen = analysis_cfg.get("coord_clustering_gen", {}).get("enabled", False)
+    do_coord_clustering_recon_cfg = analysis_cfg.get("coord_clustering_recon", {}).get("enabled", False)
+    do_distmap_clustering_gen = analysis_cfg.get("distmap_clustering_gen", {}).get("enabled", False)
+    do_distmap_clustering_recon_cfg = analysis_cfg.get("distmap_clustering_recon", {}).get("enabled", False)
     training_split = cfg["data"]["training_split"]
     do_dashboard = cfg["dashboard"]["enabled"]
     if getattr(args, "no_dashboard", False):
@@ -2698,7 +2768,7 @@ def main():
 
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
     _log(f"config: {config_path}  output: {base_output_dir}  seeds: {seeds}", since_start=time.time() - pipeline_start, style="info")
-    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
+    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     num_samples_list = analysis_cfg["rmsd_gen"]["num_samples"] if do_rmsd else []
     if not isinstance(num_samples_list, list):
@@ -2729,18 +2799,30 @@ def main():
     if not isinstance(q_max_recon_test_list, list):
         q_max_recon_test_list = [q_max_recon_test_list]
     q_recon_delta = analysis_cfg["q_recon"].get("delta", q_delta)
-    clustering_num_samples_list = analysis_cfg.get("clustering_gen", {}).get("num_samples", []) if do_clustering_gen else []
-    if not isinstance(clustering_num_samples_list, list):
-        clustering_num_samples_list = [clustering_num_samples_list]
-    clustering_variance_list = analysis_cfg.get("clustering_gen", {}).get("sample_variance", []) if do_clustering_gen else []
-    if not isinstance(clustering_variance_list, list):
-        clustering_variance_list = [clustering_variance_list]
-    clustering_max_recon_train_list = analysis_cfg.get("clustering_recon", {}).get("max_recon_train") if do_clustering_recon_cfg else []
-    if not isinstance(clustering_max_recon_train_list, list):
-        clustering_max_recon_train_list = [clustering_max_recon_train_list]
-    clustering_max_recon_test_list = analysis_cfg.get("clustering_recon", {}).get("max_recon_test") if do_clustering_recon_cfg else []
-    if not isinstance(clustering_max_recon_test_list, list):
-        clustering_max_recon_test_list = [clustering_max_recon_test_list]
+    coord_clustering_num_samples_list = analysis_cfg.get("coord_clustering_gen", {}).get("num_samples", []) if do_coord_clustering_gen else []
+    if not isinstance(coord_clustering_num_samples_list, list):
+        coord_clustering_num_samples_list = [coord_clustering_num_samples_list]
+    coord_clustering_variance_list = analysis_cfg.get("coord_clustering_gen", {}).get("sample_variance", []) if do_coord_clustering_gen else []
+    if not isinstance(coord_clustering_variance_list, list):
+        coord_clustering_variance_list = [coord_clustering_variance_list]
+    coord_clustering_max_recon_train_list = analysis_cfg.get("coord_clustering_recon", {}).get("max_recon_train") if do_coord_clustering_recon_cfg else []
+    if not isinstance(coord_clustering_max_recon_train_list, list):
+        coord_clustering_max_recon_train_list = [coord_clustering_max_recon_train_list]
+    coord_clustering_max_recon_test_list = analysis_cfg.get("coord_clustering_recon", {}).get("max_recon_test") if do_coord_clustering_recon_cfg else []
+    if not isinstance(coord_clustering_max_recon_test_list, list):
+        coord_clustering_max_recon_test_list = [coord_clustering_max_recon_test_list]
+    distmap_clustering_num_samples_list = analysis_cfg.get("distmap_clustering_gen", {}).get("num_samples", []) if do_distmap_clustering_gen else []
+    if not isinstance(distmap_clustering_num_samples_list, list):
+        distmap_clustering_num_samples_list = [distmap_clustering_num_samples_list]
+    distmap_clustering_variance_list = analysis_cfg.get("distmap_clustering_gen", {}).get("sample_variance", []) if do_distmap_clustering_gen else []
+    if not isinstance(distmap_clustering_variance_list, list):
+        distmap_clustering_variance_list = [distmap_clustering_variance_list]
+    distmap_clustering_max_recon_train_list = analysis_cfg.get("distmap_clustering_recon", {}).get("max_recon_train") if do_distmap_clustering_recon_cfg else []
+    if not isinstance(distmap_clustering_max_recon_train_list, list):
+        distmap_clustering_max_recon_train_list = [distmap_clustering_max_recon_train_list]
+    distmap_clustering_max_recon_test_list = analysis_cfg.get("distmap_clustering_recon", {}).get("max_recon_test") if do_distmap_clustering_recon_cfg else []
+    if not isinstance(distmap_clustering_max_recon_test_list, list):
+        distmap_clustering_max_recon_test_list = [distmap_clustering_max_recon_test_list]
     dm_groups = distmap_training_groups(cfg)
     eu_groups = euclideanizer_training_groups(cfg)
     plot_variances_for_scan = get_sample_variances(cfg) if do_plot else []
@@ -2757,10 +2839,14 @@ def main():
         to_overwrite.append("q_gen")
     if do_q_recon_cfg and analysis_cfg["q_recon"].get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "q_recon"):
         to_overwrite.append("q_recon")
-    if do_clustering_gen and analysis_cfg.get("clustering_gen", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "clustering_gen"):
-        to_overwrite.append("clustering_gen")
-    if do_clustering_recon_cfg and analysis_cfg.get("clustering_recon", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "clustering_recon"):
-        to_overwrite.append("clustering_recon")
+    if do_coord_clustering_gen and analysis_cfg.get("coord_clustering_gen", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "coord_clustering_gen"):
+        to_overwrite.append("coord_clustering_gen")
+    if do_coord_clustering_recon_cfg and analysis_cfg.get("coord_clustering_recon", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "coord_clustering_recon"):
+        to_overwrite.append("coord_clustering_recon")
+    if do_distmap_clustering_gen and analysis_cfg.get("distmap_clustering_gen", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "distmap_clustering_gen"):
+        to_overwrite.append("distmap_clustering_gen")
+    if do_distmap_clustering_recon_cfg and analysis_cfg.get("distmap_clustering_recon", {}).get("overwrite_existing", False) and _has_any_analysis_output(base_output_dir, seeds, "distmap_clustering_recon"):
+        to_overwrite.append("distmap_clustering_recon")
     if to_overwrite:
         if not getattr(args, "yes_overwrite", False):
             _confirm_overwrite_outputs(to_overwrite)
@@ -2777,10 +2863,14 @@ def main():
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, "q_gen")
             elif label == "q_recon":
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, "q_recon")
-            elif label == "clustering_gen":
-                _delete_analysis_outputs_for_component(base_output_dir, seeds, "clustering_gen")
-            elif label == "clustering_recon":
-                _delete_analysis_outputs_for_component(base_output_dir, seeds, "clustering_recon")
+            elif label == "coord_clustering_gen":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "coord_clustering_gen")
+            elif label == "coord_clustering_recon":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "coord_clustering_recon")
+            elif label == "distmap_clustering_gen":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "distmap_clustering_gen")
+            elif label == "distmap_clustering_recon":
+                _delete_analysis_outputs_for_component(base_output_dir, seeds, "distmap_clustering_recon")
         _log("Done removing; will re-run these components.", since_start=time.time() - pipeline_start, style="success")
 
     # Pipeline config: strict match for training; if only plotting/analysis differ, prompt then delete and update saved config
@@ -2838,10 +2928,14 @@ def main():
                     chunks_to_update.add("q_gen")
                 if s_analysis.get("q_recon") != e_analysis.get("q_recon"):
                     chunks_to_update.add("q_recon")
-                if s_analysis.get("clustering_gen") != e_analysis.get("clustering_gen"):
-                    chunks_to_update.add("clustering_gen")
-                if s_analysis.get("clustering_recon") != e_analysis.get("clustering_recon"):
-                    chunks_to_update.add("clustering_recon")
+                if s_analysis.get("coord_clustering_gen") != e_analysis.get("coord_clustering_gen"):
+                    chunks_to_update.add("coord_clustering_gen")
+                if s_analysis.get("coord_clustering_recon") != e_analysis.get("coord_clustering_recon"):
+                    chunks_to_update.add("coord_clustering_recon")
+                if s_analysis.get("distmap_clustering_gen") != e_analysis.get("distmap_clustering_gen"):
+                    chunks_to_update.add("distmap_clustering_gen")
+                if s_analysis.get("distmap_clustering_recon") != e_analysis.get("distmap_clustering_recon"):
+                    chunks_to_update.add("distmap_clustering_recon")
         chunks_to_update = sorted(chunks_to_update)  # stable order: rmsd_gen, rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
             chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
@@ -2857,8 +2951,10 @@ def main():
                 purge_ref.add("rmsd")
             if "q" in ref_changed and do_q:
                 purge_ref.add("q")
-            if "clustering" in ref_changed and (do_clustering_gen or do_clustering_recon_cfg):
-                purge_ref.add("clustering")
+            if "coord_clustering" in ref_changed and (do_coord_clustering_gen or do_coord_clustering_recon_cfg):
+                purge_ref.add("coord_clustering")
+            if "distmap_clustering" in ref_changed and (do_distmap_clustering_gen or do_distmap_clustering_recon_cfg):
+                purge_ref.add("distmap_clustering")
             if purge_ref:
                 if not getattr(args, "yes_overwrite", False):
                     _confirm_reference_size_cache_purge(purge_ref)
@@ -2872,7 +2968,7 @@ def main():
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
         # Only prompt and delete for chunks that actually have existing outputs
-        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "clustering_gen": "Clustering (gen)", "clustering_recon": "Clustering (recon)"}
+        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)"}
         chunks_with_outputs = [
             c for c in chunks_still_to_delete
             if (c == "plotting" and _has_any_plotting_output(base_output_dir, seeds))
@@ -2905,7 +3001,7 @@ def main():
         and data_path
         and seeds
         and not need_train
-        and (do_plot or do_rmsd or do_q or do_clustering_gen or do_clustering_recon_cfg)
+        and (do_plot or do_rmsd or do_q or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg)
     ):
         first_seed_dir = os.path.join(base_output_dir, f"seed_{seeds[0]}")
         if os.path.isdir(first_seed_dir) and os.path.isfile(pipeline_config_path(first_seed_dir)):
@@ -2921,8 +3017,10 @@ def main():
                     purge_ref.add("rmsd")
                 if "q" in ref_changed and do_q:
                     purge_ref.add("q")
-                if "clustering" in ref_changed and (do_clustering_gen or do_clustering_recon_cfg):
-                    purge_ref.add("clustering")
+                if "coord_clustering" in ref_changed and (do_coord_clustering_gen or do_coord_clustering_recon_cfg):
+                    purge_ref.add("coord_clustering")
+                if "distmap_clustering" in ref_changed and (do_distmap_clustering_gen or do_distmap_clustering_recon_cfg):
+                    purge_ref.add("distmap_clustering")
                 if purge_ref:
                     if not getattr(args, "yes_overwrite", False):
                         _confirm_reference_size_cache_purge(purge_ref)
@@ -2940,7 +3038,7 @@ def main():
         do_visualize_latent = analysis_cfg["rmsd_recon"]["visualize_latent"]
         do_q_recon = analysis_cfg["q_recon"]["enabled"]
         needs = PipelineDataNeeds(
-            need_coords=(need_train or do_plot or do_rmsd or do_rmsd_recon or do_q or do_q_recon or do_clustering_gen or do_clustering_recon_cfg),
+            need_coords=(need_train or do_plot or do_rmsd or do_rmsd_recon or do_q or do_q_recon or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg),
             need_exp_stats=do_plot,
             need_train_test_stats=do_plot,
         ) if data_path else PipelineDataNeeds(need_coords=False, need_exp_stats=False, need_train_test_stats=False)
@@ -2955,15 +3053,19 @@ def main():
             q_variance_list=q_variance_list, q_num_samples_list=q_num_samples_list,
             q_max_recon_train_list=q_max_recon_train_list, q_max_recon_test_list=q_max_recon_test_list,
             q_visualize_latent=analysis_cfg["q_recon"].get("visualize_latent", False),
-            do_clustering_gen=do_clustering_gen, do_clustering_recon=do_clustering_recon_cfg,
-            clustering_variance_list=clustering_variance_list, clustering_num_samples_list=clustering_num_samples_list,
-            clustering_max_recon_train_list=clustering_max_recon_train_list, clustering_max_recon_test_list=clustering_max_recon_test_list,
-            clustering_visualize_latent=analysis_cfg.get("clustering_recon", {}).get("visualize_latent", False),
+            do_coord_clustering_gen=do_coord_clustering_gen, do_coord_clustering_recon=do_coord_clustering_recon_cfg,
+            coord_clustering_variance_list=coord_clustering_variance_list, coord_clustering_num_samples_list=coord_clustering_num_samples_list,
+            coord_clustering_max_recon_train_list=coord_clustering_max_recon_train_list, coord_clustering_max_recon_test_list=coord_clustering_max_recon_test_list,
+            coord_clustering_visualize_latent=analysis_cfg.get("coord_clustering_recon", {}).get("visualize_latent", False),
+            do_distmap_clustering_gen=do_distmap_clustering_gen, do_distmap_clustering_recon=do_distmap_clustering_recon_cfg,
+            distmap_clustering_variance_list=distmap_clustering_variance_list, distmap_clustering_num_samples_list=distmap_clustering_num_samples_list,
+            distmap_clustering_max_recon_train_list=distmap_clustering_max_recon_train_list, distmap_clustering_max_recon_test_list=distmap_clustering_max_recon_test_list,
+            distmap_clustering_visualize_latent=analysis_cfg.get("distmap_clustering_recon", {}).get("visualize_latent", False),
         )
     need_any = needs.need_any() and data_path
 
     # Remove dashboard only when this run will actually execute at least one plotting or analysis step (so we don't delete when everything is already present and we skip)
-    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_clustering_gen or do_clustering_recon_cfg):
+    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg):
         _delete_dashboard(base_output_dir)
 
     stats_only_ok = False

@@ -43,8 +43,10 @@ REQUIRED_KEYS = {
         "rmsd_gen", "rmsd_recon",
         "q_max_train", "q_max_test",
         "q_gen", "q_recon",
-        "clustering_max_train", "clustering_max_test",
-        "clustering_gen", "clustering_recon",
+        "coord_clustering_max_train", "coord_clustering_max_test",
+        "coord_clustering_gen", "coord_clustering_recon",
+        "distmap_clustering_max_train", "distmap_clustering_max_test",
+        "distmap_clustering_gen", "distmap_clustering_recon",
     ],
 }
 # Required keys inside each analysis sub-block (validated when top-level key exists).
@@ -70,13 +72,24 @@ REQUIRED_ANALYSIS_SUBKEYS = {
         "max_recon_train", "max_recon_test", "delta",
         "save_data", "save_pdf_copy", "visualize_latent",
     ],
-    "clustering_gen": [
+    "coord_clustering_gen": [
         "enabled", "overwrite_existing",
         "num_samples", "sample_variance", "n_subsample",
         "query_batch_size",
         "save_data", "save_pdf_copy",
     ],
-    "clustering_recon": [
+    "coord_clustering_recon": [
+        "enabled", "overwrite_existing",
+        "max_recon_train", "max_recon_test", "n_subsample",
+        "save_data", "save_pdf_copy", "visualize_latent",
+    ],
+    "distmap_clustering_gen": [
+        "enabled", "overwrite_existing",
+        "num_samples", "sample_variance", "n_subsample",
+        "query_batch_size",
+        "save_data", "save_pdf_copy",
+    ],
+    "distmap_clustering_recon": [
         "enabled", "overwrite_existing",
         "max_recon_train", "max_recon_test", "n_subsample",
         "save_data", "save_pdf_copy", "visualize_latent",
@@ -89,8 +102,10 @@ REQUIRED_KEYS = {
         "rmsd_gen", "rmsd_recon",
         "q_max_train", "q_max_test",
         "q_gen", "q_recon",
-        "clustering_max_train", "clustering_max_test",
-        "clustering_gen", "clustering_recon",
+        "coord_clustering_max_train", "coord_clustering_max_test",
+        "coord_clustering_gen", "coord_clustering_recon",
+        "distmap_clustering_max_train", "distmap_clustering_max_test",
+        "distmap_clustering_gen", "distmap_clustering_recon",
     ],
     "training_visualization": [
         "enabled",

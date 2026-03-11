@@ -60,6 +60,33 @@ def _feats_from_coords(
     return np.concatenate(parts, axis=0)
 
 
+def _kabsch_align_to_ref(coord: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """Align coord (N, 3) to ref (N, 3) via Kabsch; return aligned (N, 3) float32."""
+    q_c = coord - coord.mean(axis=0, keepdims=True)
+    r_c = ref - ref.mean(axis=0, keepdims=True)
+    ref_mean = ref.mean(axis=0)
+    H = q_c.T @ r_c
+    U, _, Vt = np.linalg.svd(H)
+    d = np.linalg.det(U @ Vt)
+    S = np.eye(3, dtype=H.dtype)
+    S[2, 2] = np.sign(d)
+    R = U @ S @ Vt
+    aligned = q_c @ R + ref_mean
+    return aligned.astype(np.float32)
+
+
+def _feats_from_coords_aligned(coords_np: np.ndarray) -> np.ndarray:
+    """Coords (N, num_atoms, 3) -> align each to coords_np[0], flatten to (N, 3*num_atoms) float32."""
+    if len(coords_np) == 0:
+        return np.zeros((0, 0), dtype=np.float32)
+    ref = coords_np[0]
+    out = []
+    for i in range(len(coords_np)):
+        aligned = _kabsch_align_to_ref(coords_np[i], ref)
+        out.append(aligned.ravel())
+    return np.stack(out, axis=0).astype(np.float32)
+
+
 def _fps_subsample(feats: np.ndarray, n: int, seed: int = 0) -> np.ndarray:
     """Farthest-point sampling on PCA-compressed features. Returns indices of length min(n, len(feats))."""
     N = len(feats)
@@ -142,7 +169,7 @@ def _cluster_source_composition(
     return comp, sources
 
 
-def get_or_compute_clustering_feats(
+def get_or_compute_distmap_clustering_feats(
     cache_path: str,
     coords_np: np.ndarray,
     coords_tensor: torch.Tensor,
@@ -156,7 +183,8 @@ def get_or_compute_clustering_feats(
     max_test: int | None = None,
 ) -> tuple[str, np.ndarray, np.ndarray]:
     """
-    Load or compute train/test subsampled feats; save to cache_path. Returns (cache_path, train_coords_np, test_coords_np).
+    Load or compute train/test subsampled distance-map feats; save to cache_path.
+    Returns (cache_path, train_coords_np, test_coords_np).
     Cache stores train_feats, test_feats (FPS-subsampled to n_subsample) for reuse by gen and recon.
     max_train/max_test cap the reference set sizes (None = use all).
     """
@@ -179,7 +207,7 @@ def get_or_compute_clustering_feats(
             if max_test is not None:
                 test_coords_np = test_coords_np[:max_test]
             if display_root is not None:
-                print(f"  Loaded seed-level clustering feats cache: {display_path(cache_path, display_root)}")
+                print(f"  Loaded seed-level distmap clustering feats cache: {display_path(cache_path, display_root)}")
             return cache_path, train_coords_np, test_coords_np
         except Exception:
             pass
@@ -192,7 +220,6 @@ def get_or_compute_clustering_feats(
         tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
     train_coords_np = coords_np[tr_idx]
     test_coords_np = coords_np[te_idx]
-    # Truncate to reference set size; slice uses at most available (no error if max_* > len)
     if max_train is not None:
         train_coords_np = train_coords_np[:max_train]
     if max_test is not None:
@@ -208,7 +235,72 @@ def get_or_compute_clustering_feats(
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     np.savez_compressed(cache_path, train_feats=train_feats, test_feats=test_feats)
     if display_root is not None:
-        print(f"  Saved seed-level clustering feats cache: {display_path(cache_path, display_root)}")
+        print(f"  Saved seed-level distmap clustering feats cache: {display_path(cache_path, display_root)}")
+    return cache_path, train_coords_np, test_coords_np
+
+
+def get_or_compute_coord_clustering_feats(
+    cache_path: str,
+    coords_np: np.ndarray,
+    coords_tensor: torch.Tensor,
+    training_split: float,
+    split_seed: int,
+    n_subsample: int,
+    fps_seed: int = FPS_SEED,
+    display_root: str | None = None,
+    max_train: int | None = None,
+    max_test: int | None = None,
+) -> tuple[str, np.ndarray, np.ndarray]:
+    """
+    Load or compute train/test subsampled coordinate-aligned feats; save to cache_path.
+    Returns (cache_path, train_coords_np, test_coords_np).
+    Features = Kabsch-align to first structure, flatten; pairwise RMSE = pairwise RMSD.
+    max_train/max_test cap the reference set sizes (None = use all).
+    """
+    if os.path.isfile(cache_path):
+        try:
+            loaded = np.load(cache_path, allow_pickle=False)
+            train_feats = np.asarray(loaded["train_feats"], dtype=np.float32)
+            test_feats = np.asarray(loaded["test_feats"], dtype=np.float32)
+            loaded.close()
+            coords = coords_tensor
+            train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
+            tr_idx = train_ds.indices
+            te_idx = test_ds.indices
+            if hasattr(tr_idx, "tolist"):
+                tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
+            train_coords_np = coords_np[tr_idx]
+            test_coords_np = coords_np[te_idx]
+            if max_train is not None:
+                train_coords_np = train_coords_np[:max_train]
+            if max_test is not None:
+                test_coords_np = test_coords_np[:max_test]
+            if display_root is not None:
+                print(f"  Loaded seed-level coord clustering feats cache: {display_path(cache_path, display_root)}")
+            return cache_path, train_coords_np, test_coords_np
+        except Exception:
+            pass
+    train_ds, test_ds = get_train_test_split(coords_tensor, training_split, split_seed)
+    tr_idx = train_ds.indices
+    te_idx = test_ds.indices
+    if hasattr(tr_idx, "tolist"):
+        tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
+    train_coords_np = coords_np[tr_idx]
+    test_coords_np = coords_np[te_idx]
+    if max_train is not None:
+        train_coords_np = train_coords_np[:max_train]
+    if max_test is not None:
+        test_coords_np = test_coords_np[:max_test]
+    train_feats_full = _feats_from_coords_aligned(train_coords_np)
+    test_feats_full = _feats_from_coords_aligned(test_coords_np)
+    tr_idx_fps = _fps_subsample(train_feats_full, n_subsample, seed=fps_seed)
+    te_idx_fps = _fps_subsample(test_feats_full, n_subsample, seed=fps_seed + 1)
+    train_feats = train_feats_full[tr_idx_fps]
+    test_feats = test_feats_full[te_idx_fps]
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    np.savez_compressed(cache_path, train_feats=train_feats, test_feats=test_feats)
+    if display_root is not None:
+        print(f"  Saved seed-level coord clustering feats cache: {display_path(cache_path, display_root)}")
     return cache_path, train_coords_np, test_coords_np
 
 
@@ -541,11 +633,13 @@ def _write_clustering_figures(
     k_mixing: int,
     n_clusters: int,
     linkage_method: str,
+    n_subsample: int,
 ) -> str:
-    """Write pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity. Returns path to primary figure."""
+    """Write pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity. Optionally save data/ when save_data. Returns path to primary figure."""
     os.makedirs(run_dir_this, exist_ok=True)
     dpi = plot_cfg.get("plot_dpi", 150)
     save_pdf = plot_cfg.get("save_pdf_copy", False)
+    save_data = plot_cfg.get("save_data", False)
     pure_path = os.path.join(run_dir_this, "pure_dendrograms.png")
     mixed_path = os.path.join(run_dir_this, "mixed_dendrograms.png")
     mixing_path = os.path.join(run_dir_this, "mixing_analysis.png")
@@ -554,10 +648,31 @@ def _write_clustering_figures(
     mixing_stats = _fig_mixed_dendrograms(sub_feats, source_order, source_colors, mixed_path, dpi, save_pdf, display_root, k_mixing, n_clusters, linkage_method)
     _fig_mixing_analysis(sub_feats, mixing_stats, source_order, source_colors, mixing_path, dpi, save_pdf, display_root, k_mixing, n_clusters, linkage_method)
     _fig_rmse_similarity(sub_feats, source_order, rmse_path, dpi, save_pdf, display_root)
+    if save_data:
+        data_dir = os.path.join(run_dir_this, "data")
+        os.makedirs(data_dir, exist_ok=True)
+        data_path = os.path.join(data_dir, "clustering_data.npz")
+        out = {}
+        for name in source_order:
+            if name in sub_feats:
+                key = name.lower().replace(" ", "_") + "_feats"
+                out[key] = sub_feats[name]
+        out["n_subsample"] = np.array(n_subsample, dtype=np.int64)
+        out["k_mixing"] = np.array(k_mixing, dtype=np.int64)
+        out["n_clusters"] = np.array(n_clusters, dtype=np.int64)
+        out["linkage_method"] = np.array(linkage_method, dtype=object)
+        if mixing_stats:
+            keys = list(mixing_stats.keys())
+            out["mixing_keys"] = np.array(keys, dtype=object)
+            out["mixing_obs"] = np.array([mixing_stats[k]["obs"] for k in keys], dtype=np.float64)
+            out["mixing_exp"] = np.array([mixing_stats[k]["exp"] for k in keys], dtype=np.float64)
+            out["mixing_ratio"] = np.array([mixing_stats[k]["ratio"] for k in keys], dtype=np.float64)
+        np.savez_compressed(data_path, **out)
+        print(f"  Saved: {display_path(data_path, display_root)}")
     return mixed_path
 
 
-def run_clustering_gen_analysis(
+def run_distmap_clustering_gen_analysis(
     coords_np: np.ndarray,
     coords_tensor: torch.Tensor,
     training_split: float,
@@ -583,17 +698,17 @@ def run_clustering_gen_analysis(
     feats_batch_size: int = 64,
 ) -> str:
     """
-    Clustering gen: load train/test feats from cache, generate structures, subsample gen feats, produce four figures.
-    Saves to run_dir/analysis/clustering/gen/<run_name>/.
+    Distmap clustering gen: load train/test feats from cache, generate structures, subsample gen feats, produce four figures.
+    Saves to run_dir/analysis/distmap_clustering/gen/<run_name>/.
     """
     from .distmap.sample import generate_samples
 
     run_name = output_suffix.lstrip("_") if output_suffix else "default"
-    run_dir_this = os.path.join(run_dir, "analysis", "clustering", "gen", run_name)
+    run_dir_this = os.path.join(run_dir, "analysis", "distmap_clustering", "gen", run_name)
     if clustering_seed_feats_path and os.path.isfile(clustering_seed_feats_path):
         train_feats, test_feats = _load_clustering_cache(clustering_seed_feats_path)
     else:
-        raise ValueError("clustering_gen requires clustering_seed_feats_path (seed-level cache).")
+        raise ValueError("distmap_clustering_gen requires clustering_seed_feats_path (seed-level cache).")
     num_atoms = coords_tensor.size(1)
     embed.eval()
     with torch.no_grad():
@@ -606,11 +721,11 @@ def run_clustering_gen_analysis(
     sub_feats = {"Training": train_feats, "Test": test_feats, "Generated": gen_feats}
     return _write_clustering_figures(
         run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
-        plot_cfg, display_root, k_mixing, n_clusters, linkage_method,
+        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
     )
 
 
-def run_clustering_gen_analysis_multi(
+def run_distmap_clustering_gen_analysis_multi(
     coords_np: np.ndarray,
     coords_tensor: torch.Tensor,
     training_split: float,
@@ -635,11 +750,11 @@ def run_clustering_gen_analysis_multi(
     linkage_method: str = LINKAGE_METHOD,
     feats_batch_size: int = 64,
 ) -> list[str]:
-    """Run clustering gen for multiple num_samples with same variance."""
+    """Run distmap clustering gen for multiple num_samples with same variance."""
     from .distmap.sample import generate_samples
 
     if not clustering_seed_feats_path or not os.path.isfile(clustering_seed_feats_path):
-        raise ValueError("clustering_gen multi requires clustering_seed_feats_path.")
+        raise ValueError("distmap_clustering_gen multi requires clustering_seed_feats_path.")
     train_feats, test_feats = _load_clustering_cache(clustering_seed_feats_path)
     num_atoms = coords_tensor.size(1)
     embed.eval()
@@ -655,16 +770,16 @@ def run_clustering_gen_analysis_multi(
         gen_feats = gen_feats_full[ge_idx]
         sub_feats = {"Training": train_feats, "Test": test_feats, "Generated": gen_feats}
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
-        run_dir_this = os.path.join(run_dir, "analysis", "clustering", "gen", run_name)
+        run_dir_this = os.path.join(run_dir, "analysis", "distmap_clustering", "gen", run_name)
         path = _write_clustering_figures(
             run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
-            plot_cfg, display_root, k_mixing, n_clusters, linkage_method,
+            plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
         )
         out_paths.append(path)
     return out_paths
 
 
-def run_clustering_recon_analysis(
+def run_distmap_clustering_recon_analysis(
     clustering_seed_feats_path: str,
     train_coords_np: np.ndarray,
     test_coords_np: np.ndarray,
@@ -683,8 +798,8 @@ def run_clustering_recon_analysis(
     device: torch.device | None = None,
 ) -> str:
     """
-    Clustering recon: use cached train/test feats; compute train_recon and test_recon feats, FPS subsample; four populations.
-    Saves to run_dir/analysis/clustering/recon[/recon_subdir]/.
+    Distmap clustering recon: use cached train/test feats; compute train_recon and test_recon feats, FPS subsample; four populations.
+    Saves to run_dir/analysis/distmap_clustering/recon[/recon_subdir]/.
     """
     train_feats, test_feats = _load_clustering_cache(clustering_seed_feats_path)
     if device is None:
@@ -704,8 +819,155 @@ def run_clustering_recon_analysis(
         "Test": test_feats,
         "Test recon": test_recon_feats,
     }
-    run_dir_recon = os.path.join(run_dir, "analysis", "clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "clustering", "recon")
+    run_dir_recon = os.path.join(run_dir, "analysis", "distmap_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "distmap_clustering", "recon")
     return _write_clustering_figures(
         run_dir_recon, sub_feats, SOURCE_ORDER_RECON, SOURCE_COLORS_RECON,
-        plot_cfg, display_root, k_mixing, n_clusters, linkage_method,
+        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+    )
+
+
+def run_coord_clustering_gen_analysis(
+    coords_np: np.ndarray,
+    coords_tensor: torch.Tensor,
+    training_split: float,
+    split_seed: int,
+    frozen_vae,
+    embed,
+    latent_dim: int,
+    device: torch.device,
+    run_dir: str,
+    plot_cfg: dict,
+    *,
+    num_samples: int,
+    sample_variance: float,
+    output_suffix: str = "",
+    display_root: str | None = None,
+    coord_clustering_seed_feats_path: str | None = None,
+    train_coords_np: np.ndarray | None = None,
+    test_coords_np: np.ndarray | None = None,
+    n_subsample: int = DEFAULT_N_SUBSAMPLE,
+    k_mixing: int = DEFAULT_K_MIXING,
+    n_clusters: int = DEFAULT_N_CLUSTERS,
+    linkage_method: str = LINKAGE_METHOD,
+) -> str:
+    """
+    Coord clustering gen: load train/test coord feats from cache, generate structures, subsample gen feats, produce four figures.
+    Saves to run_dir/analysis/coord_clustering/gen/<run_name>/.
+    """
+    from .distmap.sample import generate_samples
+
+    run_name = output_suffix.lstrip("_") if output_suffix else "default"
+    run_dir_this = os.path.join(run_dir, "analysis", "coord_clustering", "gen", run_name)
+    if coord_clustering_seed_feats_path and os.path.isfile(coord_clustering_seed_feats_path):
+        train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
+    else:
+        raise ValueError("coord_clustering_gen requires coord_clustering_seed_feats_path (seed-level cache).")
+    num_atoms = coords_tensor.size(1)
+    embed.eval()
+    with torch.no_grad():
+        z = generate_samples(num_samples, latent_dim, device, variance=sample_variance)
+        D_ne = frozen_vae._decode_to_matrix(z)
+        gen_coords = embed(D_ne)
+    gen_coords_np = gen_coords.cpu().numpy()
+    gen_feats_full = _feats_from_coords_aligned(gen_coords_np)
+    ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
+    gen_feats = gen_feats_full[ge_idx]
+    sub_feats = {"Training": train_feats, "Test": test_feats, "Generated": gen_feats}
+    return _write_clustering_figures(
+        run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
+        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+    )
+
+
+def run_coord_clustering_gen_analysis_multi(
+    coords_np: np.ndarray,
+    coords_tensor: torch.Tensor,
+    training_split: float,
+    split_seed: int,
+    frozen_vae,
+    embed,
+    latent_dim: int,
+    device: torch.device,
+    run_dir: str,
+    plot_cfg: dict,
+    *,
+    num_samples_list: list[int],
+    sample_variance: float,
+    variance_suffix: str = "",
+    display_root: str | None = None,
+    coord_clustering_seed_feats_path: str | None = None,
+    train_coords_np: np.ndarray | None = None,
+    test_coords_np: np.ndarray | None = None,
+    n_subsample: int = DEFAULT_N_SUBSAMPLE,
+    k_mixing: int = DEFAULT_K_MIXING,
+    n_clusters: int = DEFAULT_N_CLUSTERS,
+    linkage_method: str = LINKAGE_METHOD,
+) -> list[str]:
+    """Run coord clustering gen for multiple num_samples with same variance."""
+    from .distmap.sample import generate_samples
+
+    if not coord_clustering_seed_feats_path or not os.path.isfile(coord_clustering_seed_feats_path):
+        raise ValueError("coord_clustering_gen multi requires coord_clustering_seed_feats_path.")
+    train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
+    num_atoms = coords_tensor.size(1)
+    embed.eval()
+    sorted_n = sorted(set(num_samples_list))
+    out_paths = []
+    for n in sorted_n:
+        with torch.no_grad():
+            z = generate_samples(n, latent_dim, device, variance=sample_variance)
+            D_ne = frozen_vae._decode_to_matrix(z)
+            gen_coords = embed(D_ne)
+        gen_coords_np = gen_coords.cpu().numpy()
+        gen_feats_full = _feats_from_coords_aligned(gen_coords_np)
+        ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
+        gen_feats = gen_feats_full[ge_idx]
+        sub_feats = {"Training": train_feats, "Test": test_feats, "Generated": gen_feats}
+        run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
+        run_dir_this = os.path.join(run_dir, "analysis", "coord_clustering", "gen", run_name)
+        path = _write_clustering_figures(
+            run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
+            plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+        )
+        out_paths.append(path)
+    return out_paths
+
+
+def run_coord_clustering_recon_analysis(
+    coord_clustering_seed_feats_path: str,
+    train_coords_np: np.ndarray,
+    test_coords_np: np.ndarray,
+    train_recon_coords: np.ndarray,
+    test_recon_coords: np.ndarray,
+    run_dir: str,
+    plot_cfg: dict,
+    *,
+    display_root: str | None = None,
+    recon_subdir: str = "",
+    n_subsample: int = DEFAULT_N_SUBSAMPLE,
+    k_mixing: int = DEFAULT_K_MIXING,
+    n_clusters: int = DEFAULT_N_CLUSTERS,
+    linkage_method: str = LINKAGE_METHOD,
+) -> str:
+    """
+    Coord clustering recon: use cached train/test coord feats; compute train_recon and test_recon aligned feats, FPS subsample; four populations.
+    Saves to run_dir/analysis/coord_clustering/recon[/recon_subdir]/.
+    """
+    train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
+    train_recon_feats_full = _feats_from_coords_aligned(train_recon_coords)
+    test_recon_feats_full = _feats_from_coords_aligned(test_recon_coords)
+    tr_recon_idx = _fps_subsample(train_recon_feats_full, n_subsample, seed=FPS_SEED + 3)
+    te_recon_idx = _fps_subsample(test_recon_feats_full, n_subsample, seed=FPS_SEED + 4)
+    train_recon_feats = train_recon_feats_full[tr_recon_idx]
+    test_recon_feats = test_recon_feats_full[te_recon_idx]
+    sub_feats = {
+        "Training": train_feats,
+        "Train recon": train_recon_feats,
+        "Test": test_feats,
+        "Test recon": test_recon_feats,
+    }
+    run_dir_recon = os.path.join(run_dir, "analysis", "coord_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "coord_clustering", "recon")
+    return _write_clustering_figures(
+        run_dir_recon, sub_feats, SOURCE_ORDER_RECON, SOURCE_COLORS_RECON,
+        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
     )

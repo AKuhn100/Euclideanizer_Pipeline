@@ -69,8 +69,10 @@ analysis:
   rmsd_max_test: null
   q_max_train: null
   q_max_test: null
-  clustering_max_train: null
-  clustering_max_test: null
+  coord_clustering_max_train: null
+  coord_clustering_max_test: null
+  distmap_clustering_max_train: null
+  distmap_clustering_max_test: null
   rmsd_gen:
     enabled: true
     overwrite_existing: false
@@ -107,7 +109,7 @@ analysis:
     save_data: false
     save_pdf_copy: false
     visualize_latent: false
-  clustering_gen:
+  coord_clustering_gen:
     enabled: false
     overwrite_existing: false
     num_samples: [1]
@@ -116,7 +118,25 @@ analysis:
     query_batch_size: 8
     save_data: false
     save_pdf_copy: false
-  clustering_recon:
+  coord_clustering_recon:
+    enabled: false
+    overwrite_existing: false
+    max_recon_train: null
+    max_recon_test: null
+    n_subsample: 50
+    save_data: false
+    save_pdf_copy: false
+    visualize_latent: false
+  distmap_clustering_gen:
+    enabled: false
+    overwrite_existing: false
+    num_samples: [1]
+    sample_variance: [1.0]
+    n_subsample: 50
+    query_batch_size: 8
+    save_data: false
+    save_pdf_copy: false
+  distmap_clustering_recon:
     enabled: false
     overwrite_existing: false
     max_recon_train: null

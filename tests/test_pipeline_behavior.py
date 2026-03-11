@@ -774,29 +774,55 @@ def test_euclideanizer_analysis_all_present_true_when_recon_and_latent_exist(tmp
     ) is True
 
 
-def test_euclideanizer_analysis_all_present_true_when_clustering_gen_exists(tmp_path):
-    """When do_clustering_gen is True and primary figure exists at analysis/clustering/gen/<run_name>/mixed_dendrograms.png, clustering gen is present."""
-    run_dir = tmp_path / "analysis" / "clustering" / "gen" / "default"
+def test_euclideanizer_analysis_all_present_true_when_coord_clustering_gen_exists(tmp_path):
+    """When do_coord_clustering_gen is True and primary figure exists at analysis/coord_clustering/gen/.../mixed_dendrograms.png, coord clustering gen is present."""
+    run_dir = tmp_path / "analysis" / "coord_clustering" / "gen" / "default"
     run_dir.mkdir(parents=True)
     (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=False, do_q_recon=False,
-        do_clustering_gen=True, do_clustering_recon=False,
-        clustering_variance_list=[1.0], clustering_num_samples_list=[10],
+        do_coord_clustering_gen=True, do_coord_clustering_recon=False,
+        coord_clustering_variance_list=[1.0], coord_clustering_num_samples_list=[10],
     ) is True
 
 
-def test_euclideanizer_analysis_all_present_false_when_clustering_recon_enabled_but_missing(tmp_path):
-    """When do_clustering_recon is True and recon figure is missing, analysis is not all present."""
-    (tmp_path / "analysis" / "clustering" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "clustering" / "gen" / "default" / "mixed_dendrograms.png").write_bytes(b"x")
+def test_euclideanizer_analysis_all_present_true_when_distmap_clustering_gen_exists(tmp_path):
+    """When do_distmap_clustering_gen is True and primary figure exists at analysis/distmap_clustering/gen/.../mixed_dendrograms.png, distmap clustering gen is present."""
+    run_dir = tmp_path / "analysis" / "distmap_clustering" / "gen" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=False, do_q_recon=False,
-        do_clustering_gen=True, do_clustering_recon=True,
-        clustering_variance_list=[1.0], clustering_num_samples_list=[10],
-        clustering_max_recon_train_list=[None], clustering_max_recon_test_list=[None],
+        do_distmap_clustering_gen=True, do_distmap_clustering_recon=False,
+        distmap_clustering_variance_list=[1.0], distmap_clustering_num_samples_list=[10],
+    ) is True
+
+
+def test_euclideanizer_analysis_all_present_false_when_coord_clustering_recon_enabled_but_missing(tmp_path):
+    """When do_coord_clustering_recon is True and recon figure is missing, analysis is not all present."""
+    (tmp_path / "analysis" / "coord_clustering" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "coord_clustering" / "gen" / "default" / "mixed_dendrograms.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=False, do_q_recon=False,
+        do_coord_clustering_gen=True, do_coord_clustering_recon=True,
+        coord_clustering_variance_list=[1.0], coord_clustering_num_samples_list=[10],
+        coord_clustering_max_recon_train_list=[None], coord_clustering_max_recon_test_list=[None],
+    ) is False
+
+
+def test_euclideanizer_analysis_all_present_false_when_distmap_clustering_recon_enabled_but_missing(tmp_path):
+    """When do_distmap_clustering_recon is True and recon figure is missing, analysis is not all present."""
+    (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default").mkdir(parents=True)
+    (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default" / "mixed_dendrograms.png").write_bytes(b"x")
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
+        do_q=False, do_q_recon=False,
+        do_distmap_clustering_gen=True, do_distmap_clustering_recon=True,
+        distmap_clustering_variance_list=[1.0], distmap_clustering_num_samples_list=[10],
+        distmap_clustering_max_recon_train_list=[None], distmap_clustering_max_recon_test_list=[None],
     ) is False
 
 
@@ -836,20 +862,22 @@ def test_reference_size_config_extracts_keys():
         "analysis": {
             "rmsd_max_train": 500, "rmsd_max_test": 100,
             "q_max_train": 300, "q_max_test": 50,
-            "clustering_max_train": 400, "clustering_max_test": 80,
+            "coord_clustering_max_train": 350, "coord_clustering_max_test": 70,
+            "distmap_clustering_max_train": 400, "distmap_clustering_max_test": 80,
         },
     }
     ref = _reference_size_config(cfg)
     assert ref["plotting"] == (100, 200)
     assert ref["rmsd"] == (500, 100)
     assert ref["q"] == (300, 50)
-    assert ref["clustering"] == (400, 80)
+    assert ref["coord_clustering"] == (350, 70)
+    assert ref["distmap_clustering"] == (400, 80)
 
 
 def test_reference_size_changed_detects_differences():
     """_reference_size_changed returns components whose ref config differs."""
-    saved = {"plotting": (100, 200), "rmsd": (500, 100), "q": (300, 50), "clustering": (400, 80)}
-    current = {"plotting": (100, 200), "rmsd": (500, 200), "q": (300, 50), "clustering": (400, 80)}
+    saved = {"plotting": (100, 200), "rmsd": (500, 100), "q": (300, 50), "coord_clustering": (350, 70), "distmap_clustering": (400, 80)}
+    current = {"plotting": (100, 200), "rmsd": (500, 200), "q": (300, 50), "coord_clustering": (350, 70), "distmap_clustering": (400, 80)}
     assert _reference_size_changed(saved, current) == {"rmsd"}
     current["plotting"] = (50, 200)
     assert _reference_size_changed(saved, current) == {"plotting", "rmsd"}
