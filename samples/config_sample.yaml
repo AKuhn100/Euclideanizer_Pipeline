@@ -36,6 +36,7 @@ euclideanizer:
   lambda_w_diag_recon: [2.0]   # weight for diagonal Wasserstein on reconstruction
   lambda_w_diag_gen: [2.0]   # weight for diagonal Wasserstein on generation
   num_diags: [50]   # number of diagonals (genomic separations) used for diagonal Wasserstein loss (1..num_diags)
+  lambda_kabsch_mse: 0   # weight for MSE(gt_coords, Kabsch_aligned(recon_coords)); 0 = off
   memory_efficient: false   # if true, save best model to disk on each new best (reduces RAM)
   save_final_models_per_stretch: true   # if true, keep euclideanizer_last.pt for each epoch segment; if false, delete previous segment's last after resume
 

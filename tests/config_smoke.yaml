@@ -32,6 +32,7 @@ euclideanizer:
   lambda_w_diag_recon: 1.0
   lambda_w_diag_gen: 1.0
   num_diags: 50
+  lambda_kabsch_mse: 0
   memory_efficient: false
   save_final_models_per_stretch: false
 

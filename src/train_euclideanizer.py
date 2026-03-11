@@ -53,6 +53,7 @@ def train_euclideanizer(
     lambda_w_diag_recon = eu_cfg["lambda_w_diag_recon"]
     lambda_w_diag_gen = eu_cfg["lambda_w_diag_gen"]
     num_diags = eu_cfg["num_diags"]
+    lambda_kabsch_mse = eu_cfg["lambda_kabsch_mse"]
     is_resume = resume_from_path is not None and additional_epochs is not None
 
     if is_resume:
@@ -80,6 +81,7 @@ def train_euclideanizer(
         lambda_w_diag_recon=lambda_w_diag_recon,
         lambda_w_diag_gen=lambda_w_diag_gen,
         num_diags=num_diags,
+        lambda_kabsch_mse=lambda_kabsch_mse,
     )
     train_loss_hist, val_loss_hist = [], []
     best_val = float("inf")
@@ -117,12 +119,17 @@ def train_euclideanizer(
             with torch.no_grad():
                 mu = frozen_vae.encode(gt_log)
                 D_noneuclid = frozen_vae._decode_to_matrix(mu)
-            D_euclid_recon = embed.forward_to_distmap(D_noneuclid)
+            recon_coords = embed.forward(D_noneuclid)
+            D_euclid_recon = torch.log1p(utils.get_distmaps(recon_coords))
             z_gen = torch.randn(B, latent_dim, device=device)
             with torch.no_grad():
                 D_noneuclid_gen = frozen_vae._decode_to_matrix(z_gen)
             D_euclid_gen = embed.forward_to_distmap(D_noneuclid_gen)
-            loss, *_ = euclideanizer_loss(gt_log, D_euclid_recon, D_euclid_gen, **loss_kwargs)
+            loss, *_ = euclideanizer_loss(
+                gt_log, D_euclid_recon, D_euclid_gen,
+                gt_coords=batch, recon_coords=recon_coords,
+                **loss_kwargs,
+            )
             optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(embed.parameters(), max_norm=10.0)
@@ -141,11 +148,16 @@ def train_euclideanizer(
                 gt_log = torch.log1p(batch_dm)
                 mu = frozen_vae.encode(gt_log)
                 D_noneuclid = frozen_vae._decode_to_matrix(mu)
-                D_euclid_recon = embed.forward_to_distmap(D_noneuclid)
+                recon_coords = embed.forward(D_noneuclid)
+                D_euclid_recon = torch.log1p(utils.get_distmaps(recon_coords))
                 z_gen = torch.randn(B, latent_dim, device=device)
                 D_noneuclid_gen = frozen_vae._decode_to_matrix(z_gen)
                 D_euclid_gen = embed.forward_to_distmap(D_noneuclid_gen)
-                loss, *_ = euclideanizer_loss(gt_log, D_euclid_recon, D_euclid_gen, **loss_kwargs)
+                loss, *_ = euclideanizer_loss(
+                    gt_log, D_euclid_recon, D_euclid_gen,
+                    gt_coords=batch, recon_coords=recon_coords,
+                    **loss_kwargs,
+                )
                 val_sum += loss.item()
                 val_n += 1
         avg_val = val_sum / val_n

@@ -28,6 +28,7 @@ REQUIRED_KEYS = {
         "lambda_mse", "lambda_w_recon", "lambda_w_gen",
         "lambda_w_diag_recon", "lambda_w_diag_gen",
         "num_diags",
+        "lambda_kabsch_mse",
         "memory_efficient", "save_final_models_per_stretch",
     ],
     "plotting": [
