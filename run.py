@@ -71,7 +71,7 @@ from src.distmap.model import ChromVAE_Conv
 from src.distmap.sample import generate_samples as dm_generate_samples
 from src.euclideanizer.model import Euclideanizer, load_frozen_vae
 from src.analysis_metrics import ANALYSIS_METRICS
-from src.rmsd import plot_latent_distribution
+from src.rmsd import plot_latent_distribution, plot_latent_correlation
 from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
@@ -1116,7 +1116,8 @@ def _euclideanizer_analysis_all_present(
                     return False
                 if vis_latent:
                     latent_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/latent_distribution.png")
-                    if not os.path.isfile(latent_fig):
+                    latent_corr_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/latent_correlation.png")
+                    if not os.path.isfile(latent_fig) or not os.path.isfile(latent_corr_fig):
                         return False
             else:
                 for max_train in max_recon_train_list_s:
@@ -1127,7 +1128,8 @@ def _euclideanizer_analysis_all_present(
                             return False
                         if vis_latent:
                             latent_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{subdir}/latent_distribution.png")
-                            if not os.path.isfile(latent_fig):
+                            latent_corr_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{subdir}/latent_correlation.png")
+                            if not os.path.isfile(latent_fig) or not os.path.isfile(latent_corr_fig):
                                 return False
     return True
 
@@ -2077,7 +2079,8 @@ def _run_one_distmap_group(
                                                 )
                                             elif resume and n_recon == 1:
                                                 _log(f"  [skip] {spec.id} recon", since_start=time.time() - pipeline_start, style="skip")
-                                            if _visualize_latent and not (resume and os.path.isfile(latent_fig)):
+                                            latent_corr_fig = os.path.join(os.path.dirname(latent_fig), "latent_correlation.png") if _visualize_latent else None
+                                            if _visualize_latent and not (resume and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig)):
                                                 train_mu, test_mu = _get_latent_vectors_euclideanizer(
                                                     frozen_vae, device, coords, training_split, split_seed, utils,
                                                     max_train=max_recon_train, max_test=max_recon_test,
@@ -2087,7 +2090,12 @@ def _run_one_distmap_group(
                                                     plot_dpi=plot_dpi, display_root=base_output_dir,
                                                     save_pdf_copy=recon_cfg.get("save_pdf_copy", False),
                                                 )
-                                            elif resume and _visualize_latent and n_recon == 1 and os.path.isfile(latent_fig):
+                                                plot_latent_correlation(
+                                                    train_mu, test_mu, latent_corr_fig,
+                                                    plot_dpi=plot_dpi, display_root=base_output_dir,
+                                                    save_pdf_copy=recon_cfg.get("save_pdf_copy", False),
+                                                )
+                                            elif resume and _visualize_latent and n_recon == 1 and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig):
                                                 _log(f"  [skip] latent distribution", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     

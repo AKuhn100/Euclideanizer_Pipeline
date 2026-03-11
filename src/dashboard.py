@@ -115,6 +115,10 @@ def _append_rmsd_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) ->
     if os.path.isfile(latent_fig):
         rel = os.path.join(base_rel, "recon", "latent_distribution.png")
         blocks.append({"type": "latent_distribution", "name": "Latent distribution (RMSD)", "source_path": rel})
+        latent_corr = os.path.join(recon_dir, "latent_correlation.png")
+        if os.path.isfile(latent_corr):
+            rel = os.path.join(base_rel, "recon", "latent_correlation.png")
+            blocks.append({"type": "latent_correlation", "name": "Latent correlation (RMSD)", "source_path": rel})
     else:
         for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
             subdir_path = os.path.join(recon_dir, subdir)
@@ -122,6 +126,10 @@ def _append_rmsd_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) ->
             if os.path.isfile(latent_sub):
                 rel = os.path.join(base_rel, "recon", subdir, "latent_distribution.png")
                 blocks.append({"type": "latent_distribution", "name": f"Latent distribution (RMSD) {subdir}", "source_path": rel})
+                latent_corr = os.path.join(subdir_path, "latent_correlation.png")
+                if os.path.isfile(latent_corr):
+                    rel = os.path.join(base_rel, "recon", subdir, "latent_correlation.png")
+                    blocks.append({"type": "latent_correlation", "name": f"Latent correlation (RMSD) {subdir}", "source_path": rel})
 
 
 def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
@@ -153,6 +161,10 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
         if os.path.isfile(latent_fig):
             rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", "latent_distribution.png")
             blocks.append({"type": "latent_distribution", "name": "Latent distribution (Q)", "source_path": rel})
+            latent_corr = os.path.join(recon_dir, "latent_correlation.png")
+            if os.path.isfile(latent_corr):
+                rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", "latent_correlation.png")
+                blocks.append({"type": "latent_correlation", "name": "Latent correlation (Q)", "source_path": rel})
         else:
             for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
                 subdir_path = os.path.join(recon_dir, subdir)
@@ -160,6 +172,10 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                 if os.path.isfile(latent_sub):
                     rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_distribution.png")
                     blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Q) {subdir}", "source_path": rel})
+                    latent_corr = os.path.join(subdir_path, "latent_correlation.png")
+                    if os.path.isfile(latent_corr):
+                        rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_correlation.png")
+                        blocks.append({"type": "latent_correlation", "name": f"Latent correlation (Q) {subdir}", "source_path": rel})
     _append_clustering_analysis_blocks(run_root, blocks)
     return blocks
 
@@ -199,6 +215,10 @@ def _append_clustering_analysis_blocks(run_root: str, blocks: list[dict[str, str
     if os.path.isfile(latent_fig):
         rel = os.path.join(base_rel, "recon", "latent_distribution.png")
         blocks.append({"type": "latent_distribution", "name": "Latent distribution (Clustering)", "source_path": rel})
+        latent_corr = os.path.join(recon_dir, "latent_correlation.png")
+        if os.path.isfile(latent_corr):
+            rel = os.path.join(base_rel, "recon", "latent_correlation.png")
+            blocks.append({"type": "latent_correlation", "name": "Latent correlation (Clustering)", "source_path": rel})
     else:
         for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
             subdir_path = os.path.join(recon_dir, subdir)
@@ -206,6 +226,10 @@ def _append_clustering_analysis_blocks(run_root: str, blocks: list[dict[str, str
             if os.path.isfile(latent_sub):
                 rel = os.path.join(base_rel, "recon", subdir, "latent_distribution.png")
                 blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Clustering) {subdir}", "source_path": rel})
+                latent_corr = os.path.join(subdir_path, "latent_correlation.png")
+                if os.path.isfile(latent_corr):
+                    rel = os.path.join(base_rel, "recon", subdir, "latent_correlation.png")
+                    blocks.append({"type": "latent_correlation", "name": f"Latent correlation (Clustering) {subdir}", "source_path": rel})
 
 
 def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
@@ -777,7 +801,7 @@ def _html_content(manifest: dict) -> str:
 
     function blockTypeOrder(type, name) {
       const n = (name || '').toUpperCase();
-      if (type === 'latent_distribution') {
+      if (type === 'latent_distribution' || type === 'latent_correlation') {
         if (n.indexOf('RMSD') >= 0) return 6;
         if (n.indexOf('(Q)') >= 0 || n.indexOf(' Q)') >= 0) return 9;
         if (n.indexOf('CLUSTERING') >= 0) return 11;

@@ -615,3 +615,58 @@ def plot_latent_distribution(
     plt.close()
     if display_root is not None:
         print(f"  Saved: {display_path(out_path, display_root)}")
+
+
+def plot_latent_correlation(
+    train_mu_np: np.ndarray,
+    test_mu_np: np.ndarray,
+    out_path: str,
+    plot_dpi: int = 150,
+    display_root: str | None = None,
+    save_pdf_copy: bool = False,
+) -> None:
+    """
+    Plot Pearson correlation between train and test latent statistics: two square panels.
+    Left: mean per dimension (train mean vs test mean); right: std per dimension (train std vs test std).
+    Each panel has x = training value, y = test value, one point per dimension, dashed y=x, with Pearson r and R².
+    """
+    mean_train = np.mean(train_mu_np, axis=0)
+    mean_test = np.mean(test_mu_np, axis=0)
+    std_train = np.std(train_mu_np, axis=0)
+    std_test = np.std(test_mu_np, axis=0)
+
+    def _pearson_r2(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
+        r = np.corrcoef(x, y)[0, 1]
+        r = float(r) if not np.isnan(r) else 0.0
+        return r, r * r
+
+    r_mean, r2_mean = _pearson_r2(mean_train, mean_test)
+    r_std, r2_std = _pearson_r2(std_train, std_test)
+
+    fig, (ax_mean, ax_std) = plt.subplots(1, 2, figsize=(10, 5))
+    for ax, x_vals, y_vals, r_val, r2_val, title in [
+        (ax_mean, mean_train, mean_test, r_mean, r2_mean, "Mean (train vs test)"),
+        (ax_std, std_train, std_test, r_std, r2_std, "Std (train vs test)"),
+    ]:
+        ax.scatter(x_vals, y_vals, alpha=0.8, s=20)
+        ax.set_xlabel("Train")
+        ax.set_ylabel("Test")
+        ax.set_title(f"{title}\nPearson r = {r_val:.4f}, R² = {r2_val:.4f}")
+        lo = min(x_vals.min(), y_vals.min())
+        hi = max(x_vals.max(), y_vals.max())
+        margin = (hi - lo) * 0.05 if hi > lo else 0.1
+        ax.set_xlim(lo - margin, hi + margin)
+        ax.set_ylim(lo - margin, hi + margin)
+        ax.set_aspect("equal")
+        diag_lo = min(ax.get_xlim()[0], ax.get_ylim()[0])
+        diag_hi = max(ax.get_xlim()[1], ax.get_ylim()[1])
+        ax.plot([diag_lo, diag_hi], [diag_lo, diag_hi], "k--", alpha=0.6, label="y = x")
+        ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    plt.savefig(out_path, dpi=plot_dpi)
+    if save_pdf_copy:
+        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
+    plt.close()
+    if display_root is not None:
+        print(f"  Saved: {display_path(out_path, display_root)}")
