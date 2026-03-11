@@ -115,6 +115,9 @@ analysis:
     num_samples: [10]
     sample_variance: [1.0]
     n_subsample: 50
+    k_mixing: 10
+    n_clusters: 8
+    linkage_method: "average"
     query_batch_size: 8
     save_data: false
     save_pdf_copy: false
@@ -124,6 +127,9 @@ analysis:
     max_recon_train: null
     max_recon_test: null
     n_subsample: 50
+    k_mixing: 10
+    n_clusters: 8
+    linkage_method: "average"
     save_data: false
     save_pdf_copy: false
     visualize_latent: false
@@ -133,7 +139,11 @@ analysis:
     num_samples: [10]
     sample_variance: [1.0]
     n_subsample: 50
+    k_mixing: 10
+    n_clusters: 8
+    linkage_method: "average"
     query_batch_size: 8
+    feats_batch_size: 8
     save_data: false
     save_pdf_copy: false
   distmap_clustering_recon:
@@ -142,6 +152,10 @@ analysis:
     max_recon_train: null
     max_recon_test: null
     n_subsample: 50
+    k_mixing: 10
+    n_clusters: 8
+    linkage_method: "average"
+    feats_batch_size: 8
     save_data: false
     save_pdf_copy: false
     visualize_latent: false

@@ -75,23 +75,28 @@ REQUIRED_ANALYSIS_SUBKEYS = {
     "coord_clustering_gen": [
         "enabled", "overwrite_existing",
         "num_samples", "sample_variance", "n_subsample",
+        "k_mixing", "n_clusters", "linkage_method",
         "query_batch_size",
         "save_data", "save_pdf_copy",
     ],
     "coord_clustering_recon": [
         "enabled", "overwrite_existing",
         "max_recon_train", "max_recon_test", "n_subsample",
+        "k_mixing", "n_clusters", "linkage_method",
         "save_data", "save_pdf_copy", "visualize_latent",
     ],
     "distmap_clustering_gen": [
         "enabled", "overwrite_existing",
         "num_samples", "sample_variance", "n_subsample",
-        "query_batch_size",
+        "k_mixing", "n_clusters", "linkage_method",
+        "query_batch_size", "feats_batch_size",
         "save_data", "save_pdf_copy",
     ],
     "distmap_clustering_recon": [
         "enabled", "overwrite_existing",
         "max_recon_train", "max_recon_test", "n_subsample",
+        "k_mixing", "n_clusters", "linkage_method",
+        "feats_batch_size",
         "save_data", "save_pdf_copy", "visualize_latent",
     ],
 }

@@ -3138,8 +3138,13 @@ def main():
     else:
         _log(f"Detected {n_gpus} GPU(s). Using single process.", since_start=time.time() - pipeline_start, style="info")
 
-    # Multi-GPU: ensure per-seed train/test stats caches exist, then free main-process data so only workers hold copies (reduces memory use).
-    if use_multi_gpu and data_path and coords is not None and (do_plot or do_rmsd or do_q or do_q_recon_cfg):
+    # Multi-GPU: ensure per-seed train/test stats and clustering feats caches exist, then free main-process data so only workers hold copies (reduces memory use).
+    _need_precompute_caches = (
+        do_plot or do_rmsd or do_q or do_q_recon_cfg
+        or do_coord_clustering_gen or do_coord_clustering_recon_cfg
+        or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg
+    )
+    if use_multi_gpu and data_path and coords is not None and _need_precompute_caches:
         plot_mt = plot_cfg.get("max_train")
         plot_mc = plot_cfg.get("max_test")
         for seed in seeds:
@@ -3162,6 +3167,25 @@ def main():
                     output_dir, data_path, num_structures, num_atoms, seed, training_split,
                     train_stats, test_stats,
                     max_train=plot_mt, max_test=plot_mc,
+                )
+        # Precompute all seed-level analysis caches (RMSD, Q, coord_clustering, distmap_clustering) so workers only read (avoid concurrent write corruption).
+        for spec in ANALYSIS_METRICS:
+            do_gen = analysis_cfg.get(spec.gen_key, {}).get("enabled", False)
+            do_recon = analysis_cfg.get(spec.recon_key, {}).get("enabled", False)
+            if not do_gen and not do_recon:
+                continue
+            _ref_mt = analysis_cfg.get(f"{spec.id}_max_train")
+            _ref_mc = analysis_cfg.get(f"{spec.id}_max_test")
+            if spec.id == "q" and (_ref_mt is None or _ref_mc is None):
+                continue
+            for seed in seeds:
+                output_dir = os.path.join(base_output_dir, f"seed_{seed}")
+                cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, _ref_mt, _ref_mc))
+                if os.path.isfile(cache_path):
+                    continue
+                spec.get_or_compute_test_to_train(
+                    cache_path, coords_np, coords, training_split, seed, base_output_dir,
+                    **spec.kwargs_for_cache(analysis_cfg, _ref_mt, _ref_mc),
                 )
         _log("Freed main-process data before spawning workers (multi-GPU).", since_start=time.time() - pipeline_start, style="info")
         coords_np = coords = exp_stats = None

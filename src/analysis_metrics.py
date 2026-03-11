@@ -21,10 +21,10 @@ def _rmsd_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_t
 
 
 def _rmsd_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
-    gen = analysis_cfg.get("rmsd_gen") or {}
+    gen = analysis_cfg["rmsd_gen"]
     mt = max_train if max_train is not None else analysis_cfg.get("rmsd_max_train")
     mc = max_test if max_test is not None else analysis_cfg.get("rmsd_max_test")
-    out = {"query_batch_size": gen.get("query_batch_size", 128)}
+    out = {"query_batch_size": gen["query_batch_size"]}
     if mt is not None:
         out["max_train"] = mt
     if mc is not None:
@@ -43,7 +43,7 @@ def _rmsd_get_or_compute(
 ):
     return rmsd.get_or_compute_test_to_train_rmsd(
         coords_np, coords_tensor, training_split, split_seed, cache_path,
-        query_batch_size=kwargs.get("query_batch_size", 128),
+        query_batch_size=kwargs["query_batch_size"],
         display_root=display_root,
         max_train=kwargs.get("max_train"),
         max_test=kwargs.get("max_test"),
@@ -51,24 +51,24 @@ def _rmsd_get_or_compute(
 
 
 def _rmsd_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    gen = analysis_cfg.get("rmsd_gen") or {}
+    gen = analysis_cfg["rmsd_gen"]
     return {
         "plot_dpi": plot_dpi,
-        "save_pdf_copy": gen.get("save_pdf_copy", False),
+        "save_pdf_copy": gen["save_pdf_copy"],
         "rmsd_num_samples": gen.get("num_samples"),
         "rmsd_sample_variance": gen.get("sample_variance"),
-        "rmsd_query_batch_size": gen.get("query_batch_size", 128),
-        "save_data": gen.get("save_data", False),
-        "save_structures_gro": gen.get("save_structures_gro", False),
+        "rmsd_query_batch_size": gen["query_batch_size"],
+        "save_data": gen["save_data"],
+        "save_structures_gro": gen["save_structures_gro"],
     }
 
 
 def _rmsd_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    recon = analysis_cfg.get("rmsd_recon") or {}
+    recon = analysis_cfg["rmsd_recon"]
     return {
-        "save_data": recon.get("save_data", False),
+        "save_data": recon["save_data"],
         "plot_dpi": plot_dpi,
-        "save_pdf_copy": recon.get("save_pdf_copy", False),
+        "save_pdf_copy": recon["save_pdf_copy"],
     }
 
 
@@ -81,15 +81,15 @@ def _q_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test
 
 
 def _q_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
-    gen = analysis_cfg.get("q_gen") or {}
-    recon = analysis_cfg.get("q_recon") or {}
+    gen = analysis_cfg["q_gen"]
+    recon = analysis_cfg["q_recon"]
     mt = max_train if max_train is not None else analysis_cfg.get("q_max_train")
     mc = max_test if max_test is not None else analysis_cfg.get("q_max_test")
     return {
         "max_train": mt if mt is not None else 500,
         "max_test": mc if mc is not None else 200,
-        "delta": recon.get("delta", gen.get("delta", q_analysis.DEFAULT_DELTA)),
-        "query_batch_size": gen.get("query_batch_size", 64),
+        "delta": recon["delta"],
+        "query_batch_size": gen["query_batch_size"],
     }
 
 
@@ -106,31 +106,31 @@ def _q_get_or_compute(
         coords_np, coords_tensor, training_split, split_seed, cache_path,
         max_train=kwargs["max_train"],
         max_test=kwargs["max_test"],
-        delta=kwargs.get("delta", q_analysis.DEFAULT_DELTA),
-        query_batch_size=kwargs.get("query_batch_size", 64),
+        delta=kwargs["delta"],
+        query_batch_size=kwargs["query_batch_size"],
         display_root=display_root,
     )
 
 
 def _q_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    gen = analysis_cfg.get("q_gen") or {}
+    gen = analysis_cfg["q_gen"]
     return {
         "plot_dpi": plot_dpi,
-        "save_pdf_copy": gen.get("save_pdf_copy", False),
+        "save_pdf_copy": gen["save_pdf_copy"],
         "q_num_samples": gen.get("num_samples"),
         "q_sample_variance": gen.get("sample_variance"),
-        "q_query_batch_size": gen.get("query_batch_size", 64),
-        "save_data": gen.get("save_data", False),
-        "save_structures_gro": gen.get("save_structures_gro", False),
+        "q_query_batch_size": gen["query_batch_size"],
+        "save_data": gen["save_data"],
+        "save_structures_gro": gen["save_structures_gro"],
     }
 
 
 def _q_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
-    recon = analysis_cfg.get("q_recon") or {}
+    recon = analysis_cfg["q_recon"]
     return {
-        "save_data": recon.get("save_data", False),
+        "save_data": recon["save_data"],
         "plot_dpi": plot_dpi,
-        "save_pdf_copy": recon.get("save_pdf_copy", False),
+        "save_pdf_copy": recon["save_pdf_copy"],
     }
 
 
@@ -148,12 +148,12 @@ def _rmsd_precomputed_kwargs(tt, train_c, test_c):
 
 def _q_gen_extra_kwargs(analysis_cfg: dict) -> dict:
     gen = analysis_cfg.get("q_gen") or {}
-    return {"delta": gen.get("delta", q_analysis.DEFAULT_DELTA)}
+    return {"delta": gen["delta"]}
 
 
 def _q_recon_extra_kwargs(analysis_cfg: dict) -> dict:
     recon = analysis_cfg.get("q_recon") or {}
-    return {"delta": recon.get("delta", q_analysis.DEFAULT_DELTA)}
+    return {"delta": recon["delta"]}
 
 
 def _q_precomputed_kwargs(tt, train_c, test_c):
@@ -161,11 +161,11 @@ def _q_precomputed_kwargs(tt, train_c, test_c):
 
 
 def _make_clustering_cache_filename(prefix: str):
-    """Returns cache_filename(analysis_cfg, max_train, max_test) for coord or distmap clustering."""
+    """Returns cache_filename(analysis_cfg, max_train, max_test) for coord or distmap clustering. Config must contain all required keys."""
 
     def _fn(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
-        gen = analysis_cfg.get(f"{prefix}_gen") or {}
-        n = gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE)
+        gen = analysis_cfg[f"{prefix}_gen"]
+        n = gen["n_subsample"]
         mt = max_train if max_train is not None else analysis_cfg.get(f"{prefix}_max_train")
         mc = max_test if max_test is not None else analysis_cfg.get(f"{prefix}_max_test")
         if mt is None and mc is None:
@@ -176,18 +176,18 @@ def _make_clustering_cache_filename(prefix: str):
 
 
 def _make_clustering_kwargs_for_cache(prefix: str, include_batch_size: bool = False):
-    """Returns kwargs_for_cache(analysis_cfg, max_train, max_test)."""
+    """Returns kwargs_for_cache(analysis_cfg, max_train, max_test). Config must contain all required keys."""
 
     def _fn(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> dict:
-        gen = analysis_cfg.get(f"{prefix}_gen") or {}
+        gen = analysis_cfg[f"{prefix}_gen"]
         mt = max_train if max_train is not None else analysis_cfg.get(f"{prefix}_max_train")
         mc = max_test if max_test is not None else analysis_cfg.get(f"{prefix}_max_test")
         out = {
-            "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
+            "n_subsample": gen["n_subsample"],
             "fps_seed": clustering.FPS_SEED,
         }
         if include_batch_size:
-            out["batch_size"] = gen.get("feats_batch_size", gen.get("query_batch_size", 64))
+            out["batch_size"] = gen["feats_batch_size"]
         if mt is not None:
             out["max_train"] = mt
         if mc is not None:
@@ -198,7 +198,7 @@ def _make_clustering_kwargs_for_cache(prefix: str, include_batch_size: bool = Fa
 
 
 def _make_clustering_get_or_compute(use_batch_size: bool):
-    """Returns get_or_compute wrapper calling coord or distmap clustering feats."""
+    """Returns get_or_compute wrapper calling coord or distmap clustering feats. Kwargs come from config via kwargs_for_cache."""
 
     def _fn(
         cache_path: str,
@@ -213,7 +213,7 @@ def _make_clustering_get_or_compute(use_batch_size: bool):
             return clustering.get_or_compute_distmap_clustering_feats(
                 cache_path, coords_np, coords_tensor, training_split, split_seed,
                 n_subsample=kwargs["n_subsample"],
-                batch_size=kwargs.get("batch_size", 64),
+                batch_size=kwargs["batch_size"],
                 fps_seed=kwargs.get("fps_seed", clustering.FPS_SEED),
                 display_root=display_root,
                 max_train=kwargs.get("max_train"),
@@ -233,22 +233,22 @@ def _make_clustering_get_or_compute(use_batch_size: bool):
 
 def _make_clustering_build_gen_plot_cfg(prefix: str):
     def _fn(analysis_cfg: dict, plot_dpi: int) -> dict:
-        gen = analysis_cfg.get(f"{prefix}_gen") or {}
+        gen = analysis_cfg[f"{prefix}_gen"]
         return {
             "plot_dpi": plot_dpi,
-            "save_pdf_copy": gen.get("save_pdf_copy", False),
-            "save_data": gen.get("save_data", False),
+            "save_pdf_copy": gen["save_pdf_copy"],
+            "save_data": gen["save_data"],
         }
     return _fn
 
 
 def _make_clustering_build_recon_plot_cfg(prefix: str):
     def _fn(analysis_cfg: dict, plot_dpi: int) -> dict:
-        recon = analysis_cfg.get(f"{prefix}_recon") or {}
+        recon = analysis_cfg[f"{prefix}_recon"]
         return {
-            "save_data": recon.get("save_data", False),
+            "save_data": recon["save_data"],
             "plot_dpi": plot_dpi,
-            "save_pdf_copy": recon.get("save_pdf_copy", False),
+            "save_pdf_copy": recon["save_pdf_copy"],
         }
     return _fn
 
@@ -263,30 +263,30 @@ def _make_clustering_precomputed_kwargs(seed_feats_key: str):
 
 def _make_clustering_gen_extra_kwargs(prefix: str, include_batch_size: bool = False):
     def _fn(analysis_cfg: dict) -> dict:
-        gen = analysis_cfg.get(f"{prefix}_gen") or {}
+        gen = analysis_cfg[f"{prefix}_gen"]
         out = {
-            "n_subsample": gen.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
-            "k_mixing": gen.get("k_mixing", clustering.DEFAULT_K_MIXING),
-            "n_clusters": gen.get("n_clusters", clustering.DEFAULT_N_CLUSTERS),
-            "linkage_method": gen.get("linkage_method", clustering.LINKAGE_METHOD),
+            "n_subsample": gen["n_subsample"],
+            "k_mixing": gen["k_mixing"],
+            "n_clusters": gen["n_clusters"],
+            "linkage_method": gen["linkage_method"],
         }
         if include_batch_size:
-            out["feats_batch_size"] = gen.get("feats_batch_size", gen.get("query_batch_size", 64))
+            out["feats_batch_size"] = gen["feats_batch_size"]
         return out
     return _fn
 
 
 def _make_clustering_recon_extra_kwargs(prefix: str, include_batch_size: bool = False):
     def _fn(analysis_cfg: dict) -> dict:
-        recon = analysis_cfg.get(f"{prefix}_recon") or {}
+        recon = analysis_cfg[f"{prefix}_recon"]
         out = {
-            "n_subsample": recon.get("n_subsample", clustering.DEFAULT_N_SUBSAMPLE),
-            "k_mixing": recon.get("k_mixing", clustering.DEFAULT_K_MIXING),
-            "n_clusters": recon.get("n_clusters", clustering.DEFAULT_N_CLUSTERS),
-            "linkage_method": recon.get("linkage_method", clustering.LINKAGE_METHOD),
+            "n_subsample": recon["n_subsample"],
+            "k_mixing": recon["k_mixing"],
+            "n_clusters": recon["n_clusters"],
+            "linkage_method": recon["linkage_method"],
         }
         if include_batch_size:
-            out["feats_batch_size"] = recon.get("feats_batch_size", recon.get("query_batch_size", 64))
+            out["feats_batch_size"] = recon["feats_batch_size"]
         return out
     return _fn
 

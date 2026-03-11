@@ -6,156 +6,167 @@
 resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
 
 data:
-  path: "tests/test_data/spheres.gro"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data
-  split_seed: [0, 42]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
-  training_split: 0.8   # fraction for training; same for both models, plotting, and analysis
+  path: "tests/test_data/spheres.gro"   # path to GRO-style coordinate file; required for training (or pass --data)
+  split_seed: [0, 42]   # RNG seed(s) for train/test split; list = one full pipeline per seed (output under base_output_dir/seed_<n>)
+  training_split: 0.8   # fraction of structures used for training; remainder = test; same for DistMap, Euclideanizer, plotting, and analysis
 
-output_dir: "./output"
+output_dir: "./output"   # root directory for all run outputs (seeds, distmap, euclideanizer, plots, analysis)
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
-  latent_dim: [256]
-  beta_kl: [0.01]
-  epochs: [1, 2]
-  batch_size: 128
-  learning_rate: [1.0e-4]
-  lambda_mse: [1.0]
-  lambda_w_recon: [3.0]
-  lambda_w_gen: [3.0]
-  memory_efficient: false   # if true, save best model to disk on each new best (no extra copy in memory)
-  save_final_models_per_stretch: true   # if true, keep model_last.pt for each epoch segment (e.g. 100, 300); if false, delete previous segment's last after resume
+  latent_dim: [256]   # dimension of the latent space
+  beta_kl: [0.01]   # weight for KL term in VAE loss
+  epochs: [1, 2]   # training epochs; list = multi-segment (e.g. train to 1, then resume to 2)
+  batch_size: 128   # training batch size (must be single integer, no list)
+  learning_rate: [1.0e-4]   # optimizer learning rate
+  lambda_mse: [1.0]   # weight for MSE reconstruction loss
+  lambda_w_recon: [3.0]   # weight for Wasserstein reconstruction term
+  lambda_w_gen: [3.0]   # weight for Wasserstein generation term
+  memory_efficient: false   # if true, save best model to disk on each new best (reduces RAM, no in-memory copy)
+  save_final_models_per_stretch: true   # if true, keep model_last.pt for each epoch segment; if false, delete previous segment's last after resume
 
-# Euclideanizer. One run per (DistMap run × euclideanizer hyperparameter combination).
-# Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
+# Euclideanizer. One run per (DistMap run × euclideanizer hyperparameter combination). Latent dim is taken from the frozen DistMap.
 euclideanizer:
-  epochs: [1]
-  batch_size: 256
-  learning_rate: [1.0e-4]
-  lambda_mse: [1.0]
-  lambda_w_recon: [3.0]
-  lambda_w_gen: [3.0]
-  lambda_w_diag_recon: [2.0]
-  lambda_w_diag_gen: [2.0]
+  epochs: [1]   # training epochs; list = multi-segment
+  batch_size: 256   # training batch size (must be single integer)
+  learning_rate: [1.0e-4]   # optimizer learning rate
+  lambda_mse: [1.0]   # weight for MSE reconstruction loss
+  lambda_w_recon: [3.0]   # weight for Wasserstein reconstruction term
+  lambda_w_gen: [3.0]   # weight for Wasserstein generation term
+  lambda_w_diag_recon: [2.0]   # weight for diagonal Wasserstein on reconstruction
+  lambda_w_diag_gen: [2.0]   # weight for diagonal Wasserstein on generation
   num_diags: [50]   # number of diagonals (genomic separations) used for diagonal Wasserstein loss (1..num_diags)
-  memory_efficient: false   # if true, save best model to disk on each new best (no extra copy in memory)
+  memory_efficient: false   # if true, save best model to disk on each new best (reduces RAM)
   save_final_models_per_stretch: true   # if true, keep euclideanizer_last.pt for each epoch segment; if false, delete previous segment's last after resume
 
 # Training videos: one MP4 per DistMap and per Euclideanizer (generated during/after each training run). Requires ffmpeg.
 training_visualization:
-  enabled: true
-  n_probe: 6                     # number of probe structures shown per frame
-  n_quick: 500                   # samples per epoch for Rg/scaling curves
-  gen_sample_variance: 1         # latent variance for video "Generated" Rg/scaling (use 1 to match gen_variance plots)
-  fps: 12
-  frame_width: 16
-  frame_height: 14
-  frame_dpi: 90
-  delete_frames_after_video: true   # if true, remove frame PNGs after successful MP4 creation
-  
+  enabled: true   # if true, generate training evolution videos
+  n_probe: 6   # number of probe structures shown per frame in the video
+  n_quick: 500   # samples per epoch used for Rg/scaling curves in the video
+  gen_sample_variance: 1   # latent variance for "Generated" Rg/scaling in video (use 1 to match gen_variance plots)
+  fps: 12   # frames per second of the output MP4
+  frame_width: 16   # figure width in inches for each frame
+  frame_height: 14   # figure height in inches for each frame
+  frame_dpi: 90   # DPI for frame PNGs (before encoding to video)
+  delete_frames_after_video: true   # if true, remove frame PNGs after successful MP4 creation (saves disk)
+
 # Plotting and generation (per trained model). Disable all with --no-plots.
 plotting:
-  enabled: true
+  enabled: true   # if false, skip all plotting (reconstruction, gen_variance, etc.)
   overwrite_existing: false   # if true, prompt then remove existing plots/dashboard before re-running (avoids mixing runs)
-  reconstruction: true
-  bond_rg_scaling: true
-  avg_gen_vs_exp: true
-  bond_length_by_genomic_distance: false
-  num_samples: 10              # samples per variance for gen plots
-  gen_decode_batch_size: 128   # batch size when decoding for gen plots
-  sample_variance: [1]         # list -> one plot set per value
-  num_reconstruction_samples: 5
-  plot_dpi: 150
-  max_train: null   # null = use all train structures for reference stats; or int to cap
-  max_test: null    # null = use all test structures for reference stats; or int to cap
-  save_data: true    # if true, save NumPy .npz data for each plot (e.g. reconstruction_data.npz, loss_curves_data.npz)
-  save_pdf_copy: true
-  save_structures_gro: true    # if true, save generated structures for gen_variance plots (Euclideanizer only; plots/.../structures/)
+  reconstruction: true   # if true, plot reconstruction (input vs reconstructed distance maps / coords)
+  bond_rg_scaling: true   # if true, plot bond length and Rg scaling diagnostics
+  avg_gen_vs_exp: true   # if true, plot average generated vs experimental statistics
+  bond_length_by_genomic_distance: false   # if true, plot 5×4 grid of pairwise distance distributions by lag k
+  num_samples: 10   # number of structures to generate per variance for gen_variance and related plots
+  gen_decode_batch_size: 128   # batch size when decoding latents to structures for gen plots
+  sample_variance: [1]   # list of latent variances; one plot set per value
+  num_reconstruction_samples: 5   # number of structures to decode for reconstruction plots
+  plot_dpi: 150   # DPI for saved PNGs
+  max_train: null   # cap on train structures for reference stats; null = use all
+  max_test: null   # cap on test structures for reference stats; null = use all
+  save_data: true   # if true, save NumPy .npz data for each plot (e.g. reconstruction_data.npz)
+  save_pdf_copy: true   # if true, save a PDF copy of each figure where supported
+  save_structures_gro: true   # if true, save generated structures as GRO for gen_variance (Euclideanizer only)
 
-# Analysis: full-pipeline metrics run after plotting for each Euclideanizer.
-# Each block: enabled, overwrite_existing, then params, then save_data, save_pdf_copy, save_structures_gro (or visualize_latent).
-# Reference set sizes (shared by gen and recon): null = use all; int = cap train/test reference structures.
+# Analysis: metrics run after plotting for each Euclideanizer. Reference sizes (below) cap train/test for caching; null = use all.
 analysis:
-  rmsd_max_train: null   # reference cap for rmsd (single value)
-  rmsd_max_test: null
-  q_max_train: null
-  q_max_test: null
-  coord_clustering_max_train: null
-  coord_clustering_max_test: null
-  distmap_clustering_max_train: null
-  distmap_clustering_max_test: null
+  rmsd_max_train: null   # cap on train structures for RMSD test→train cache; null = use all
+  rmsd_max_test: null   # cap on test structures for RMSD test→train cache; null = use all
+  q_max_train: null   # cap on train structures for Q test→train cache; null = use all
+  q_max_test: null   # cap on test structures for Q test→train cache; null = use all
+  coord_clustering_max_train: null   # cap on train structures for coord-clustering feats cache; null = use all
+  coord_clustering_max_test: null   # cap on test structures for coord-clustering feats cache; null = use all
+  distmap_clustering_max_train: null   # cap on train structures for distmap-clustering feats cache; null = use all
+  distmap_clustering_max_test: null   # cap on test structures for distmap-clustering feats cache; null = use all
   rmsd_gen:
-    enabled: true
+    enabled: true   # if true, run min-RMSD-to-training analysis on generated structures
     overwrite_existing: false   # if true, prompt then remove existing rmsd gen outputs before re-running
-    num_samples: [1]
-    sample_variance: [1, 2]
-    query_batch_size: 128
-    save_data: true
-    save_pdf_copy: false   # if true, save a PDF copy of RMSD (gen) figures in a pdf/ subdir
-    save_structures_gro: true
+    num_samples: [1]   # list of sample counts per run name (e.g. [1, 10] → run "1", "10")
+    sample_variance: [1, 2]   # list of latent variances; one set of outputs per value
+    query_batch_size: 128   # batch size for RMSD query (nearest-neighbour search)
+    save_data: true   # if true, save rmsd_data.npz (and similar) in analysis output dir
+    save_pdf_copy: false   # if true, save PDF copies of RMSD (gen) figures in a pdf/ subdir
+    save_structures_gro: true   # if true, save generated structures as GRO for this analysis
   rmsd_recon:
-    enabled: true
+    enabled: true   # if true, run min-RMSD analysis on reconstructed structures
     overwrite_existing: false   # if true, prompt then remove existing rmsd recon outputs before re-running
-    max_recon_train: [null]
-    max_recon_test: [null]
-    save_data: false
+    max_recon_train: [null]   # list of caps on train structures for recon; null = use all (one run per list entry)
+    max_recon_test: [null]   # list of caps on test structures for recon; null = use all
+    save_data: false   # if true, save recon RMSD data as .npz
     save_pdf_copy: false   # if true, save PDF copies of recon and latent figures
-    visualize_latent: false
+    visualize_latent: false   # if true, plot latent distribution/correlation for recon
   q_gen:
-    enabled: false
-    overwrite_existing: false
-    num_samples: [500]
-    sample_variance: [1]
-    delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
-    query_batch_size: 64
-    save_data: true
-    save_pdf_copy: true
-    save_structures_gro: false
+    enabled: false   # if true, run Q (order parameter) analysis on generated structures
+    overwrite_existing: false   # if true, prompt then remove existing q gen outputs before re-running
+    num_samples: [500]   # list of sample counts per run name
+    sample_variance: [1]   # list of latent variances
+    delta: 0.7071   # Q smoothing parameter (1/sqrt(2) → denominator 2*delta^2 = 1)
+    query_batch_size: 64   # batch size for Q computation
+    save_data: true   # if true, save Q data as .npz
+    save_pdf_copy: true   # if true, save PDF copies of Q figures
+    save_structures_gro: false   # if true, save generated structures as GRO
   q_recon:
-    enabled: false
-    overwrite_existing: false
-    max_recon_train: [500]
-    max_recon_test: [200]
-    delta: 0.7071
-    save_data: true
-    save_pdf_copy: true
-    visualize_latent: false
+    enabled: false   # if true, run Q analysis on reconstructed structures
+    overwrite_existing: false   # if true, prompt then remove existing q recon outputs before re-running
+    max_recon_train: [500]   # list of caps on train structures for recon
+    max_recon_test: [200]   # list of caps on test structures for recon
+    delta: 0.7071   # Q smoothing parameter for recon
+    save_data: true   # if true, save recon Q data as .npz
+    save_pdf_copy: true   # if true, save PDF copies
+    visualize_latent: false   # if true, plot latent distribution/correlation for recon
   coord_clustering_gen:
-    enabled: false
-    overwrite_existing: false
-    num_samples: [150]
-    sample_variance: [1.0, 2.0]
-    n_subsample: 150
-    query_batch_size: 64
-    save_data: false
-    save_pdf_copy: false
+    enabled: false   # if true, run coordinate-based clustering analysis on generated structures (dendrograms, mixing)
+    overwrite_existing: false   # if true, prompt then remove existing coord_clustering gen outputs before re-running
+    num_samples: [150]   # list of sample counts per run name
+    sample_variance: [1.0, 2.0]   # list of latent variances
+    n_subsample: 150   # number of structures to subsample (FPS) for clustering; reduces cost
+    k_mixing: 10   # number of nearest neighbours used to compute source mixing score (0–1, higher = more mixing)
+    n_clusters: 8   # number of clusters when cutting dendrogram for composition bars (C1..C8)
+    linkage_method: "average"   # scipy linkage method for hierarchical clustering (e.g. average, single, complete)
+    query_batch_size: 64   # batch size for coordinate feature extraction
+    save_data: false   # if true, save clustering data as .npz
+    save_pdf_copy: false   # if true, save PDF copies of clustering figures
   coord_clustering_recon:
-    enabled: false
-    overwrite_existing: false
-    max_recon_train: [null]
-    max_recon_test: [null]
-    n_subsample: 150
-    save_data: false
-    save_pdf_copy: false
-    visualize_latent: false
+    enabled: false   # if true, run coordinate-based clustering on reconstructed structures
+    overwrite_existing: false   # if true, prompt then remove existing coord_clustering recon outputs before re-running
+    max_recon_train: [null]   # list of caps on train structures for recon; null = use all
+    max_recon_test: [null]   # list of caps on test structures for recon; null = use all
+    n_subsample: 150   # number of structures to subsample (FPS) for clustering
+    k_mixing: 10   # nearest neighbours for mixing score
+    n_clusters: 8   # number of clusters for composition bars
+    linkage_method: "average"   # scipy linkage method
+    save_data: false   # if true, save clustering data as .npz
+    save_pdf_copy: false   # if true, save PDF copies
+    visualize_latent: false   # if true, plot latent distribution/correlation for recon
   distmap_clustering_gen:
-    enabled: false
-    overwrite_existing: false
-    num_samples: [150]
-    sample_variance: [1.0, 2.0]
-    n_subsample: 150
-    query_batch_size: 64
-    save_data: false
-    save_pdf_copy: false
+    enabled: false   # if true, run distance-map-based clustering analysis on generated structures (RMSE dendrograms, mixing)
+    overwrite_existing: false   # if true, prompt then remove existing distmap_clustering gen outputs before re-running
+    num_samples: [150]   # list of sample counts per run name
+    sample_variance: [1.0, 2.0]   # list of latent variances
+    n_subsample: 150   # number of structures to subsample (FPS) for clustering
+    k_mixing: 10   # nearest neighbours for mixing score
+    n_clusters: 8   # number of clusters for composition bars
+    linkage_method: "average"   # scipy linkage method
+    query_batch_size: 64   # batch size for distmap query (if used)
+    feats_batch_size: 64   # batch size for computing distance-map features (cache and analysis)
+    save_data: false   # if true, save clustering data as .npz
+    save_pdf_copy: false   # if true, save PDF copies
   distmap_clustering_recon:
-    enabled: false
-    overwrite_existing: false
-    max_recon_train: [null]
-    max_recon_test: [null]
-    n_subsample: 150
-    save_data: false
-    save_pdf_copy: false
-    visualize_latent: false
+    enabled: false   # if true, run distance-map-based clustering on reconstructed structures
+    overwrite_existing: false   # if true, prompt then remove existing distmap_clustering recon outputs before re-running
+    max_recon_train: [null]   # list of caps on train structures for recon; null = use all
+    max_recon_test: [null]   # list of caps on test structures for recon; null = use all
+    n_subsample: 150   # number of structures to subsample (FPS) for clustering
+    k_mixing: 10   # nearest neighbours for mixing score
+    n_clusters: 8   # number of clusters for composition bars
+    linkage_method: "average"   # scipy linkage method
+    feats_batch_size: 64   # batch size for computing distance-map features
+    save_data: false   # if true, save clustering data as .npz
+    save_pdf_copy: false   # if true, save PDF copies
+    visualize_latent: false   # if true, plot latent distribution/correlation for recon
 
-# Dashboard: interactive HTML report in run root (dashboard/). Disable with --no-dashboard or dashboard.enabled: false.
+# Dashboard: interactive HTML report in run root (dashboard/). Built once at end of pipeline when enabled.
 dashboard:
-  enabled: true
+  enabled: true   # if true, build dashboard from plots and analysis outputs; disable with --no-dashboard or false
