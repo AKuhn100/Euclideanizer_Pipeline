@@ -90,7 +90,7 @@ def _blocks_for_distmap_run(run_root: str) -> list[dict[str, str]]:
     if os.path.isfile(os.path.join(run_root, _BOND_LENGTH_BY_GENOMIC_DISTANCE)):
         blocks.append({"type": "bond_length_by_genomic_distance", "name": "Bond length by genomic distance", "source_path": _BOND_LENGTH_BY_GENOMIC_DISTANCE})
     if os.path.isfile(os.path.join(run_root, _TRAINING_VIDEO)):
-        blocks.append({"type": "training_video", "name": "Training video", "source_path": _TRAINING_VIDEO})
+        blocks.append({"type": "training_video", "name": "Training Video", "source_path": _TRAINING_VIDEO})
     return blocks
 
 

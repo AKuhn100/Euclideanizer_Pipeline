@@ -15,7 +15,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
 from scipy.spatial.transform import Rotation
 
-# Visual theme for training video frames (dark background, accent colors)
+# Visual theme for training video frames (dark background, accent colors).
+# Note: ACC_EXP/ACC_GEN here differ from plot_colors (COLOR_TRAIN/COLOR_GEN) for contrast on dark BG.
 BG = "#0d1117"
 FG = "#e6edf3"
 ACC_EXP = "#58a6ff"
@@ -38,7 +39,7 @@ _RC = {
 
 _ROW_LABELS = [
     "Exp.\nStructure", "Exp.\nDist Map", "Output\nDist Map",
-    "Generated\nStructure", "Generated\nDist Map",
+    "Gen\nStructure", "Gen\nDist Map",
 ]
 _ROW_COLORS = [ACC_PROBE, ACC_PROBE, ACC_GEN, ACC_GEN, ACC_GEN]
 
@@ -182,11 +183,11 @@ def _placeholder(ax, msg="Phase 2\nonly"):
 
 
 def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen_ks, gen_sc, loss_history, val_history, epoch, rg_xlim, rg_ylim=None, epoch_for_loss_line=None):
-    ax_sc.loglog(exp_ks, exp_sc, lw=1.5, color=ACC_EXP, label="Experimental", zorder=3)
+    ax_sc.loglog(exp_ks, exp_sc, lw=1.5, color=ACC_EXP, label="Exp", zorder=3)
     if gen_sc is not None:
-        ax_sc.loglog(gen_ks, gen_sc, lw=1.5, color=ACC_GEN, ls="--", label="Generated", zorder=3)
-    ax_sc.set_xlabel("Genomic sep", fontsize=7, color=FG)
-    ax_sc.set_ylabel("Mean dist (nm)", fontsize=7, color=FG)
+        ax_sc.loglog(gen_ks, gen_sc, lw=1.5, color=ACC_GEN, ls="--", label="Gen", zorder=3)
+    ax_sc.set_xlabel("Genomic Sep", fontsize=7, color=FG)
+    ax_sc.set_ylabel("Mean Dist (nm)", fontsize=7, color=FG)
     ax_sc.set_title("Genomic Scaling", fontsize=8, color=FG, pad=3)
     ax_sc.legend(fontsize=6.5, framealpha=0.2)
     ax_sc.grid(True, alpha=0.2)
@@ -195,11 +196,11 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     bins = np.linspace(rg_xlim[0], rg_xlim[1], 35)
     _exp_ok = exp_rg[np.isfinite(exp_rg)]
     if len(_exp_ok) > 1:
-        ax_rg.hist(_exp_ok, bins=bins, density=True, alpha=0.55, color=ACC_EXP, label="Experimental")
+        ax_rg.hist(_exp_ok, bins=bins, density=True, alpha=0.55, color=ACC_EXP, label="Exp")
     if gen_rg is not None and len(gen_rg) > 1:
         _gen_ok = gen_rg[np.isfinite(gen_rg)]
         if len(_gen_ok) > 1:
-            ax_rg.hist(_gen_ok, bins=bins, density=True, alpha=0.55, color=ACC_GEN, label="Generated")
+            ax_rg.hist(_gen_ok, bins=bins, density=True, alpha=0.55, color=ACC_GEN, label="Gen")
     ax_rg.set_xlim(rg_xlim)
     if rg_ylim is not None:
         ax_rg.set_ylim(rg_ylim)
@@ -254,8 +255,8 @@ def render_dm_frame(epoch, total_epochs, probe_ref_coords, probe_input_dms, prob
         _plot_chain_2d(da[0][j], probe_ref_coords[j], lim=axis_lim)
         _plot_dm(da[1][j], probe_input_dms[j], dm_vmax)
         _plot_dm(da[2][j], probe_recon_dms[j], dm_vmax)
-        _placeholder(da[3][j], "Generated\nStructure\n(Phase 2)")
-        _placeholder(da[4][j], "Generated\nDist Map\n(Phase 2)")
+        _placeholder(da[3][j], "Gen\nStructure\n(Phase 2)")
+        _placeholder(da[4][j], "Gen\nDist Map\n(Phase 2)")
     _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen_ks, gen_sc, loss_history, val_history, epoch, rg_xlim, rg_ylim, epoch_for_loss_line=epoch_for_loss_line)
     loss_val = loss_history[-1] if loss_history else float("nan")
     val_val = val_history[-1] if val_history else float("nan")
@@ -282,7 +283,7 @@ def render_eu_frame(epoch, total_epochs, probe_ref_coords, probe_input_dms, prob
     loss_val = loss_history[-1] if loss_history else float("nan")
     val_val = val_history[-1] if val_history else float("nan")
     _header(fig, "EUCLIDEANIZER TRAINING", epoch, total_epochs, loss_val, val_val)
-    override = ("Generated\nDist Map", "Generated\nStructure") if last_row_is_coords else None
+    override = ("Gen\nDist Map", "Gen\nStructure") if last_row_is_coords else None
     _add_row_labels(fig, da, override_last_two=override)
     return _save_frame(fig, frame_idx, frames_dir, fdpi)
 

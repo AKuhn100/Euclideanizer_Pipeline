@@ -1,7 +1,7 @@
 """
 RMSD distributions: integrate into pipeline for each Euclideanizer run.
 Uses Kabsch alignment; computes test→train, gen→train, gen→test min-RMSD and saves a figure.
-Output under analysis/rmsd/; figure axis labels describe the metric (e.g. min RMSD to training set).
+Output under analysis/rmsd/; figure axis labels describe the metric (e.g. min RMSD to train set).
 """
 from __future__ import annotations
 
@@ -16,6 +16,12 @@ from tqdm import tqdm
 
 from .utils import display_path, get_train_test_split
 from .plotting import _save_pdf_copy
+from .plot_colors import (
+    GEN_PANEL_COLORS,
+    RECON_PANEL_COLORS,
+    COLOR_TRAIN,
+    COLOR_TEST,
+)
 
 
 def _rmsd_matrix_batch(queries: np.ndarray, ref_coords: np.ndarray) -> np.ndarray:
@@ -139,21 +145,22 @@ def _run_one_min_rmsd(
     x_max = np.percentile(all_vals, 99.5) + 0.5
     bins = np.linspace(x_min, x_max, 50)
 
+    c0, c1, c2 = GEN_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color="C0", edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
     axes[0].set_ylabel("Density")
-    axes[0].set_title("Test → Train (min RMSD to training set)")
+    axes[0].set_title("Test → Train (Min RMSD to Train Set)")
     axes[0].set_xlim(x_min, x_max)
     axes[0].grid(True, alpha=0.3)
-    axes[1].hist(gen_to_train, bins=bins, density=True, alpha=0.7, color="C1", edgecolor="k", linewidth=0.3)
+    axes[1].hist(gen_to_train, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
     axes[1].set_ylabel("Density")
-    axes[1].set_title("Generated → Train (min RMSD to training set)")
+    axes[1].set_title("Gen → Train (Min RMSD to Train Set)")
     axes[1].set_xlim(x_min, x_max)
     axes[1].grid(True, alpha=0.3)
-    axes[2].hist(gen_to_test, bins=bins, density=True, alpha=0.7, color="C2", edgecolor="k", linewidth=0.3)
+    axes[2].hist(gen_to_test, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
     axes[2].set_ylabel("Density")
-    axes[2].set_xlabel("Min RMSD (aligned coords)")
-    axes[2].set_title("Generated → Test (min RMSD to test set)")
+    axes[2].set_xlabel("Min RMSD (Aligned Coords)")
+    axes[2].set_title("Gen → Test (Min RMSD to Test Set)")
     axes[2].set_xlim(x_min, x_max)
     axes[2].grid(True, alpha=0.3)
     plt.tight_layout()
@@ -255,10 +262,10 @@ def run_min_rmsd_analysis(
         gen_coords_np = np.concatenate(out_coords, axis=0)
 
     gen_to_train = min_rmsd_batch(
-        gen_coords_np, train_coords_np, query_batch_size=batch_size, desc="Generated → Train (min RMSD)"
+        gen_coords_np, train_coords_np, query_batch_size=batch_size, desc="Gen → Train (min RMSD)"
     )
     gen_to_test = min_rmsd_batch(
-        gen_coords_np, test_coords_np, query_batch_size=batch_size, desc="Generated → Test (min RMSD)"
+        gen_coords_np, test_coords_np, query_batch_size=batch_size, desc="Gen → Test (min RMSD)"
     )
 
     return _run_one_min_rmsd(
@@ -376,11 +383,11 @@ def run_min_rmsd_analysis_multi(
             acc_gen_coords.append(gen_chunk_np)
             gen_to_train_chunk = min_rmsd_batch(
                 gen_chunk_np, train_coords_np, query_batch_size=batch_size,
-                desc=f"Generated → Train (min RMSD) +{need}",
+                desc=f"Gen → Train (min RMSD) +{need}",
             )
             gen_to_test_chunk = min_rmsd_batch(
                 gen_chunk_np, test_coords_np, query_batch_size=batch_size,
-                desc=f"Generated → Test (min RMSD) +{need}",
+                desc=f"Gen → Test (min RMSD) +{need}",
             )
             acc_gen_to_train.append(gen_to_train_chunk)
             acc_gen_to_test.append(gen_to_test_chunk)
@@ -432,21 +439,22 @@ def _run_one_min_rmsd_recon(
     x_max = np.percentile(all_vals, 99.5) + 0.5
     bins = np.linspace(x_min, x_max, 50)
 
+    c0, c1, c2 = RECON_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color="C0", edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
     axes[0].set_ylabel("Density")
-    axes[0].set_title("Test → Train (min RMSD to training set)")
+    axes[0].set_title("Test → Train (Min RMSD to Train Set)")
     axes[0].set_xlim(x_min, x_max)
     axes[0].grid(True, alpha=0.3)
-    axes[1].hist(train_recon_rmsd, bins=bins, density=True, alpha=0.7, color="C1", edgecolor="k", linewidth=0.3)
+    axes[1].hist(train_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
     axes[1].set_ylabel("Density")
-    axes[1].set_title("Train reconstruction (aligned RMSD to original)")
+    axes[1].set_title("Train Recon (Aligned RMSD to Original)")
     axes[1].set_xlim(x_min, x_max)
     axes[1].grid(True, alpha=0.3)
-    axes[2].hist(test_recon_rmsd, bins=bins, density=True, alpha=0.7, color="C2", edgecolor="k", linewidth=0.3)
+    axes[2].hist(test_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
     axes[2].set_ylabel("Density")
-    axes[2].set_xlabel("Min RMSD (aligned coords)")
-    axes[2].set_title("Test reconstruction (aligned RMSD to original)")
+    axes[2].set_xlabel("Min RMSD (Aligned Coords)")
+    axes[2].set_title("Test Recon (Aligned RMSD to Original)")
     axes[2].set_xlim(x_min, x_max)
     axes[2].grid(True, alpha=0.3)
     plt.tight_layout()
@@ -554,8 +562,8 @@ def plot_latent_distribution(
         widths=0.6,
         patch_artist=True,
     )
-    ax1.set_ylabel("Latent value")
-    ax1.set_title("Train latent distribution")
+    ax1.set_ylabel("Latent Value")
+    ax1.set_title("Train Latent Distribution")
     ax1.set_xlabel("Dimension")
     ax1.set_xlim(-0.5, n_dim - 0.5)
     _pos1, _lab1 = _latent_dim_xticks(n_dim)
@@ -570,8 +578,8 @@ def plot_latent_distribution(
         widths=0.6,
         patch_artist=True,
     )
-    ax2.set_ylabel("Latent value")
-    ax2.set_title("Test latent distribution")
+    ax2.set_ylabel("Latent Value")
+    ax2.set_title("Test Latent Distribution")
     ax2.set_xlabel("Dimension")
     ax2.set_xlim(-0.5, n_dim - 0.5)
     if _pos1:
@@ -586,8 +594,8 @@ def plot_latent_distribution(
     ax_mean = fig.add_subplot(3, 2, (3, 4))
     mean_train = np.mean(train_mu_np, axis=0)
     mean_test = np.mean(test_mu_np, axis=0)
-    ax_mean.plot(dims, mean_train, label="Train", color="C0")
-    ax_mean.plot(dims, mean_test, label="Test", color="C1")
+    ax_mean.plot(dims, mean_train, label="Train", color=COLOR_TRAIN)
+    ax_mean.plot(dims, mean_test, label="Test", color=COLOR_TEST)
     ax_mean.set_xlabel("Dimension")
     ax_mean.set_ylabel("Mean")
     ax_mean.legend()
@@ -600,8 +608,8 @@ def plot_latent_distribution(
     ax_std = fig.add_subplot(3, 2, (5, 6))
     std_train = np.std(train_mu_np, axis=0)
     std_test = np.std(test_mu_np, axis=0)
-    ax_std.plot(dims, std_train, label="Train", color="C0")
-    ax_std.plot(dims, std_test, label="Test", color="C1")
+    ax_std.plot(dims, std_train, label="Train", color=COLOR_TRAIN)
+    ax_std.plot(dims, std_test, label="Test", color=COLOR_TEST)
     ax_std.set_xlabel("Dimension")
     ax_std.set_ylabel("Std")
     ax_std.legend()

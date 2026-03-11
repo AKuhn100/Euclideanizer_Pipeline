@@ -15,6 +15,7 @@ from tqdm import tqdm
 
 from .utils import display_path, get_train_test_split
 from .plotting import _save_pdf_copy
+from .plot_colors import GEN_PANEL_COLORS, RECON_PANEL_COLORS
 
 DEFAULT_DELTA = 1.0 / math.sqrt(2.0)
 
@@ -162,21 +163,22 @@ def _run_one_q(
     x_max = min(1.0, np.percentile(all_vals, 99.5) + 0.02)
     bins = np.linspace(x_min, x_max, 50)
 
+    c0, c1, c2 = GEN_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color="C0", edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
     axes[0].set_ylabel("Density")
-    axes[0].set_title("Test → Train (max Q to training set)")
+    axes[0].set_title("Test → Train (Max Q to Train Set)")
     axes[0].set_xlim(x_min, x_max)
     axes[0].grid(True, alpha=0.3)
-    axes[1].hist(gen_to_train_max_q, bins=bins, density=True, alpha=0.7, color="C1", edgecolor="k", linewidth=0.3)
+    axes[1].hist(gen_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
     axes[1].set_ylabel("Density")
-    axes[1].set_title("Generated → Train (max Q to training set)")
+    axes[1].set_title("Gen → Train (Max Q to Train Set)")
     axes[1].set_xlim(x_min, x_max)
     axes[1].grid(True, alpha=0.3)
-    axes[2].hist(gen_to_test_max_q, bins=bins, density=True, alpha=0.7, color="C2", edgecolor="k", linewidth=0.3)
+    axes[2].hist(gen_to_test_max_q, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
     axes[2].set_ylabel("Density")
-    axes[2].set_xlabel("max Q")
-    axes[2].set_title("Generated → Test (max Q to test set)")
+    axes[2].set_xlabel("Max Q")
+    axes[2].set_title("Gen → Test (Max Q to Test Set)")
     axes[2].set_xlim(x_min, x_max)
     axes[2].grid(True, alpha=0.3)
     plt.tight_layout()
@@ -279,10 +281,10 @@ def run_q_analysis(
         gen_coords_np = np.concatenate(out_coords, axis=0)
 
     gen_to_train_max_q = max_q_batch(
-        gen_coords_np, train_coords_np, delta, query_batch_size=batch_size, desc="Generated → Train (max Q)"
+        gen_coords_np, train_coords_np, delta, query_batch_size=batch_size, desc="Gen → Train (max Q)"
     )
     gen_to_test_max_q = max_q_batch(
-        gen_coords_np, test_coords_np, delta, query_batch_size=batch_size, desc="Generated → Test (max Q)"
+        gen_coords_np, test_coords_np, delta, query_batch_size=batch_size, desc="Gen → Test (max Q)"
     )
 
     return _run_one_q(
@@ -400,11 +402,11 @@ def run_q_analysis_multi(
             acc_gen_coords.append(gen_chunk_np)
             gen_to_train_chunk = max_q_batch(
                 gen_chunk_np, train_coords_np, delta, query_batch_size=batch_size,
-                desc=f"Generated → Train (max Q) +{need}",
+                desc=f"Gen → Train (max Q) +{need}",
             )
             gen_to_test_chunk = max_q_batch(
                 gen_chunk_np, test_coords_np, delta, query_batch_size=batch_size,
-                desc=f"Generated → Test (max Q) +{need}",
+                desc=f"Gen → Test (max Q) +{need}",
             )
             acc_gen_to_train.append(gen_to_train_chunk)
             acc_gen_to_test.append(gen_to_test_chunk)
@@ -459,21 +461,22 @@ def _run_one_q_recon(
     x_max = min(1.0, np.percentile(all_vals, 99.5) + 0.02)
     bins = np.linspace(x_min, x_max, 50)
 
+    c0, c1, c2 = RECON_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color="C0", edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
     axes[0].set_ylabel("Density")
-    axes[0].set_title("Test → Train (max Q to training set)")
+    axes[0].set_title("Test → Train (Max Q to Train Set)")
     axes[0].set_xlim(x_min, x_max)
     axes[0].grid(True, alpha=0.3)
-    axes[1].hist(train_recon_q, bins=bins, density=True, alpha=0.7, color="C1", edgecolor="k", linewidth=0.3)
+    axes[1].hist(train_recon_q, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
     axes[1].set_ylabel("Density")
-    axes[1].set_title("Train reconstruction (Q to original)")
+    axes[1].set_title("Train Recon (Q to Original)")
     axes[1].set_xlim(x_min, x_max)
     axes[1].grid(True, alpha=0.3)
-    axes[2].hist(test_recon_q, bins=bins, density=True, alpha=0.7, color="C2", edgecolor="k", linewidth=0.3)
+    axes[2].hist(test_recon_q, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
     axes[2].set_ylabel("Density")
-    axes[2].set_xlabel("max Q")
-    axes[2].set_title("Test reconstruction (Q to original)")
+    axes[2].set_xlabel("Max Q")
+    axes[2].set_title("Test Recon (Q to Original)")
     axes[2].set_xlim(x_min, x_max)
     axes[2].grid(True, alpha=0.3)
     plt.tight_layout()
