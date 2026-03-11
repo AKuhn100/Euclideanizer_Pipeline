@@ -1377,7 +1377,7 @@ def _parse_args():
     p.add_argument("--euclideanizer.frozen_vae_beta_kl", type=float, default=None, dest="eu_frozen_vae_beta_kl")
     p.add_argument("--euclideanizer.frozen_vae_path", type=str, default=None, dest="eu_frozen_vae_path")
     p.add_argument("--euclideanizer.epochs", type=int, nargs="*", default=None, dest="eu_epochs")
-    p.add_argument("--euclideanizer.batch_size", type=int, nargs="*", default=None, dest="eu_batch_size")
+    p.add_argument("--euclideanizer.batch_size", type=int, default=None, dest="eu_batch_size")
     p.add_argument("--euclideanizer.learning_rate", type=float, nargs="*", default=None, dest="eu_lr")
     p.add_argument("--euclideanizer.lambda_mse", type=float, nargs="*", default=None, dest="eu_lambda_mse")
     p.add_argument("--euclideanizer.lambda_w_recon", type=float, nargs="*", default=None, dest="eu_lambda_w_recon")

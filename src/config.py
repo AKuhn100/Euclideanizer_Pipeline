@@ -144,6 +144,15 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
         raise KeyError(
             "Config is missing required keys (set them in your config file): " + ", ".join(missing)
         )
+    # batch_size must be a single value (no list) for distmap and euclideanizer
+    for section in ("distmap", "euclideanizer"):
+        if section in cfg and isinstance(cfg[section], dict):
+            bs = cfg[section].get("batch_size")
+            if isinstance(bs, list):
+                raise ValueError(
+                    f"{section}.batch_size must be a single integer, not a list. "
+                    "Use one value, e.g. batch_size: 32"
+                )
 
 
 def _ensure_list(x: Any) -> List[Any]:
@@ -189,16 +198,17 @@ def _expand_grid(section: dict, keys: List[str]) -> List[dict]:
 
 
 def expand_distmap_grid(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return list of DistMap configs (one per combination; every key can be single or list)."""
+    """Return list of DistMap configs (one per combination). batch_size is single-value only (excluded from grid)."""
     section = cfg["distmap"]
-    return _expand_grid(section, list(section.keys()))
+    keys = [k for k in section.keys() if k != "batch_size"]
+    return _expand_grid(section, keys)
 
 
 def expand_euclideanizer_grid(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Return list of Euclideanizer configs (one per combination; every key can be single or list).
-    All euclideanizer keys (including num_diags) participate in the grid; use e.g. num_diags: [50, 100] for multiple runs."""
+    """Return list of Euclideanizer configs (one per combination). batch_size is single-value only (excluded from grid)."""
     section = cfg["euclideanizer"]
-    return _expand_grid(section, list(section.keys()))
+    keys = [k for k in section.keys() if k != "batch_size"]
+    return _expand_grid(section, keys)
 
 
 def _training_groups(

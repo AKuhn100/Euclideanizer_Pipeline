@@ -81,6 +81,15 @@ def test_expand_euclideanizer_grid_num_diags():
     assert 50 in num_diags_vals and 100 in num_diags_vals
 
 
+def test_batch_size_single_value_only():
+    """distmap.batch_size and euclideanizer.batch_size must be single value; list raises ValueError."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    with pytest.raises(ValueError, match="distmap.batch_size must be a single integer"):
+        load_config(cfg_path, {"distmap": {"batch_size": [8, 16]}})
+    with pytest.raises(ValueError, match="euclideanizer.batch_size must be a single integer"):
+        load_config(cfg_path, {"euclideanizer": {"batch_size": [8, 16]}})
+
+
 def test_configs_match_exactly_equal():
     """configs_match_exactly True when configs are equal."""
     cfg = {"a": 1, "b": {"c": 2}}
