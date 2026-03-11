@@ -2661,6 +2661,12 @@ def main():
     if getattr(args, "worker_from_pickle", None):
         with open(args.worker_from_pickle, "rb") as f:
             task_list, log_path, shared_args = pickle.load(f)
+        _pipeline_real_stdout = sys.stdout
+        _pipeline_real_stderr = sys.stderr
+        if _pipeline_real_stdout.isatty():
+            sys.stdout = _StyledStdout(_pipeline_real_stdout)
+        if _pipeline_real_stderr.isatty():
+            sys.stderr = _StyledStderr(_pipeline_real_stderr)
         try:
             _worker(0, task_list, log_path, shared_args)
         finally:

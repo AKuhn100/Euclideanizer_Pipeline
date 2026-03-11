@@ -33,6 +33,20 @@ SOURCE_COLORS_GEN = {
 }
 SOURCE_ORDER_GEN = ["Training", "Generated", "Test"]
 
+# Gen: left-to-right top-to-bottom panel order — Train+Test, Train+Gen, Test+Gen, Train+Test+Gen
+MIXED_PANEL_ORDER_GEN = [
+    ("Training", "Test"),
+    ("Training", "Generated"),
+    ("Test", "Generated"),
+    ("Training", "Test", "Generated"),
+]
+# Gen: RMSE similarity pair order (same reading order)
+RMSE_PAIR_ORDER_GEN = [
+    ("Training", "Test"),
+    ("Training", "Generated"),
+    ("Test", "Generated"),
+]
+
 SOURCE_COLORS_RECON = {
     "Training": "#4878d0",
     "Train recon": "#5a9c50",
@@ -40,6 +54,20 @@ SOURCE_COLORS_RECON = {
     "Test recon": "#f0a060",
 }
 SOURCE_ORDER_RECON = ["Training", "Train recon", "Test", "Test recon"]
+
+# Recon: left-to-right top-to-bottom — Train+Test, Train+Train recon, Test+Test recon, Test recon+Train recon
+MIXED_PANEL_ORDER_RECON = [
+    ("Training", "Test"),
+    ("Training", "Train recon"),
+    ("Test", "Test recon"),
+    ("Test recon", "Train recon"),
+]
+RMSE_PAIR_ORDER_RECON = [
+    ("Training", "Test"),
+    ("Training", "Train recon"),
+    ("Test", "Test recon"),
+    ("Test recon", "Train recon"),
+]
 
 
 def _feats_from_coords(
@@ -357,7 +385,7 @@ def _fig_pure_dendrograms(
     save_pdf_copy: bool,
     display_root: str | None,
 ) -> None:
-    """Pure-population dendrograms (one per source)."""
+    """Pure-population dendrograms (one per source). Left to right per source_order; shared y-axis for comparability."""
     groups = [(name, sub_feats[name]) for name in source_order if name in sub_feats]
     if not groups:
         return
@@ -376,12 +404,36 @@ def _fig_pure_dendrograms(
         _plot_panel(ax, Z, np.arange(len(feats)), name, c, source_colors, leaf_colors=leaf_colors)
         patch = mpatches.Patch(color=color, label=f"{name}  (n={len(feats)})")
         ax.legend(handles=[patch], fontsize=9, loc="upper right")
+    y_max = max(ax.get_ylim()[1] for ax in axes)
+    y_min = min(ax.get_ylim()[0] for ax in axes)
+    for ax in axes:
+        ax.set_ylim(y_min, y_max)
     fig.tight_layout()
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
         _save_pdf_copy(plt.gcf(), output_path, save_pdf=True, display_root=display_root)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
+
+
+def _mixed_panel_title(names: list, is_gen: bool) -> str:
+    """Standardized panel title: gen = X vs Generated (Generated second); recon = X vs Y (train/test first, then recon)."""
+    if len(names) == 3:
+        return " + ".join(names)
+    if len(names) == 2:
+        a, b = names
+        if is_gen and "Generated" in names:
+            first = a if a != "Generated" else b
+            return f"{first} vs Generated"
+        if not is_gen and ("recon" in a.lower() or "recon" in b.lower()):
+            # Train/test first, then recon
+            if "recon" in a.lower() and "recon" in b.lower():
+                return f"{a} vs {b}"
+            first = a if "recon" not in a.lower() else b
+            second = b if first == a else a
+            return f"{first} vs {second}"
+        return f"{a} + {b}"
+    return " + ".join(names)
 
 
 def _mixed_dendrogram_panel(
@@ -396,6 +448,7 @@ def _mixed_dendrogram_panel(
     k_mixing: int,
     n_clusters: int,
     linkage_method: str,
+    panel_title: str | None = None,
 ) -> tuple:
     """One mixed dendrogram; returns (obs_mix, exp_mix, norm_mix, Z, labels)."""
     parts = [(name_a, feats_a), (name_b, feats_b)]
@@ -410,7 +463,7 @@ def _mixed_dendrogram_panel(
     obs_mix, _ = _mixing_score(stacked, labels, k=k_mixing)
     exp_mix = _expected_mixing(labels, k=k_mixing)
     norm_mix = obs_mix / exp_mix if exp_mix > 0 else 0.0
-    title_parts = " + ".join(names)
+    title_parts = panel_title if panel_title is not None else " + ".join(names)
     _plot_panel(ax, Z, labels, title_parts, c, source_colors, leaf_colors=leaf_colors)
     ax.text(0.5, -0.04, f"mixing={obs_mix:.2f} (expected={exp_mix:.2f}, ratio={norm_mix:.2f})",
             transform=ax.transAxes, ha="center", va="top", fontsize=8, style="italic", color="#555555")
@@ -429,26 +482,23 @@ def _fig_mixed_dendrograms(
     n_clusters: int = DEFAULT_N_CLUSTERS,
     linkage_method: str = LINKAGE_METHOD,
 ) -> dict:
-    """Mixed dendrograms 2x2 (gen: Train+Test, Train+Gen, Gen+Test, Train+Gen+Test). Returns mixing_stats."""
-    tr = sub_feats.get("Training")
-    ge = sub_feats.get("Generated")
-    te = sub_feats.get("Test")
-    if ge is None:
-        # Recon: only two mixing panels — Training + Train recon, Test + Test recon
-        train_recon = sub_feats.get("Train recon")
-        test_recon = sub_feats.get("Test recon")
-        configs = []
-        if tr is not None and train_recon is not None:
-            configs.append(("Training", tr, "Train recon", train_recon, None, None))
-        if te is not None and test_recon is not None:
-            configs.append(("Test", te, "Test recon", test_recon, None, None))
-    else:
-        configs = [
-            ("Training", tr, "Test", te, None, None),
-            ("Training", tr, "Generated", ge, None, None),
-            ("Generated", ge, "Test", te, None, None),
-            ("Training", tr, "Generated", ge, "Test", te),
-        ]
+    """Mixed dendrograms: left-to-right top-to-bottom — gen: Train+Test, Train+Gen, Test+Gen, Train+Test+Gen; recon: Train+Test, Train+Train recon, Test+Test recon, Test recon+Train recon. Returns mixing_stats."""
+    is_gen = "Generated" in sub_feats
+    panel_order = MIXED_PANEL_ORDER_GEN if is_gen else MIXED_PANEL_ORDER_RECON
+    configs = []
+    for spec in panel_order:
+        if len(spec) == 2:
+            na, nb = spec
+            fa, fb = sub_feats.get(na), sub_feats.get(nb)
+            if fa is not None and fb is not None:
+                configs.append((na, fa, nb, fb, None, None))
+        else:
+            na, nb, nc = spec
+            fa = sub_feats.get(na)
+            fb = sub_feats.get(nb)
+            fc = sub_feats.get(nc)
+            if fa is not None and fb is not None and fc is not None:
+                configs.append((na, fa, nb, fb, nc, fc))
     if not configs:
         return {}
     n_panels = len(configs)
@@ -458,14 +508,19 @@ def _fig_mixed_dendrograms(
     axes = np.atleast_2d(axes)
     stats = {}
     for idx, (na, fa, nb, fb, nc, fc) in enumerate(configs):
-        if fa is None or fb is None:
-            continue
         ax = axes.flat[idx]
+        names = [na, nb] + ([nc] if nc else [])
+        panel_title = _mixed_panel_title(names, is_gen)
         obs, exp, ratio, Z_mix, lbl_mix = _mixed_dendrogram_panel(
             ax, fa, na, fb, nb, fc, nc, source_colors, k_mixing, n_clusters, linkage_method,
+            panel_title=panel_title,
         )
         key = f"{na}+{nb}" + (f"+{nc}" if nc else "")
         stats[key] = {"obs": obs, "exp": exp, "ratio": ratio}
+    y_max = max(ax.get_ylim()[1] for ax in axes.flat[:n_panels])
+    y_min = min(ax.get_ylim()[0] for ax in axes.flat[:n_panels])
+    for ax in axes.flat[:n_panels]:
+        ax.set_ylim(y_min, y_max)
     patches = [mpatches.Patch(color=source_colors[s], label=s) for s in source_order if s in sub_feats]
     if patches:
         fig.legend(handles=patches, loc="lower center", ncol=min(4, len(patches)), fontsize=11, frameon=True, bbox_to_anchor=(0.5, -0.01))
@@ -563,6 +618,14 @@ def _fig_mixing_analysis(
     print(f"  Saved: {display_path(output_path, display_root)}")
 
 
+def _rmse_panel_title(name_a: str, name_b: str, is_gen: bool) -> str:
+    """Standardized RMSE panel title: gen = X vs Generated; recon = X vs Y (train/test first)."""
+    if is_gen and "Generated" in (name_a, name_b):
+        first = name_a if name_a != "Generated" else name_b
+        return f"{first} vs Generated"
+    return f"{name_a} vs {name_b}"
+
+
 def _fig_rmse_similarity(
     sub_feats: dict,
     source_order: list,
@@ -571,40 +634,46 @@ def _fig_rmse_similarity(
     save_pdf_copy: bool,
     display_root: str | None,
 ) -> None:
-    """Quantile-quantile plots of pairwise RMSE distributions between pairs of sources."""
-    groups = [(name, sub_feats[name]) for name in source_order if name in sub_feats]
-    n = len(groups)
-    if n < 2:
+    """Quantile-quantile plots of pairwise RMSE distributions. Order: gen = (Train,Test), (Train,Gen), (Test,Gen); recon = (Train,Test), (Train,Train recon), (Test,Test recon), (Test recon,Train recon). Shared x/y limits and square aspect for comparability."""
+    is_gen = "Generated" in sub_feats
+    pair_order = RMSE_PAIR_ORDER_GEN if is_gen else RMSE_PAIR_ORDER_RECON
+    pairs = [(a, b) for a, b in pair_order if a in sub_feats and b in sub_feats]
+    if len(pairs) < 1:
         return
-    n_pairs = n * (n - 1) // 2
+    n_pairs = len(pairs)
     fig, axes = plt.subplots(1, n_pairs, figsize=(8 * n_pairs, 7))
     if n_pairs == 1:
         axes = [axes]
-    panel = 0
-    for i in range(n):
-        for j in range(i + 1, n):
-            name_a, feats_a = groups[i]
-            name_b, feats_b = groups[j]
-            ax = axes[panel]
-            panel += 1
-            Da = _pairwise_rmse(feats_a)
-            Db = _pairwise_rmse(feats_b)
-            tri_a = Da[np.triu_indices(len(feats_a), k=1)]
-            tri_b = Db[np.triu_indices(len(feats_b), k=1)]
-            n_q = min(500, len(tri_a), len(tri_b))
-            qs = np.linspace(0, 100, n_q)
-            qa = np.percentile(tri_a, qs)
-            qb = np.percentile(tri_b, qs)
-            corr = float(np.corrcoef(qa, qb)[0, 1])
-            ax.scatter(qa, qb, s=10, alpha=0.6, c=np.linspace(0, 1, n_q), cmap="viridis")
-            lim = max(qa.max(), qb.max()) * 1.05
-            ax.plot([0, lim], [0, lim], "k--", lw=1.2, alpha=0.6, label="y=x")
-            ax.set_xlabel(f"{name_a} pairwise RMSE (quantiles)", fontsize=10)
-            ax.set_ylabel(f"{name_b} pairwise RMSE (quantiles)", fontsize=10)
-            ax.set_title(f"{name_a} vs {name_b} (r={corr:.3f})", fontsize=11, fontweight="bold")
-            ax.legend(fontsize=9)
-            ax.spines["top"].set_visible(False)
-            ax.spines["right"].set_visible(False)
+    lims = []
+    for panel, (name_a, name_b) in enumerate(pairs):
+        feats_a = sub_feats[name_a]
+        feats_b = sub_feats[name_b]
+        ax = axes[panel]
+        Da = _pairwise_rmse(feats_a)
+        Db = _pairwise_rmse(feats_b)
+        tri_a = Da[np.triu_indices(len(feats_a), k=1)]
+        tri_b = Db[np.triu_indices(len(feats_b), k=1)]
+        n_q = min(500, len(tri_a), len(tri_b))
+        qs = np.linspace(0, 100, n_q)
+        qa = np.percentile(tri_a, qs)
+        qb = np.percentile(tri_b, qs)
+        corr = float(np.corrcoef(qa, qb)[0, 1])
+        ax.scatter(qa, qb, s=10, alpha=0.6, c=np.linspace(0, 1, n_q), cmap="viridis")
+        lim = max(qa.max(), qb.max()) * 1.05
+        lims.append(lim)
+        ax.plot([0, lim], [0, lim], "k--", lw=1.2, alpha=0.6, label="y=x")
+        title = _rmse_panel_title(name_a, name_b, is_gen) + f" (r={corr:.3f})"
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.set_xlabel(f"{name_a} pairwise RMSE (quantiles)", fontsize=10)
+        ax.set_ylabel(f"{name_b} pairwise RMSE (quantiles)", fontsize=10)
+        ax.legend(fontsize=9)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+    global_lim = max(lims)
+    for ax in axes:
+        ax.set_xlim(0, global_lim)
+        ax.set_ylim(0, global_lim)
+        ax.set_aspect("equal")
     fig.suptitle("RMSE similarity (quantile–quantile)", fontsize=13, fontweight="bold", y=1.02)
     fig.tight_layout()
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
