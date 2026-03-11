@@ -29,7 +29,8 @@ def kabsch_align(recon_coords: torch.Tensor, gt_coords: torch.Tensor) -> torch.T
     scale[:, 0, 2] = sign
     V_fixed = V * scale
     R = V_fixed @ U.transpose(1, 2)
-    aligned = recon_c @ R
+    # R maps columns of recon_c^T to gt_c^T; for row vectors we need aligned = recon_c @ R^T
+    aligned = recon_c @ R.transpose(1, 2)
     return aligned, gt_c
 
 
