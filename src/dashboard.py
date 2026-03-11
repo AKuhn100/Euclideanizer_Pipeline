@@ -34,8 +34,13 @@ _ANALYSIS_Q_DIR = "q"
 _Q_FIG = "q_distributions.png"
 _COORD_CLUSTERING_DIR = "coord_clustering"
 _DISTMAP_CLUSTERING_DIR = "distmap_clustering"
-_CLUSTERING_FIG = "mixed_dendrograms.png"
-_CLUSTERING_EXTRA_FIGS = ("pure_dendrograms.png", "mixing_analysis.png", "rmse_similarity.png")
+# Clustering section order: pure dendrograms, mixed dendrograms, quantile (rmse_similarity), mixing analysis
+_CLUSTERING_FIGS_ORDERED = (
+    "pure_dendrograms.png",
+    "mixed_dendrograms.png",
+    "rmse_similarity.png",
+    "mixing_analysis.png",
+)
 
 DASHBOARD_DIR = "dashboard"
 ASSETS_DIR = "assets"
@@ -205,25 +210,32 @@ def _append_clustering_analysis_blocks(
             run_dir = os.path.join(gen_dir, run_name)
             if not os.path.isdir(run_dir):
                 continue
-            for fig_name in (_CLUSTERING_FIG,) + _CLUSTERING_EXTRA_FIGS:
+            for fig_name in _CLUSTERING_FIGS_ORDERED:
                 fig_path = os.path.join(run_dir, fig_name)
                 if os.path.isfile(fig_path):
                     rel = os.path.join(base_rel, "gen", run_name, fig_name)
                     label = fig_name.replace(".png", "").replace("_", " ").title()
                     blocks.append({"type": f"{type_prefix}_gen", "name": f"{display_name} (gen) {run_name} — {label}", "source_path": rel})
     recon_dir = os.path.join(clust_root, "recon")
-    main_recon_fig = os.path.join(recon_dir, _CLUSTERING_FIG)
-    if os.path.isfile(main_recon_fig):
-        rel = os.path.join(base_rel, "recon", _CLUSTERING_FIG)
-        blocks.append({"type": f"{type_prefix}_recon", "name": f"{display_name} (recon)", "source_path": rel})
-    else:
+    # Recon: same figure set and order as gen (pure, mixed, rmse_similarity, mixing_analysis)
+    if os.path.isdir(recon_dir):
+        main_recon_run = None
+        for fig_name in _CLUSTERING_FIGS_ORDERED:
+            fig_path = os.path.join(recon_dir, fig_name)
+            if os.path.isfile(fig_path):
+                rel = os.path.join(base_rel, "recon", fig_name)
+                label = fig_name.replace(".png", "").replace("_", " ").title()
+                blocks.append({"type": f"{type_prefix}_recon", "name": f"{display_name} (recon) — {label}", "source_path": rel})
         for subdir_name in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
             subdir_path = os.path.join(recon_dir, subdir_name)
-            if os.path.isdir(subdir_path):
-                subdir_fig = os.path.join(subdir_path, _CLUSTERING_FIG)
-                if os.path.isfile(subdir_fig):
-                    rel = os.path.join(base_rel, "recon", subdir_name, _CLUSTERING_FIG)
-                    blocks.append({"type": f"{type_prefix}_recon", "name": f"{display_name} (recon) {subdir_name}", "source_path": rel})
+            if not os.path.isdir(subdir_path):
+                continue
+            for fig_name in _CLUSTERING_FIGS_ORDERED:
+                fig_path = os.path.join(subdir_path, fig_name)
+                if os.path.isfile(fig_path):
+                    rel = os.path.join(base_rel, "recon", subdir_name, fig_name)
+                    label = fig_name.replace(".png", "").replace("_", " ").title()
+                    blocks.append({"type": f"{type_prefix}_recon", "name": f"{display_name} (recon) {subdir_name} — {label}", "source_path": rel})
     if include_latent:
         latent_fig = os.path.join(recon_dir, "latent_distribution.png")
         if os.path.isfile(latent_fig):

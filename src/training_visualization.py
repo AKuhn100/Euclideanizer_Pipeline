@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
+from scipy.spatial.transform import Rotation
 
 # Visual theme for training video frames (dark background, accent colors)
 BG = "#0d1117"
@@ -76,15 +77,11 @@ def _scaling_coords(coords, n_k=200, batch=64):
 
 
 def _kabsch(q, r):
-    """Align q to r (Kabsch). Both (N, 3). Returns centered aligned q: q_c @ R with R = V @ diag(1,1,d) @ U^T."""
-    q = q - q.mean(0)
-    r = r - r.mean(0)
-    H = q.T @ r
-    U, _, Vt = np.linalg.svd(H)
-    d = np.linalg.det(U @ Vt)
-    S = np.array([1.0, 1.0, np.sign(d)], dtype=q.dtype)
-    R = Vt.T @ (S[:, np.newaxis] * U.T)
-    return q @ R
+    """Align q to r via scipy Kabsch. Both (N, 3). Returns centered aligned q."""
+    q_c = q - q.mean(0)
+    r_c = r - r.mean(0)
+    rot, _ = Rotation.align_vectors(r_c, q_c)  # R @ query_centered = ref_centered
+    return rot.apply(q_c)
 
 
 def _coord_to_dm(c):

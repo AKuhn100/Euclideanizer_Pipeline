@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import numpy as np
 import torch
+from scipy.spatial.transform import Rotation
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -19,7 +20,8 @@ from .plotting import _save_pdf_copy
 
 def _rmsd_matrix_batch(queries: np.ndarray, ref_coords: np.ndarray) -> np.ndarray:
     """
-    Vectorized: (B, N, 3) queries vs (M, N, 3) refs -> (B, M) RMSDs after Kabsch.
+    (B, N, 3) queries vs (M, N, 3) refs -> (B, M) RMSDs after Kabsch alignment.
+    Uses scipy.spatial.transform.Rotation.align_vectors (Kabsch) for correctness.
     """
     B, N, _ = queries.shape
     M = ref_coords.shape[0]
@@ -27,21 +29,12 @@ def _rmsd_matrix_batch(queries: np.ndarray, ref_coords: np.ndarray) -> np.ndarra
     r_c = ref_coords - ref_coords.mean(axis=1, keepdims=True)
     ref_means = ref_coords.mean(axis=1)
 
-    H = np.einsum("bni,mnj->bmij", q_c, r_c)
-    H_flat = H.reshape(B * M, 3, 3)
-
-    U, _, Vt = np.linalg.svd(H_flat)
-    d = np.linalg.det(U @ Vt)
-    S_diag = np.ones((B * M, 3), dtype=H_flat.dtype)
-    S_diag[:, 2] = np.sign(d)
-    # Kabsch: R = V @ diag(1,1,d) @ U^T so that aligned = q_c @ R = ref_centered (align query to ref)
-    R = np.einsum("mki,mk,mkj->mij", Vt, S_diag, np.transpose(U, (0, 2, 1)))
-
     rmsd_out = np.empty((B, M), dtype=queries.dtype)
     for b in range(B):
-        R_b = R[b * M : (b + 1) * M]
-        aligned_b = np.einsum("nj,mji->mni", q_c[b], R_b) + ref_means[:, np.newaxis, :]
-        rmsd_out[b] = np.sqrt(np.mean((aligned_b - ref_coords) ** 2, axis=(1, 2)))
+        for m in range(M):
+            rot, _ = Rotation.align_vectors(r_c[m], q_c[b])  # R @ query_centered = ref_centered
+            aligned = rot.apply(q_c[b]) + ref_means[m]
+            rmsd_out[b, m] = np.sqrt(np.mean((aligned - ref_coords[m]) ** 2))
     return rmsd_out
 
 

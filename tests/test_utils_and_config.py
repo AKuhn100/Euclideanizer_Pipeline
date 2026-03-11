@@ -10,6 +10,7 @@ import os
 import numpy as np
 import pytest
 import torch
+from scipy.spatial.transform import Rotation
 
 from conftest import assert_exact_or_numerical
 from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
@@ -295,6 +296,18 @@ def test_distmap_bond_lengths_shape():
     assert np.all(bonds >= 0)
 
 
+def test_distmap_bond_lengths_known_values():
+    """distmap_bond_lengths returns d(i,i+1); known DM -> known bond lengths. Catches wrong indices."""
+    # One structure, 3 beads: DM so d(0,1)=2, d(1,2)=3, d(0,2)=5. Symmetric, diag 0.
+    dm = np.zeros((1, 3, 3), dtype=np.float32)
+    dm[0, 0, 1] = dm[0, 1, 0] = 2.0
+    dm[0, 1, 2] = dm[0, 2, 1] = 3.0
+    dm[0, 0, 2] = dm[0, 2, 0] = 5.0
+    bonds = distmap_bond_lengths(dm)
+    assert bonds.shape == (2,)
+    np.testing.assert_array_almost_equal(bonds, [2.0, 3.0])
+
+
 def test_distmap_rg_shape_and_nonneg():
     """distmap_rg returns one Rg per structure, non-negative."""
     B, N = 4, 6
@@ -303,6 +316,8 @@ def test_distmap_rg_shape_and_nonneg():
     rg = distmap_rg(dm)
     assert rg.shape == (B,)
     assert np.all(rg >= 0)
+    # Non-degenerate distance matrix must give positive Rg (catches always-zero or wrong formula)
+    assert np.all(rg > 0), "Rg must be positive for non-zero distances"
 
 
 def test_distmap_scaling_shape():
@@ -314,6 +329,8 @@ def test_distmap_scaling_shape():
     assert gen_d.shape == (5,)
     assert mean_d.shape == (5,)
     assert np.all(mean_d >= 0)
+    # Positive distances -> mean_d must be positive (catches always-zero)
+    assert np.all(mean_d > 0), "mean_spatial_distances must be positive for positive DM"
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +358,47 @@ def test_rmsd_matrix_batch_identical_coords_zero():
     assert_exact_or_numerical(rmsd[0, 0], 0.0, atol=1e-6, name="RMSD(identical coords)")
 
 
+def test_rmsd_matrix_batch_rotated_aligns_to_near_zero():
+    """Rotated+translated copy aligned back to original must give near-zero RMSD. Catches wrong Kabsch formula."""
+    rng = np.random.default_rng(42)
+    N = 20
+    original = rng.uniform(-10, 10, size=(N, 3)).astype(np.float32)
+    rot = Rotation.random(random_state=rng)
+    translation = rng.uniform(-2, 2, size=3).astype(np.float32)
+    rotated = rot.apply(original) + translation
+    rmsd = _rmsd_matrix_batch(
+        rotated[np.newaxis, ...],
+        original[np.newaxis, ...],
+    )
+    assert rmsd.shape == (1, 1)
+    # Wrong Kabsch gives RMSD ~1+; float32 noise can be ~1e-6
+    assert rmsd[0, 0] < 1e-5, (
+        f"Rotate-then-align should give ~0 RMSD; got {rmsd[0, 0]}. "
+        "If this fails, Kabsch alignment is wrong."
+    )
+
+
+def test_rmsd_matrix_batch_matches_scipy():
+    """Pipeline RMSD must match scipy Rotation.align_vectors result for the same pair."""
+    rng = np.random.default_rng(123)
+    N = 15
+    ref = rng.uniform(-5, 5, size=(N, 3)).astype(np.float32)
+    query = Rotation.random(random_state=rng).apply(ref) + rng.uniform(-1, 1, size=3).astype(np.float32)
+    pipeline_rmsd = _rmsd_matrix_batch(
+        query[np.newaxis, ...],
+        ref[np.newaxis, ...],
+    )[0, 0]
+    # Scipy: align query to ref, then compute RMSD
+    q_c = query - query.mean(axis=0)
+    r_c = ref - ref.mean(axis=0)
+    rot, _ = Rotation.align_vectors(r_c, q_c)
+    aligned = rot.apply(q_c) + ref.mean(axis=0)
+    scipy_rmsd = np.sqrt(np.mean((aligned - ref) ** 2))
+    assert np.isclose(pipeline_rmsd, scipy_rmsd, rtol=1e-5, atol=1e-8), (
+        f"Pipeline RMSD {pipeline_rmsd} should match scipy {scipy_rmsd}"
+    )
+
+
 def test_recon_rmsd_one_to_one():
     """_recon_rmsd_one_to_one: identical original/recon must give RMSD=0. Exact equality required; pass with note if within atol."""
     S, N = 3, 4
@@ -349,6 +407,21 @@ def test_recon_rmsd_one_to_one():
     rmsds = _recon_rmsd_one_to_one(original, recon)
     assert rmsds.shape == (S,)
     assert_exact_or_numerical(rmsds, 0.0, atol=1e-6, name="recon RMSD (identical original/recon)")
+
+
+def test_recon_rmsd_one_to_one_rotated():
+    """_recon_rmsd_one_to_one: recon = rotated(original) must give ~0 RMSD per pair. Catches wrong Kabsch in recon path."""
+    rng = np.random.default_rng(99)
+    S, N = 2, 15
+    original = rng.uniform(-5, 5, size=(S, N, 3)).astype(np.float32)
+    rot = Rotation.random(random_state=rng)
+    trans = rng.uniform(-1, 1, size=3).astype(np.float32)
+    recon = np.array([rot.apply(original[i]) + trans for i in range(S)], dtype=np.float32)
+    rmsds = _recon_rmsd_one_to_one(original, recon)  # (original_coords, recon_coords)
+    assert rmsds.shape == (S,)
+    assert np.all(rmsds < 1e-5), (
+        f"Recon RMSD (rotated->original) should be ~0; got {rmsds}. Wrong alignment in recon path?"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,18 @@ def test_q_single_very_different_structures():
     assert_exact_or_numerical(q, 0.0, atol=1e-30, name="Q(very different)")
 
 
+def test_q_single_different_structures_in_open_interval():
+    """Two non-identical, non-orthogonal structures -> Q strictly in (0, 1). Catches constant Q=0 or Q=1."""
+    # Alpha: 3 beads in a line; Beta: same line scaled by 1.2 (distances 1.2, 1.2). Q should be in (0, 1).
+    alpha = np.array([[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0]], dtype=np.float32)
+    beta = np.array([[0.0, 0, 0], [1.2, 0, 0], [2.4, 0, 0]], dtype=np.float32)
+    q = q_single(alpha, beta, delta=DEFAULT_DELTA)
+    assert 0 < q < 1, (
+        f"Q for similar-but-different structures must be in (0, 1); got {q}. "
+        "Constant 0 or 1 would indicate wrong formula."
+    )
+
+
 def test_q_matrix_batch_shape():
     """_q_matrix_batch: (B, N, 3) vs (M, N, 3) -> (B, M)."""
     B, M, N = 3, 4, 5
@@ -47,15 +59,18 @@ def test_q_matrix_batch_shape():
 
 
 def test_q_matrix_batch_identical_query_ref():
-    """When query and ref are identical, that pair has Q = 1."""
+    """When query and ref are identical, that pair has Q = 1; when different, Q < 1."""
     coords = np.random.randn(2, 4, 3).astype(np.float32)
-    # One query, two refs: first ref is same as query -> Q=1; second ref is different
+    # One query, two refs: first ref is same as query -> Q=1; second ref is different -> Q < 1
     queries = coords[0:1]
     refs = coords
     q_mat = _q_matrix_batch(queries, refs, delta=DEFAULT_DELTA)
     assert q_mat.shape == (1, 2)
     assert_exact_or_numerical(q_mat[0, 0], 1.0, atol=1e-6, name="Q(query[0], ref[0])")
-    assert 0 <= q_mat[0, 1] <= 1.0  # query[0] vs ref[1] (different structure, valid Q in [0,1])
+    assert 0 <= q_mat[0, 1] <= 1.0
+    assert q_mat[0, 1] < 1.0, (
+        "Q(query, different_ref) must be < 1. If 1, implementation may be ignoring ref difference."
+    )
 
 
 def test_max_q_batch_shape_and_identical():
@@ -65,3 +80,19 @@ def test_max_q_batch_shape_and_identical():
     max_q = max_q_batch(coords[:2], coords, delta=DEFAULT_DELTA, query_batch_size=2, desc=None)
     assert max_q.shape == (2,)
     assert_exact_or_numerical(max_q, 1.0, atol=1e-6, name="max_q (identical query/ref)")
+
+
+def test_max_q_batch_different_refs_less_than_one():
+    """When no ref matches a query, max_q < 1. Catches always-returning-1."""
+    # Queries: 3 points in a line; refs: same size but very different (10x scaled)
+    query = np.array([[0.0, 0, 0], [1.0, 0, 0], [2.0, 0, 0]], dtype=np.float32)
+    ref = np.array([[0.0, 0, 0], [10.0, 0, 0], [20.0, 0, 0]], dtype=np.float32)
+    max_q = max_q_batch(
+        query[np.newaxis, ...], ref[np.newaxis, ...],
+        delta=DEFAULT_DELTA, query_batch_size=1, desc=None,
+    )
+    assert max_q.shape == (1,)
+    assert max_q[0] < 0.01, (
+        f"max Q when ref is very different should be near 0; got {max_q[0]}. "
+        "Always-1 implementation would fail here."
+    )

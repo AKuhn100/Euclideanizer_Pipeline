@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from scipy.cluster.hierarchy import linkage, dendrogram, cophenet, fcluster
 from scipy.spatial.distance import squareform
+from scipy.spatial.transform import Rotation
 from sklearn.decomposition import PCA
 
 from . import utils
@@ -61,17 +62,12 @@ def _feats_from_coords(
 
 
 def _kabsch_align_to_ref(coord: np.ndarray, ref: np.ndarray) -> np.ndarray:
-    """Align coord (N, 3) to ref (N, 3) via Kabsch; return aligned (N, 3) float32."""
+    """Align coord (N, 3) to ref (N, 3) via scipy Kabsch; return aligned (N, 3) float32."""
     q_c = coord - coord.mean(axis=0, keepdims=True)
     r_c = ref - ref.mean(axis=0, keepdims=True)
     ref_mean = ref.mean(axis=0)
-    H = q_c.T @ r_c
-    U, _, Vt = np.linalg.svd(H)
-    d = np.linalg.det(U @ Vt)
-    S = np.eye(3, dtype=H.dtype)
-    S[2, 2] = np.sign(d)
-    R = U @ S @ Vt
-    aligned = q_c @ R + ref_mean
+    rot, _ = Rotation.align_vectors(r_c, q_c)  # R @ query_centered = ref_centered
+    aligned = rot.apply(q_c) + ref_mean
     return aligned.astype(np.float32)
 
 
@@ -345,7 +341,7 @@ def _plot_panel(
         ax.set_ylim(y_bottom - strip_h, ax.get_ylim()[1])
     suffix = f"  (c={cophenetic_r:.3f})" if show_cophenetic else ""
     ax.set_title(f"{title}{suffix}", fontsize=11, fontweight="bold", pad=4)
-    ax.set_ylabel("RMSE (distance-map)", fontsize=9)
+    ax.set_ylabel("RMSE (distance map)", fontsize=9)
     ax.tick_params(axis="x", bottom=False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -369,8 +365,8 @@ def _fig_pure_dendrograms(
     if len(groups) == 1:
         axes = [axes]
     fig.suptitle(
-        "Hierarchical Clustering — Individual Populations\n"
-        "Each leaf is one structure; distance = distance-map RMSE",
+        "Hierarchical Clustering — Pure Populations\n"
+        "Each leaf is one structure; distance = RMSE (distance map)",
         fontsize=13, fontweight="bold", y=1.02,
     )
     for ax, (name, feats) in zip(axes, groups):
@@ -438,19 +434,14 @@ def _fig_mixed_dendrograms(
     ge = sub_feats.get("Generated")
     te = sub_feats.get("Test")
     if ge is None:
-        ge = sub_feats.get("Train recon")
-        te2 = sub_feats.get("Test recon")
-        if te is not None and te2 is not None:
-            configs = [
-                ("Training", tr, "Test", te, None, None),
-                ("Training", tr, "Train recon", ge, None, None),
-                ("Test", te, "Test recon", te2, None, None),
-                ("Training", tr, "Test", te, "Train recon", ge),
-            ]
-            if tr is None:
-                configs = [(c[0], c[1], c[2], c[3], c[4], c[5]) for c in configs if c[1] is not None and c[3] is not None]
-        else:
-            configs = []
+        # Recon: only two mixing panels — Training + Train recon, Test + Test recon
+        train_recon = sub_feats.get("Train recon")
+        test_recon = sub_feats.get("Test recon")
+        configs = []
+        if tr is not None and train_recon is not None:
+            configs.append(("Training", tr, "Train recon", train_recon, None, None))
+        if te is not None and test_recon is not None:
+            configs.append(("Test", te, "Test recon", test_recon, None, None))
     else:
         configs = [
             ("Training", tr, "Test", te, None, None),
@@ -521,8 +512,8 @@ def _fig_mixing_analysis(
     ax_bar.bar(x + w / 2, exp, w, label="Expected (random)", color="#aaaaaa", alpha=0.8)
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=10)
-    ax_bar.set_ylabel("Source mixing score", fontsize=10)
-    ax_bar.set_title(f"Source Mixing Scores  (k={k_mixing} nearest neighbours)", fontsize=11, fontweight="bold")
+    ax_bar.set_ylabel("Mixing score", fontsize=10)
+    ax_bar.set_title(f"Mixing scores (k={k_mixing} nearest neighbours)", fontsize=11, fontweight="bold")
     ax_bar.legend(fontsize=10)
     ax_bar.set_ylim(0, 1.05)
     ax_bar.spines["top"].set_visible(False)
@@ -559,11 +550,11 @@ def _fig_mixing_analysis(
         ax_c.set_xticklabels([f"C{j+1}" for j in range(n_clusters)], fontsize=8)
         ax_c.set_ylabel("Source fraction", fontsize=9)
         ax_c.set_ylim(0, 1.05)
-        ax_c.set_title(f"{na} + {nb} — Cluster Composition", fontsize=9, fontweight="bold")
+        ax_c.set_title(f"{na} + {nb} — cluster composition", fontsize=9, fontweight="bold")
         ax_c.legend(fontsize=8, loc="upper right")
         ax_c.spines["top"].set_visible(False)
         ax_c.spines["right"].set_visible(False)
-    fig.suptitle("Quantitative Mixing Analysis", fontsize=13, fontweight="bold", y=1.01)
+    fig.suptitle("Mixing analysis", fontsize=13, fontweight="bold", y=1.01)
     fig.tight_layout()
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
@@ -610,11 +601,11 @@ def _fig_rmse_similarity(
             ax.plot([0, lim], [0, lim], "k--", lw=1.2, alpha=0.6, label="y=x")
             ax.set_xlabel(f"{name_a} pairwise RMSE (quantiles)", fontsize=10)
             ax.set_ylabel(f"{name_b} pairwise RMSE (quantiles)", fontsize=10)
-            ax.set_title(f"{name_a} vs {name_b}   (Pearson r={corr:.3f})", fontsize=11, fontweight="bold")
+            ax.set_title(f"{name_a} vs {name_b} (r={corr:.3f})", fontsize=11, fontweight="bold")
             ax.legend(fontsize=9)
             ax.spines["top"].set_visible(False)
             ax.spines["right"].set_visible(False)
-    fig.suptitle("Distance-Landscape Similarity Between Populations", fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle("RMSE similarity (quantile–quantile)", fontsize=13, fontweight="bold", y=1.02)
     fig.tight_layout()
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
