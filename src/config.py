@@ -53,7 +53,7 @@ REQUIRED_KEYS = {
 REQUIRED_ANALYSIS_SUBKEYS = {
     "rmsd_gen": [
         "enabled", "overwrite_existing",
-        "num_samples", "sample_variance", "query_batch_size",
+        "num_samples", "sample_variance", "query_batch_size", "gen_decode_batch_size",
         "save_data", "save_pdf_copy", "save_structures_gro",
     ],
     "rmsd_recon": [
@@ -64,7 +64,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
     "q_gen": [
         "enabled", "overwrite_existing",
         "num_samples", "sample_variance",
-        "delta", "query_batch_size",
+        "delta", "query_batch_size", "gen_decode_batch_size",
         "save_data", "save_pdf_copy", "save_structures_gro",
     ],
     "q_recon": [
@@ -76,7 +76,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
         "enabled", "overwrite_existing",
         "num_samples", "sample_variance", "n_subsample",
         "k_mixing", "n_clusters", "linkage_method",
-        "query_batch_size",
+        "gen_decode_batch_size",
         "save_data", "save_pdf_copy",
     ],
     "coord_clustering_recon": [
@@ -89,7 +89,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
         "enabled", "overwrite_existing",
         "num_samples", "sample_variance", "n_subsample",
         "k_mixing", "n_clusters", "linkage_method",
-        "query_batch_size", "feats_batch_size",
+        "gen_decode_batch_size", "feats_batch_size",
         "save_data", "save_pdf_copy",
     ],
     "distmap_clustering_recon": [

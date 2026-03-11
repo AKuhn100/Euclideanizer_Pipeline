@@ -79,6 +79,7 @@ analysis:
     num_samples: 10
     sample_variance: [1.0]
     query_batch_size: 8
+    gen_decode_batch_size: 8
     save_data: false
     save_pdf_copy: false
     save_structures_gro: false
@@ -97,6 +98,7 @@ analysis:
     sample_variance: [1]
     delta: 0.7071
     query_batch_size: 64
+    gen_decode_batch_size: 8
     save_data: false
     save_pdf_copy: false
     save_structures_gro: false
@@ -118,7 +120,7 @@ analysis:
     k_mixing: 10
     n_clusters: 8
     linkage_method: "average"
-    query_batch_size: 8
+    gen_decode_batch_size: 8
     save_data: false
     save_pdf_copy: false
   coord_clustering_recon:
@@ -142,7 +144,7 @@ analysis:
     k_mixing: 10
     n_clusters: 8
     linkage_method: "average"
-    query_batch_size: 8
+    gen_decode_batch_size: 8
     feats_batch_size: 8
     save_data: false
     save_pdf_copy: false

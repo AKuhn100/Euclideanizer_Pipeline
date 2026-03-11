@@ -86,6 +86,7 @@ analysis:
     num_samples: [1]   # list of sample counts per run name (e.g. [1, 10] → run "1", "10")
     sample_variance: [1, 2]   # list of latent variances; one set of outputs per value
     query_batch_size: 128   # batch size for RMSD query (nearest-neighbour search)
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
     save_data: true   # if true, save rmsd_data.npz (and similar) in analysis output dir
     save_pdf_copy: false   # if true, save PDF copies of RMSD (gen) figures in a pdf/ subdir
     save_structures_gro: true   # if true, save generated structures as GRO for this analysis
@@ -104,6 +105,7 @@ analysis:
     sample_variance: [1]   # list of latent variances
     delta: 0.7071   # Q smoothing parameter (1/sqrt(2) → denominator 2*delta^2 = 1)
     query_batch_size: 64   # batch size for Q computation
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
     save_data: true   # if true, save Q data as .npz
     save_pdf_copy: true   # if true, save PDF copies of Q figures
     save_structures_gro: false   # if true, save generated structures as GRO
@@ -125,7 +127,7 @@ analysis:
     k_mixing: 10   # number of nearest neighbours used to compute source mixing score (0–1, higher = more mixing)
     n_clusters: 8   # number of clusters when cutting dendrogram for composition bars (C1..C8)
     linkage_method: "average"   # scipy linkage method for hierarchical clustering (e.g. average, single, complete)
-    query_batch_size: 64   # batch size for coordinate feature extraction
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
     save_data: false   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies of clustering figures
   coord_clustering_recon:
@@ -149,7 +151,7 @@ analysis:
     k_mixing: 10   # nearest neighbours for mixing score
     n_clusters: 8   # number of clusters for composition bars
     linkage_method: "average"   # scipy linkage method
-    query_batch_size: 64   # batch size for distmap query (if used)
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
     feats_batch_size: 64   # batch size for computing distance-map features (cache and analysis)
     save_data: false   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies

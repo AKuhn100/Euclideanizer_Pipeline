@@ -701,11 +701,16 @@ def run_distmap_clustering_gen_analysis(
     else:
         raise ValueError("distmap_clustering_gen requires clustering_seed_feats_path (seed-level cache).")
     num_atoms = coords_tensor.size(1)
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
     with torch.no_grad():
         z = generate_samples(num_samples, latent_dim, device, variance=sample_variance)
-        D_ne = frozen_vae._decode_to_matrix(z)
-        gen_coords = embed(D_ne)
+        out_coords = []
+        for start in range(0, num_samples, gen_decode_batch_size):
+            end = min(start + gen_decode_batch_size, num_samples)
+            D_ne = frozen_vae._decode_to_matrix(z[start:end])
+            out_coords.append(embed(D_ne))
+        gen_coords = torch.cat(out_coords, dim=0)
     gen_feats_full = _feats_from_coords(gen_coords, device, num_atoms, feats_batch_size)
     ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
     gen_feats = gen_feats_full[ge_idx]
@@ -748,14 +753,19 @@ def run_distmap_clustering_gen_analysis_multi(
         raise ValueError("distmap_clustering_gen multi requires clustering_seed_feats_path.")
     train_feats, test_feats = _load_clustering_cache(clustering_seed_feats_path)
     num_atoms = coords_tensor.size(1)
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
     sorted_n = sorted(set(num_samples_list))
     out_paths = []
     for n in sorted_n:
         with torch.no_grad():
             z = generate_samples(n, latent_dim, device, variance=sample_variance)
-            D_ne = frozen_vae._decode_to_matrix(z)
-            gen_coords = embed(D_ne)
+            out_coords = []
+            for start in range(0, n, gen_decode_batch_size):
+                end = min(start + gen_decode_batch_size, n)
+                D_ne = frozen_vae._decode_to_matrix(z[start:end])
+                out_coords.append(embed(D_ne))
+            gen_coords = torch.cat(out_coords, dim=0)
         gen_feats_full = _feats_from_coords(gen_coords, device, num_atoms, feats_batch_size)
         ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
         gen_feats = gen_feats_full[ge_idx]
@@ -854,11 +864,16 @@ def run_coord_clustering_gen_analysis(
     else:
         raise ValueError("coord_clustering_gen requires coord_clustering_seed_feats_path (seed-level cache).")
     num_atoms = coords_tensor.size(1)
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
     with torch.no_grad():
         z = generate_samples(num_samples, latent_dim, device, variance=sample_variance)
-        D_ne = frozen_vae._decode_to_matrix(z)
-        gen_coords = embed(D_ne)
+        out_coords = []
+        for start in range(0, num_samples, gen_decode_batch_size):
+            end = min(start + gen_decode_batch_size, num_samples)
+            D_ne = frozen_vae._decode_to_matrix(z[start:end])
+            out_coords.append(embed(D_ne))
+        gen_coords = torch.cat(out_coords, dim=0)
     gen_coords_np = gen_coords.cpu().numpy()
     gen_feats_full = _feats_from_coords_aligned(gen_coords_np)
     ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
@@ -901,14 +916,19 @@ def run_coord_clustering_gen_analysis_multi(
         raise ValueError("coord_clustering_gen multi requires coord_clustering_seed_feats_path.")
     train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
     num_atoms = coords_tensor.size(1)
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
     sorted_n = sorted(set(num_samples_list))
     out_paths = []
     for n in sorted_n:
         with torch.no_grad():
             z = generate_samples(n, latent_dim, device, variance=sample_variance)
-            D_ne = frozen_vae._decode_to_matrix(z)
-            gen_coords = embed(D_ne)
+            out_coords = []
+            for start in range(0, n, gen_decode_batch_size):
+                end = min(start + gen_decode_batch_size, n)
+                D_ne = frozen_vae._decode_to_matrix(z[start:end])
+                out_coords.append(embed(D_ne))
+            gen_coords = torch.cat(out_coords, dim=0)
         gen_coords_np = gen_coords.cpu().numpy()
         gen_feats_full = _feats_from_coords_aligned(gen_coords_np)
         ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)

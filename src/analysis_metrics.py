@@ -58,6 +58,7 @@ def _rmsd_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
         "rmsd_num_samples": gen.get("num_samples"),
         "rmsd_sample_variance": gen.get("sample_variance"),
         "rmsd_query_batch_size": gen["query_batch_size"],
+        "gen_decode_batch_size": gen["gen_decode_batch_size"],
         "save_data": gen["save_data"],
         "save_structures_gro": gen["save_structures_gro"],
     }
@@ -120,6 +121,7 @@ def _q_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
         "q_num_samples": gen.get("num_samples"),
         "q_sample_variance": gen.get("sample_variance"),
         "q_query_batch_size": gen["query_batch_size"],
+        "gen_decode_batch_size": gen["gen_decode_batch_size"],
         "save_data": gen["save_data"],
         "save_structures_gro": gen["save_structures_gro"],
     }
@@ -238,6 +240,7 @@ def _make_clustering_build_gen_plot_cfg(prefix: str):
             "plot_dpi": plot_dpi,
             "save_pdf_copy": gen["save_pdf_copy"],
             "save_data": gen["save_data"],
+            "gen_decode_batch_size": gen["gen_decode_batch_size"],
         }
     return _fn
 

@@ -242,12 +242,17 @@ def run_min_rmsd_analysis(
         )
 
     from .distmap.sample import generate_samples
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
     with torch.no_grad():
         z = generate_samples(n_gen, latent_dim, device, variance=variance)
-        D_noneuclid = frozen_vae._decode_to_matrix(z)
-        gen_coords = embed(D_noneuclid)
-    gen_coords_np = gen_coords.cpu().numpy().astype(np.float32)
+        out_coords = []
+        for start in range(0, n_gen, gen_decode_batch_size):
+            end = min(start + gen_decode_batch_size, n_gen)
+            D_noneuclid = frozen_vae._decode_to_matrix(z[start:end])
+            coords_chunk = embed(D_noneuclid)
+            out_coords.append(coords_chunk.cpu().numpy().astype(np.float32))
+        gen_coords_np = np.concatenate(out_coords, axis=0)
 
     gen_to_train = min_rmsd_batch(
         gen_coords_np, train_coords_np, query_batch_size=batch_size, desc="Generated → Train (min RMSD)"
@@ -293,6 +298,7 @@ def run_min_rmsd_analysis_multi(
     import shutil
 
     batch_size = query_batch_size or plot_cfg["rmsd_query_batch_size"]
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     save_data = plot_cfg["save_data"]
     save_structures_gro = plot_cfg["save_structures_gro"]
     sorted_n = sorted(set(num_samples_list))
@@ -360,9 +366,13 @@ def run_min_rmsd_analysis_multi(
         else:
             with torch.no_grad():
                 z = generate_samples(need, latent_dim, device, variance=sample_variance)
-                D_noneuclid = frozen_vae._decode_to_matrix(z)
-                gen_coords = embed(D_noneuclid)
-            gen_chunk_np = gen_coords.cpu().numpy().astype(np.float32)
+                out_coords = []
+                for start in range(0, need, gen_decode_batch_size):
+                    end = min(start + gen_decode_batch_size, need)
+                    D_noneuclid = frozen_vae._decode_to_matrix(z[start:end])
+                    coords_chunk = embed(D_noneuclid)
+                    out_coords.append(coords_chunk.cpu().numpy().astype(np.float32))
+                gen_chunk_np = np.concatenate(out_coords, axis=0)
             acc_gen_coords.append(gen_chunk_np)
             gen_to_train_chunk = min_rmsd_batch(
                 gen_chunk_np, train_coords_np, query_batch_size=batch_size,
