@@ -180,17 +180,25 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                     if os.path.isfile(latent_corr):
                         rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_correlation.png")
                         blocks.append({"type": "latent_correlation", "name": f"Latent correlation (Q) {subdir}", "source_path": rel})
-    _append_coord_clustering_analysis_blocks(run_root, blocks)
-    _append_distmap_clustering_analysis_blocks(run_root, blocks)
+    _append_clustering_analysis_blocks(run_root, blocks, _COORD_CLUSTERING_DIR, "coord_clustering", "Coord clustering")
+    _append_clustering_analysis_blocks(run_root, blocks, _DISTMAP_CLUSTERING_DIR, "distmap_clustering", "Distmap clustering", include_latent=True)
     return blocks
 
 
-def _append_coord_clustering_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) -> None:
-    """Append Coord clustering dashboard blocks from analysis/coord_clustering/ (gen, recon)."""
-    clust_root = os.path.join(run_root, _ANALYSIS_DIR, _COORD_CLUSTERING_DIR)
+def _append_clustering_analysis_blocks(
+    run_root: str,
+    blocks: list[dict[str, str]],
+    subdir: str,
+    type_prefix: str,
+    display_name: str,
+    *,
+    include_latent: bool = False,
+) -> None:
+    """Append clustering dashboard blocks from analysis/<subdir>/ (gen, recon; optionally latent for distmap)."""
+    clust_root = os.path.join(run_root, _ANALYSIS_DIR, subdir)
     if not os.path.isdir(clust_root):
         return
-    base_rel = os.path.join(_ANALYSIS_DIR, _COORD_CLUSTERING_DIR)
+    base_rel = os.path.join(_ANALYSIS_DIR, subdir)
     gen_dir = os.path.join(clust_root, "gen")
     if os.path.isdir(gen_dir):
         for run_name in sorted(os.listdir(gen_dir)):
@@ -202,72 +210,40 @@ def _append_coord_clustering_analysis_blocks(run_root: str, blocks: list[dict[st
                 if os.path.isfile(fig_path):
                     rel = os.path.join(base_rel, "gen", run_name, fig_name)
                     label = fig_name.replace(".png", "").replace("_", " ").title()
-                    blocks.append({"type": "coord_clustering_gen", "name": f"Coord clustering (gen) {run_name} — {label}", "source_path": rel})
+                    blocks.append({"type": f"{type_prefix}_gen", "name": f"{display_name} (gen) {run_name} — {label}", "source_path": rel})
     recon_dir = os.path.join(clust_root, "recon")
     main_recon_fig = os.path.join(recon_dir, _CLUSTERING_FIG)
     if os.path.isfile(main_recon_fig):
         rel = os.path.join(base_rel, "recon", _CLUSTERING_FIG)
-        blocks.append({"type": "coord_clustering_recon", "name": "Coord clustering (recon)", "source_path": rel})
+        blocks.append({"type": f"{type_prefix}_recon", "name": f"{display_name} (recon)", "source_path": rel})
     else:
-        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-            subdir_path = os.path.join(recon_dir, subdir)
+        for subdir_name in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+            subdir_path = os.path.join(recon_dir, subdir_name)
             if os.path.isdir(subdir_path):
                 subdir_fig = os.path.join(subdir_path, _CLUSTERING_FIG)
                 if os.path.isfile(subdir_fig):
-                    rel = os.path.join(base_rel, "recon", subdir, _CLUSTERING_FIG)
-                    blocks.append({"type": "coord_clustering_recon", "name": f"Coord clustering (recon) {subdir}", "source_path": rel})
-
-
-def _append_distmap_clustering_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) -> None:
-    """Append Distmap clustering dashboard blocks from analysis/distmap_clustering/ (gen, recon, latent)."""
-    clust_root = os.path.join(run_root, _ANALYSIS_DIR, _DISTMAP_CLUSTERING_DIR)
-    if not os.path.isdir(clust_root):
-        return
-    base_rel = os.path.join(_ANALYSIS_DIR, _DISTMAP_CLUSTERING_DIR)
-    gen_dir = os.path.join(clust_root, "gen")
-    if os.path.isdir(gen_dir):
-        for run_name in sorted(os.listdir(gen_dir)):
-            run_dir = os.path.join(gen_dir, run_name)
-            if not os.path.isdir(run_dir):
-                continue
-            for fig_name in (_CLUSTERING_FIG,) + _CLUSTERING_EXTRA_FIGS:
-                fig_path = os.path.join(run_dir, fig_name)
-                if os.path.isfile(fig_path):
-                    rel = os.path.join(base_rel, "gen", run_name, fig_name)
-                    label = fig_name.replace(".png", "").replace("_", " ").title()
-                    blocks.append({"type": "distmap_clustering_gen", "name": f"Distmap clustering (gen) {run_name} — {label}", "source_path": rel})
-    recon_dir = os.path.join(clust_root, "recon")
-    main_recon_fig = os.path.join(recon_dir, _CLUSTERING_FIG)
-    if os.path.isfile(main_recon_fig):
-        rel = os.path.join(base_rel, "recon", _CLUSTERING_FIG)
-        blocks.append({"type": "distmap_clustering_recon", "name": "Distmap clustering (recon)", "source_path": rel})
-    else:
-        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-            subdir_path = os.path.join(recon_dir, subdir)
-            if os.path.isdir(subdir_path):
-                subdir_fig = os.path.join(subdir_path, _CLUSTERING_FIG)
-                if os.path.isfile(subdir_fig):
-                    rel = os.path.join(base_rel, "recon", subdir, _CLUSTERING_FIG)
-                    blocks.append({"type": "distmap_clustering_recon", "name": f"Distmap clustering (recon) {subdir}", "source_path": rel})
-    latent_fig = os.path.join(recon_dir, "latent_distribution.png")
-    if os.path.isfile(latent_fig):
-        rel = os.path.join(base_rel, "recon", "latent_distribution.png")
-        blocks.append({"type": "latent_distribution", "name": "Latent distribution (Distmap clustering)", "source_path": rel})
-        latent_corr = os.path.join(recon_dir, "latent_correlation.png")
-        if os.path.isfile(latent_corr):
-            rel = os.path.join(base_rel, "recon", "latent_correlation.png")
-            blocks.append({"type": "latent_correlation", "name": "Latent correlation (Distmap clustering)", "source_path": rel})
-    else:
-        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-            subdir_path = os.path.join(recon_dir, subdir)
-            latent_sub = os.path.join(subdir_path, "latent_distribution.png")
-            if os.path.isfile(latent_sub):
-                rel = os.path.join(base_rel, "recon", subdir, "latent_distribution.png")
-                blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Distmap clustering) {subdir}", "source_path": rel})
-                latent_corr = os.path.join(subdir_path, "latent_correlation.png")
-                if os.path.isfile(latent_corr):
-                    rel = os.path.join(base_rel, "recon", subdir, "latent_correlation.png")
-                    blocks.append({"type": "latent_correlation", "name": f"Latent correlation (Distmap clustering) {subdir}", "source_path": rel})
+                    rel = os.path.join(base_rel, "recon", subdir_name, _CLUSTERING_FIG)
+                    blocks.append({"type": f"{type_prefix}_recon", "name": f"{display_name} (recon) {subdir_name}", "source_path": rel})
+    if include_latent:
+        latent_fig = os.path.join(recon_dir, "latent_distribution.png")
+        if os.path.isfile(latent_fig):
+            rel = os.path.join(base_rel, "recon", "latent_distribution.png")
+            blocks.append({"type": "latent_distribution", "name": f"Latent distribution ({display_name})", "source_path": rel})
+            latent_corr = os.path.join(recon_dir, "latent_correlation.png")
+            if os.path.isfile(latent_corr):
+                rel = os.path.join(base_rel, "recon", "latent_correlation.png")
+                blocks.append({"type": "latent_correlation", "name": f"Latent correlation ({display_name})", "source_path": rel})
+        else:
+            for subdir_name in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
+                subdir_path = os.path.join(recon_dir, subdir_name)
+                latent_sub = os.path.join(subdir_path, "latent_distribution.png")
+                if os.path.isfile(latent_sub):
+                    rel = os.path.join(base_rel, "recon", subdir_name, "latent_distribution.png")
+                    blocks.append({"type": "latent_distribution", "name": f"Latent distribution ({display_name}) {subdir_name}", "source_path": rel})
+                    latent_corr = os.path.join(subdir_path, "latent_correlation.png")
+                    if os.path.isfile(latent_corr):
+                        rel = os.path.join(base_rel, "recon", subdir_name, "latent_correlation.png")
+                        blocks.append({"type": "latent_correlation", "name": f"Latent correlation ({display_name}) {subdir_name}", "source_path": rel})
 
 
 def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:

@@ -2051,65 +2051,21 @@ def _run_one_distmap_group(
                                 if not isinstance(_max_recon_test_list, list):
                                     _max_recon_test_list = [_max_recon_test_list]
                                 _visualize_latent = recon_cfg.get("visualize_latent", False)
-                                if spec.id == "rmsd":
-                                    _ref_mt = analysis_cfg.get("rmsd_max_train")
-                                    _ref_mc = analysis_cfg.get("rmsd_max_test")
-                                elif spec.id == "q":
-                                    _ref_mt = analysis_cfg.get("q_max_train")
-                                    _ref_mc = analysis_cfg.get("q_max_test")
-                                elif spec.id == "coord_clustering":
-                                    _ref_mt = analysis_cfg.get("coord_clustering_max_train")
-                                    _ref_mc = analysis_cfg.get("coord_clustering_max_test")
-                                else:
-                                    assert spec.id == "distmap_clustering"
-                                    _ref_mt = analysis_cfg.get("distmap_clustering_max_train")
-                                    _ref_mc = analysis_cfg.get("distmap_clustering_max_test")
+                                _ref_mt = analysis_cfg.get(f"{spec.id}_max_train")
+                                _ref_mc = analysis_cfg.get(f"{spec.id}_max_test")
 
                                 def _get_or_compute_cached(mt, mc):
-                                    if spec.id == "rmsd":
-                                        if _cache.get("rmsd") is None:
-                                            _cache["rmsd"] = {}
-                                        key = (mt, mc)
-                                        if key not in _cache["rmsd"]:
-                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
-                                            _cache["rmsd"][key] = spec.get_or_compute_test_to_train(
-                                                _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
-                                                **spec.kwargs_for_cache(analysis_cfg, mt, mc),
-                                            )
-                                        return _cache["rmsd"][key]
-                                    if spec.id == "q":
-                                        if _cache.get("q") is None:
-                                            _cache["q"] = {}
-                                        key = (mt, mc)
-                                        if key not in _cache["q"]:
-                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
-                                            _cache["q"][key] = spec.get_or_compute_test_to_train(
-                                                _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
-                                                **spec.kwargs_for_cache(analysis_cfg, mt, mc),
-                                            )
-                                        return _cache["q"][key]
-                                    if spec.id == "coord_clustering":
-                                        if _cache.get("coord_clustering") is None:
-                                            _cache["coord_clustering"] = {}
-                                        key = (mt, mc)
-                                        if key not in _cache["coord_clustering"]:
-                                            _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
-                                            _cache["coord_clustering"][key] = spec.get_or_compute_test_to_train(
-                                                _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
-                                                **spec.kwargs_for_cache(analysis_cfg, mt, mc),
-                                            )
-                                        return _cache["coord_clustering"][key]
-                                    assert spec.id == "distmap_clustering"
-                                    if _cache.get("distmap_clustering") is None:
-                                        _cache["distmap_clustering"] = {}
+                                    cache_key = spec.id
+                                    if _cache.get(cache_key) is None:
+                                        _cache[cache_key] = {}
                                     key = (mt, mc)
-                                    if key not in _cache["distmap_clustering"]:
+                                    if key not in _cache[cache_key]:
                                         _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
-                                        _cache["distmap_clustering"][key] = spec.get_or_compute_test_to_train(
+                                        _cache[cache_key][key] = spec.get_or_compute_test_to_train(
                                             _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
                                             **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                         )
-                                    return _cache["distmap_clustering"][key]
+                                    return _cache[cache_key][key]
 
                                 if do_gen:
                                     _mt_gen = _ref_mt if spec.id == "q" else None
