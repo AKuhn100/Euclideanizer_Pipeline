@@ -661,16 +661,16 @@ def _fig_rmse_similarity(
         ax.scatter(qa, qb, s=10, alpha=0.6, c=np.linspace(0, 1, n_q), cmap="viridis")
         lim = max(qa.max(), qb.max()) * 1.05
         lims.append(lim)
-        ax.plot([0, lim], [0, lim], "k--", lw=1.2, alpha=0.6, label="y=x")
         title = _rmse_panel_title(name_a, name_b, is_gen) + f" (r={corr:.3f})"
         ax.set_title(title, fontsize=11, fontweight="bold")
         ax.set_xlabel(f"{name_a} pairwise RMSE (quantiles)", fontsize=10)
         ax.set_ylabel(f"{name_b} pairwise RMSE (quantiles)", fontsize=10)
-        ax.legend(fontsize=9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
     global_lim = max(lims)
     for ax in axes:
+        ax.plot([0, global_lim], [0, global_lim], "k--", lw=1.2, alpha=0.6, label="y=x")
+        ax.legend(fontsize=9)
         ax.set_xlim(0, global_lim)
         ax.set_ylim(0, global_lim)
         ax.set_aspect("equal")
