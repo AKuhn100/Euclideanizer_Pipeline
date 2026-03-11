@@ -59,6 +59,7 @@ plotting:
   reconstruction: true
   bond_rg_scaling: true
   avg_gen_vs_exp: true
+  bond_length_by_genomic_distance: false
   num_samples: 10              # samples per variance for gen plots
   gen_decode_batch_size: 128   # batch size when decoding for gen plots
   sample_variance: [1]         # list -> one plot set per value

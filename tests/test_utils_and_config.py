@@ -410,4 +410,7 @@ def test_plot_path_from_plottypes():
     assert _plot_path(run_root, "gen_variance", var="1") == os.path.join(
         run_root, "plots", "gen_variance", "gen_variance_1.png"
     )
-    assert set(PLOT_TYPES.keys()) == {"reconstruction", "recon_statistics", "gen_variance"}
+    assert _plot_path(run_root, "bond_length_by_genomic_distance") == os.path.join(
+        run_root, "plots", "bond_length_by_genomic_distance", "bond_length_by_genomic_distance.png"
+    )
+    assert set(PLOT_TYPES.keys()) == {"reconstruction", "recon_statistics", "gen_variance", "bond_length_by_genomic_distance"}

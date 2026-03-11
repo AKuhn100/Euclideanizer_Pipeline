@@ -41,6 +41,7 @@ plotting:
   reconstruction: true
   bond_rg_scaling: true
   avg_gen_vs_exp: true
+  bond_length_by_genomic_distance: false
   num_samples: 10
   gen_decode_batch_size: 8
   sample_variance: [1.0]

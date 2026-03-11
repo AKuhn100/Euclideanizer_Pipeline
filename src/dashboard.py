@@ -23,6 +23,7 @@ _RECONSTRUCTION = os.path.join(_PLOTS_BASE, "reconstruction", "reconstruction.pn
 _RECON_STAT_TRAIN = os.path.join(_PLOTS_BASE, "recon_statistics", "recon_statistics_train.png")
 _RECON_STAT_TEST = os.path.join(_PLOTS_BASE, "recon_statistics", "recon_statistics_test.png")
 _GEN_VARIANCE_PATTERN = os.path.join(_PLOTS_BASE, "gen_variance", "gen_variance_*.png")
+_BOND_LENGTH_BY_GENOMIC_DISTANCE = os.path.join(_PLOTS_BASE, "bond_length_by_genomic_distance", "bond_length_by_genomic_distance.png")
 # Training video lives outside plots/ so plotting wipe does not remove it
 _TRAINING_VIDEO = os.path.join("training_video", "training_evolution.mp4")
 _ANALYSIS_DIR = "analysis"
@@ -80,6 +81,8 @@ def _blocks_for_distmap_run(run_root: str) -> list[dict[str, str]]:
             var = base.replace("gen_variance_", "").replace(".png", "")
             rel = os.path.join(_PLOTS_BASE, "gen_variance", base)
             blocks.append({"type": "gen_variance", "name": f"Gen variance {var}", "source_path": rel})
+    if os.path.isfile(os.path.join(run_root, _BOND_LENGTH_BY_GENOMIC_DISTANCE)):
+        blocks.append({"type": "bond_length_by_genomic_distance", "name": "Bond length by genomic distance", "source_path": _BOND_LENGTH_BY_GENOMIC_DISTANCE})
     if os.path.isfile(os.path.join(run_root, _TRAINING_VIDEO)):
         blocks.append({"type": "training_video", "name": "Training video", "source_path": _TRAINING_VIDEO})
     return blocks
@@ -807,7 +810,7 @@ def _html_content(manifest: dict) -> str:
         if (n.indexOf('CLUSTERING') >= 0) return 11;
         return 10;
       }
-      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon', 'clustering_gen', 'clustering_recon'];
+      const order = ['reconstruction', 'recon_statistics', 'gen_variance', 'bond_length_by_genomic_distance', 'training_video', 'rmsd_gen', 'rmsd_recon', 'q_gen', 'q_recon', 'clustering_gen', 'clustering_recon'];
       const i = order.indexOf(type);
       return i >= 0 ? i : 10;
     }

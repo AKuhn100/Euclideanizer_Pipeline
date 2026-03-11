@@ -66,6 +66,7 @@ from src.plotting import (
     plot_euclideanizer_reconstruction,
     plot_recon_statistics,
     plot_gen_analysis,
+    plot_bond_length_by_genomic_distance,
 )
 from src.distmap.model import ChromVAE_Conv
 from src.distmap.sample import generate_samples as dm_generate_samples
@@ -918,6 +919,7 @@ PLOT_TYPES = {
     "reconstruction": ("reconstruction", "reconstruction.png"),
     "recon_statistics": ("recon_statistics", "recon_statistics_{subset}.png"),
     "gen_variance": ("gen_variance", "gen_variance_{var}.png"),
+    "bond_length_by_genomic_distance": ("bond_length_by_genomic_distance", "bond_length_by_genomic_distance.png"),
 }
 
 
@@ -937,6 +939,7 @@ def _distmap_plotting_all_present(
     do_recon_plot: bool,
     do_bond_rg_scaling: bool,
     do_avg_gen: bool,
+    do_bond_length_by_genomic_distance: bool,
     sample_variances: list,
 ) -> bool:
     """True if resume and all DistMap plot files we would generate already exist (so we can skip loading the model)."""
@@ -952,6 +955,8 @@ def _distmap_plotting_all_present(
         for var in sample_variances:
             if not os.path.isfile(_plot_path(run_dir_dm, "gen_variance", var=str(var))):
                 return False
+    if do_bond_length_by_genomic_distance and not os.path.isfile(_plot_path(run_dir_dm, "bond_length_by_genomic_distance")):
+        return False
     return True
 
 
@@ -1010,6 +1015,7 @@ def _euclideanizer_plotting_all_present(
     do_recon_plot: bool,
     do_bond_rg_scaling: bool,
     do_avg_gen: bool,
+    do_bond_length_by_genomic_distance: bool,
     sample_variances: list,
 ) -> bool:
     """True if resume and all Euclideanizer plot files we would generate already exist."""
@@ -1025,6 +1031,8 @@ def _euclideanizer_plotting_all_present(
         for var in sample_variances:
             if not os.path.isfile(_plot_path(run_dir_eu, "gen_variance", var=str(var))):
                 return False
+    if do_bond_length_by_genomic_distance and not os.path.isfile(_plot_path(run_dir_eu, "bond_length_by_genomic_distance")):
+        return False
     return True
 
 
@@ -1145,6 +1153,7 @@ def _pipeline_need_data(
     do_recon_plot: bool,
     do_bond_rg_scaling: bool,
     do_avg_gen: bool,
+    do_bond_length_by_genomic_distance: bool,
     plot_variances: list,
     variance_list: list,
     num_samples_list: list,
@@ -1163,7 +1172,7 @@ def _pipeline_need_data(
     """True if any run is incomplete or any plot/analysis output is missing (so we must load something)."""
     return _pipeline_data_needs(
         base_output_dir, seeds, dm_groups, eu_groups,
-        resume, do_plot, do_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen,
+        resume, do_plot, do_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance,
         plot_variances, variance_list, num_samples_list,
         do_rmsd_recon=do_rmsd_recon, visualize_latent=visualize_latent,
         max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
@@ -1197,6 +1206,7 @@ def _pipeline_data_needs(
     do_recon_plot: bool,
     do_bond_rg_scaling: bool,
     do_avg_gen: bool,
+    do_bond_length_by_genomic_distance: bool,
     plot_variances: list,
     variance_list: list,
     num_samples_list: list,
@@ -1256,7 +1266,7 @@ def _pipeline_data_needs(
         if not os.path.isdir(output_dir):
             need_coords = True
             need_exp_stats = need_exp_stats or do_plot and do_avg_gen
-            need_train_test_stats = need_train_test_stats or (do_plot and (do_bond_rg_scaling or do_avg_gen))
+            need_train_test_stats = need_train_test_stats or (do_plot and (do_bond_rg_scaling or do_avg_gen or do_bond_length_by_genomic_distance))
             continue
         for group in dm_groups:
             base_config, checkpoints = group["base_config"], group["checkpoints"]
@@ -1545,6 +1555,7 @@ def _run_one_distmap_group(
     do_recon_plot: bool,
     do_bond_rg_scaling: bool,
     do_avg_gen: bool,
+    do_bond_length_by_genomic_distance: bool,
     do_rmsd: bool,
     resume: bool,
     sample_variances: list,
@@ -1695,7 +1706,7 @@ def _run_one_distmap_group(
     
         if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
             if _distmap_plotting_all_present(
-                run_dir_dm, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
+                run_dir_dm, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance, sample_variances
             ):
                 _log(f"DistMap {ri}: [skip] plotting (all present)", since_start=time.time() - pipeline_start, style="skip")
             else:
@@ -1728,11 +1739,14 @@ def _run_one_distmap_group(
                             )
                         elif resume:
                             _log(f"  [skip] recon_statistics_{subset_name}", since_start=time.time() - pipeline_start, style="skip")
+                gen_dm_bond = None
                 if do_avg_gen and train_stats is not None and test_stats is not None:
                     for var in sample_variances:
                         p = _plot_path(run_dir_dm, "gen_variance", var=str(var))
                         if not (resume and os.path.isfile(p)):
                             gen_dm = _get_gen_dm_distmap(model, device, gen_num_samples, dm_cfg["latent_dim"], var, gen_decode_batch_size)
+                            if gen_dm_bond is None:
+                                gen_dm_bond = gen_dm
                             plot_gen_analysis(
                                 exp_stats, train_stats, test_stats, gen_dm, p,
                                 sample_variance=var, label_gen="VAE Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
@@ -1740,6 +1754,18 @@ def _run_one_distmap_group(
                             )
                         elif resume:
                             _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
+                if do_bond_length_by_genomic_distance and train_stats is not None and test_stats is not None:
+                    if gen_dm_bond is None:
+                        gen_dm_bond = _get_gen_dm_distmap(model, device, gen_num_samples, dm_cfg["latent_dim"], sample_variances[0], gen_decode_batch_size)
+                    p_bond = _plot_path(run_dir_dm, "bond_length_by_genomic_distance")
+                    if not (resume and os.path.isfile(p_bond)):
+                        plot_bond_length_by_genomic_distance(
+                            train_stats["exp_distmaps"], test_stats["exp_distmaps"], gen_dm_bond, p_bond,
+                            label_gen="VAE Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                            display_root=base_output_dir,
+                        )
+                    elif resume:
+                        _log("  [skip] bond_length_by_genomic_distance", since_start=time.time() - pipeline_start, style="skip")
                 del model
                 torch.cuda.empty_cache()
                 _log(f"DistMap {ri}: plotting done in {(time.time() - phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
@@ -1851,7 +1877,7 @@ def _run_one_distmap_group(
                     eu_cfg = eu_configs[euri]
                     eu_path = eu_path_seg
                     all_plots = _euclideanizer_plotting_all_present(
-                        run_dir_eu, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, sample_variances
+                        run_dir_eu, resume, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance, sample_variances
                     )
                     all_analysis = _euclideanizer_analysis_all_present(
                         run_dir_eu, resume, analysis_cfg=analysis_cfg
@@ -1892,6 +1918,7 @@ def _run_one_distmap_group(
                                         )
                                     elif resume:
                                         _log(f"  [skip] recon_statistics_{subset_name}", since_start=time.time() - pipeline_start, style="skip")
+                            gen_dm_bond = None
                             if do_avg_gen and train_stats is not None and test_stats is not None:
                                 for var in sample_variances:
                                     p = _plot_path(run_dir_eu, "gen_variance", var=str(var))
@@ -1907,6 +1934,8 @@ def _run_one_distmap_group(
                                             gen_dm = _get_gen_dm_euclideanizer(
                                                 embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], var, utils, gen_decode_batch_size
                                             )
+                                        if gen_dm_bond is None:
+                                            gen_dm_bond = gen_dm
                                         plot_gen_analysis(
                                             exp_stats, train_stats, test_stats, gen_dm, p,
                                             sample_variance=var, label_gen="Euclideanizer", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
@@ -1914,6 +1943,20 @@ def _run_one_distmap_group(
                                         )
                                     elif resume:
                                         _log(f"  [skip] gen_variance_{var}", since_start=time.time() - pipeline_start, style="skip")
+                            if do_bond_length_by_genomic_distance and train_stats is not None and test_stats is not None:
+                                if gen_dm_bond is None:
+                                    gen_dm_bond = _get_gen_dm_euclideanizer(
+                                        embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], sample_variances[0], utils, gen_decode_batch_size
+                                    )
+                                p_bond = _plot_path(run_dir_eu, "bond_length_by_genomic_distance")
+                                if not (resume and os.path.isfile(p_bond)):
+                                    plot_bond_length_by_genomic_distance(
+                                        train_stats["exp_distmaps"], test_stats["exp_distmaps"], gen_dm_bond, p_bond,
+                                        label_gen="Euclideanizer", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                        display_root=base_output_dir,
+                                    )
+                                elif resume:
+                                    _log("  [skip] bond_length_by_genomic_distance", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     
                         # Single analysis loop over registered metrics (order: rmsd, then q).
@@ -2212,7 +2255,7 @@ def _run_one_seed(
             seed, gidx, device,
             cfg, base_output_dir, dm_groups, eu_groups, dm_configs, eu_configs,
             coords, coords_np, num_atoms, num_structures, exp_stats, data_path, need_train, pipeline_start,
-            training_split, do_plot, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_rmsd, resume,
+            training_split, do_plot, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance, do_rmsd, resume,
             sample_variances, gen_num_samples, gen_decode_batch_size, need_plot_or_rmsd,
             save_structures_gro_plot, analysis_save_data, analysis_save_structures_gro,
             plot_dpi, save_pdf, save_plot_data, num_recon_samples, analysis_cfg, variance_list, num_samples_list,
@@ -2339,7 +2382,7 @@ def _worker(
                 coords, coords_np, num_atoms, num_structures, exp_stats, data_path,
                 shared_args["need_train"], worker_start, shared_args["training_split"],
                 shared_args["do_plot"], shared_args["do_recon_plot"],
-                shared_args["do_bond_rg_scaling"], shared_args["do_avg_gen"],
+                shared_args["do_bond_rg_scaling"], shared_args["do_avg_gen"], shared_args["do_bond_length_by_genomic_distance"],
                 shared_args["do_rmsd"], shared_args["resume"],
                 shared_args["sample_variances"], shared_args["gen_num_samples"],
                 shared_args["gen_decode_batch_size"], shared_args["need_plot_or_rmsd"],
@@ -2408,6 +2451,7 @@ def _run_multi_gpu_tasks(
     do_recon_plot: bool,
     do_bond_rg_scaling: bool,
     do_avg_gen: bool,
+    do_bond_length_by_genomic_distance: bool,
     do_rmsd: bool,
     resume: bool,
     sample_variances: list,
@@ -2494,6 +2538,7 @@ def _run_multi_gpu_tasks(
         "do_recon_plot": do_recon_plot,
         "do_bond_rg_scaling": do_bond_rg_scaling,
         "do_avg_gen": do_avg_gen,
+        "do_bond_length_by_genomic_distance": do_bond_length_by_genomic_distance,
         "do_rmsd": do_rmsd,
         "resume": resume,
         "sample_variances": sample_variances,
@@ -2629,6 +2674,7 @@ def main():
     do_recon_plot = plot_cfg["reconstruction"]
     do_bond_rg_scaling = plot_cfg["bond_rg_scaling"]
     do_avg_gen = plot_cfg["avg_gen_vs_exp"]
+    do_bond_length_by_genomic_distance = plot_cfg["bond_length_by_genomic_distance"]
     analysis_cfg = cfg["analysis"]
     do_rmsd = analysis_cfg["rmsd_gen"]["enabled"]
     do_rmsd_recon_cfg = analysis_cfg["rmsd_recon"]["enabled"]
@@ -2900,7 +2946,7 @@ def main():
     else:
         needs = _pipeline_data_needs(
             base_output_dir, seeds, dm_groups, eu_groups,
-            resume, do_plot, do_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen,
+            resume, do_plot, do_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance,
             plot_variances_for_scan, variance_list, num_samples_list,
             do_rmsd_recon=analysis_cfg["rmsd_recon"]["enabled"], visualize_latent=analysis_cfg["rmsd_recon"]["visualize_latent"],
             max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
@@ -3011,7 +3057,7 @@ def main():
     gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     need_plot_or_rmsd = (
         (do_plot and (
-            (coords is not None and (exp_stats is not None or (do_recon_plot and not do_bond_rg_scaling and not do_avg_gen)))
+            (coords is not None and (exp_stats is not None or (do_recon_plot and not do_bond_rg_scaling and not do_avg_gen and not do_bond_length_by_genomic_distance)))
             or (coords is None and exp_stats is not None)
         ))
         or (do_rmsd and coords is not None)
@@ -3148,6 +3194,7 @@ def main():
             do_recon_plot=do_recon_plot,
             do_bond_rg_scaling=do_bond_rg_scaling,
             do_avg_gen=do_avg_gen,
+            do_bond_length_by_genomic_distance=do_bond_length_by_genomic_distance,
             do_rmsd=do_rmsd,
             resume=resume,
             sample_variances=sample_variances,

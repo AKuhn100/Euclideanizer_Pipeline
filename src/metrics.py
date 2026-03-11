@@ -17,6 +17,15 @@ def distmap_bond_lengths(distmaps: np.ndarray) -> np.ndarray:
     return distmaps[:, idx, idx + 1].flatten()
 
 
+def distmap_distances_at_lag(distmaps: np.ndarray, k: int) -> np.ndarray:
+    """(B, N, N) -> pairwise distances d(i, i+k) for all structures and valid i, flattened."""
+    N = distmaps.shape[-1]
+    if k < 1 or k >= N:
+        return np.array([], dtype=distmaps.dtype)
+    idx_i = np.arange(N - k)
+    return distmaps[:, idx_i, idx_i + k].flatten()
+
+
 def distmap_rg(distmaps: np.ndarray) -> np.ndarray:
     """(B, N, N) -> Rg per structure."""
     N = distmaps.shape[-1]

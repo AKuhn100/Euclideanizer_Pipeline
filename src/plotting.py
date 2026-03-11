@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from .metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
+from .metrics import distmap_bond_lengths, distmap_distances_at_lag, distmap_rg, distmap_scaling
 from .utils import display_path, get_train_test_split
 
 
@@ -325,6 +325,86 @@ def plot_gen_analysis(
             avg_train_map=avg_train, avg_test_map=avg_test, avg_gen_map=avg_gen,
             diff_test_train=diff_tt, diff_train_gen=diff_tg, diff_test_gen=diff_test_gen,
         )
+    plt.close()
+    print(f"  Saved: {display_path(output_path, display_root)}")
+
+
+# -------- Bond length by genomic distance (train / test / gen) --------
+NUM_K_DEFAULT = 20
+GRID_SHAPE = (5, 4)  # 5x4 subplots
+
+
+def _k_values_evenly_spaced(N: int, num_k: int = NUM_K_DEFAULT) -> np.ndarray:
+    """Return up to num_k integer lags k in [1, N-1], evenly spaced along the structure."""
+    max_sep = max(1, N - 1)
+    n = min(num_k, max_sep)
+    if n <= 0:
+        return np.array([], dtype=np.int64)
+    # Evenly spaced indices into [1, 2, ..., max_sep]
+    k_vals = np.round(np.linspace(1, max_sep, n)).astype(np.int64)
+    return np.unique(np.clip(k_vals, 1, max_sep))
+
+
+def plot_bond_length_by_genomic_distance(
+    train_dm: np.ndarray,
+    test_dm: np.ndarray,
+    gen_dm: np.ndarray,
+    output_path: str,
+    *,
+    num_k: int = NUM_K_DEFAULT,
+    label_gen: str = "Gen",
+    dpi: int = 150,
+    save_pdf: bool = True,
+    save_plot_data: bool = False,
+    display_root: str | None = None,
+) -> None:
+    """
+    Plot distribution of pairwise distance d(i, i+k) for up to num_k lags k (evenly spaced).
+    5x4 grid; each subplot overlays train, test, and generated histograms (same style as gen_analysis).
+    """
+    N = train_dm.shape[1]
+    k_values = _k_values_evenly_spaced(N, num_k)
+    n_plots = len(k_values)
+    if n_plots == 0:
+        return
+    nrows, ncols = GRID_SHAPE
+    # Flatten grid; we may have fewer than nrows*ncols subplots
+    fig, axes_flat = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
+    axes_flat = np.asarray(axes_flat).flatten()
+    for idx, k in enumerate(k_values):
+        ax = axes_flat[idx]
+        train_vals = distmap_distances_at_lag(train_dm, int(k))
+        test_vals = distmap_distances_at_lag(test_dm, int(k))
+        gen_vals = distmap_distances_at_lag(gen_dm, int(k))
+        all_vals = np.concatenate([train_vals, test_vals, gen_vals])
+        if len(all_vals) == 0:
+            ax.set_title(f"k = {k}")
+            continue
+        x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
+        x_max = max(x_max, 1e-6)
+        bins = 50
+        ax.hist(train_vals, bins=bins, alpha=0.4, label="Train", density=True, range=(0, x_max), histtype="step", lw=1.5)
+        ax.hist(test_vals, bins=bins, alpha=0.4, label="Test", density=True, range=(0, x_max), histtype="step", lw=1.5)
+        ax.hist(gen_vals, bins=bins, alpha=0.6, label=label_gen, density=True, range=(0, x_max))
+        ax.set_title(f"k = {k}")
+        ax.set_xlabel("Distance")
+        ax.legend(fontsize=6)
+        ax.grid(True, alpha=0.3)
+    for idx in range(n_plots, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+    plt.suptitle("Pairwise distance d(i, i+k) by genomic lag k", fontsize=14, fontweight="bold")
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=dpi)
+    _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
+    if save_plot_data and n_plots > 0:
+        k_arr = np.array(k_values)
+        data = {"k_values": k_arr}
+        for i, k in enumerate(k_values):
+            data[f"train_k{k}"] = distmap_distances_at_lag(train_dm, int(k))
+            data[f"test_k{k}"] = distmap_distances_at_lag(test_dm, int(k))
+            data[f"gen_k{k}"] = distmap_distances_at_lag(gen_dm, int(k))
+        _save_plot_data_npz(output_path, display_root=display_root, **data)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
 

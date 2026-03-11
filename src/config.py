@@ -32,7 +32,7 @@ REQUIRED_KEYS = {
     ],
     "plotting": [
         "enabled", "overwrite_existing",
-        "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp",
+        "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp", "bond_length_by_genomic_distance",
         "num_samples", "gen_decode_batch_size", "sample_variance",
         "num_reconstruction_samples", "plot_dpi",
         "max_train", "max_test",
