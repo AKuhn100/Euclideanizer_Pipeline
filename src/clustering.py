@@ -11,7 +11,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from scipy.cluster.hierarchy import linkage, dendrogram, cophenet, fcluster
+from scipy.cluster.hierarchy import linkage, dendrogram, cophenet
 from scipy.spatial.distance import squareform
 from scipy.spatial.transform import Rotation
 from sklearn.decomposition import PCA
@@ -191,67 +191,6 @@ def _expected_mixing(labels: np.ndarray, k: int) -> float:
         [(N - counts[np.where(unique == lbl)[0][0]]) / (N - 1) for lbl in labels]
     )
     return float(per_struct.mean())
-
-
-def _find_gap_threshold(Z: np.ndarray) -> float:
-    """
-    Compute cut threshold from linkage Z using IQR-based outlier detection on gaps.
-    Merge heights are sorted; gaps between consecutive heights are computed.
-    A gap is treated as an outlier if it exceeds Q3 + 1.5 * IQR (same rule as a
-    boxplot). The cut is placed at the midpoint of the largest such outlier gap,
-    or at the largest gap if none exceed the bound. No manual parameter — adapts
-    to the scale of the tree. Used with fcluster(..., criterion="distance") so
-    the number of clusters is derived from tree structure.
-    """
-    heights = np.sort(np.asarray(Z[:, 2], dtype=np.float64))
-    n_merges = len(heights)
-    if n_merges <= 1:
-        return float(np.max(heights) + 1.0) if n_merges == 1 else 0.0
-    gaps = np.diff(heights)
-    if len(gaps) == 0:
-        return float(np.mean(heights))
-    q75, q25 = np.percentile(gaps, [75, 25])
-    iqr = q75 - q25
-    outlier_bound = q75 + 1.5 * iqr if iqr > 0 else q75
-    outlier_gaps = np.where(gaps > outlier_bound)[0]
-    if len(outlier_gaps) == 0:
-        cut_idx = int(np.argmax(gaps))
-    else:
-        cut_idx = int(outlier_gaps[np.argmax(gaps[outlier_gaps])])
-    return float((heights[cut_idx] + heights[cut_idx + 1]) / 2.0)
-
-
-def _cluster_source_composition(
-    Z: np.ndarray,
-    labels: np.ndarray,
-) -> tuple:
-    """
-    Cluster by IQR-based gap cut in merge heights; return (comp, sources, n_actual).
-    The number of clusters is derived from the cut (not a fixed input), so
-    composition fractions are interpretable instead of being dominated by
-    one large cluster and many singleton outliers.
-    Returns comp shape (n_actual, n_sources), sources (sorted), and n_actual.
-    """
-    sources = sorted(set(labels))
-    n_sources = len(sources)
-    source_to_idx = {s: i for i, s in enumerate(sources)}
-    n_obs = len(labels)
-    if n_obs == 0:
-        return np.zeros((0, n_sources), dtype=int), sources, 0
-    if len(Z) == 0:
-        cluster_ids = np.ones(n_obs, dtype=np.int32)
-    else:
-        threshold = _find_gap_threshold(Z)
-        cluster_ids = fcluster(Z, threshold, criterion="distance")
-    unique_ids = np.unique(cluster_ids)
-    n_actual = len(unique_ids)
-    id_to_row = {cid: j for j, cid in enumerate(unique_ids)}
-    comp = np.zeros((n_actual, n_sources), dtype=int)
-    for i in range(n_obs):
-        row = id_to_row[cluster_ids[i]]
-        si = source_to_idx[labels[i]]
-        comp[row, si] += 1
-    return comp, sources, n_actual
 
 
 def get_or_compute_distmap_clustering_feats(
@@ -506,7 +445,6 @@ def _mixed_dendrogram_panel(
     name_c: str | None,
     source_colors: dict,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
     panel_title: str | None = None,
 ) -> tuple:
@@ -539,7 +477,6 @@ def _fig_mixed_dendrograms(
     save_pdf_copy: bool,
     display_root: str | None,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
 ) -> dict:
     """Mixed dendrograms: left-to-right top-to-bottom — gen: Train+Test, Train+Gen, Test+Gen, Train+Test+Gen; recon: Train+Test, Train+Train recon, Test+Test recon, Test recon+Train recon. Returns mixing_stats."""
@@ -572,7 +509,7 @@ def _fig_mixed_dendrograms(
         names = [na, nb] + ([nc] if nc else [])
         panel_title = _mixed_panel_title(names, is_gen)
         obs, exp, ratio, Z_mix, lbl_mix = _mixed_dendrogram_panel(
-            ax, fa, na, fb, nb, fc, nc, source_colors, k_mixing, n_clusters, linkage_method,
+            ax, fa, na, fb, nb, fc, nc, source_colors, k_mixing, linkage_method,
             panel_title=panel_title,
         )
         key = f"{na}+{nb}" + (f"+{nc}" if nc else "")
@@ -595,31 +532,37 @@ def _fig_mixed_dendrograms(
 
 
 def _fig_mixing_analysis(
-    sub_feats: dict,
     mixing_stats: dict,
-    source_order: list,
     source_colors: dict,
     output_path: str,
     plot_dpi: int,
     save_pdf_copy: bool,
     display_root: str | None,
     k_mixing: int,
-    n_clusters: int,
-    linkage_method: str,
 ) -> None:
-    """Bar chart of mixing scores + cluster composition heatmaps."""
+    """Bar chart of mixing scores (observed vs expected) per combined population. Observed bars are diagonally striped with the two source colors; expected (random) is grey. Legend shows only Expected (Random)."""
     keys = list(mixing_stats.keys())
     if not keys:
         return
     obs = [mixing_stats[k]["obs"] for k in keys]
     exp = [mixing_stats[k]["exp"] for k in keys]
     ratio = [mixing_stats[k]["ratio"] for k in keys]
-    fig = plt.figure(figsize=(20, 12))
-    gs = fig.add_gridspec(2, 3, hspace=0.45, wspace=0.35)
-    ax_bar = fig.add_subplot(gs[0, :])
+    fig, ax_bar = plt.subplots(figsize=(max(10, 4 * len(keys)), 5))
     x = np.arange(len(keys))
     w = 0.35
-    ax_bar.bar(x - w / 2, obs, w, label="Observed Mixing", color=COLOR_TRAIN, alpha=0.8)
+    for xi, (key, o) in enumerate(zip(keys, obs)):
+        parts = [p.strip() for p in key.split("+")]
+        colors = [source_colors.get(p, COLOR_GRAY_MID) for p in parts]
+        c1 = colors[0] if colors else COLOR_GRAY_MID
+        c2 = colors[1] if len(colors) > 1 else COLOR_GRAY_MID
+        ax_bar.bar(
+            xi - w / 2, o, w,
+            color=c1,
+            edgecolor=c2,
+            hatch="///",
+            linewidth=1.2,
+            alpha=0.9,
+        )
     ax_bar.bar(x + w / 2, exp, w, label="Expected (Random)", color=COLOR_GRAY_LIGHT, alpha=0.8)
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
@@ -631,49 +574,10 @@ def _fig_mixing_analysis(
     ax_bar.spines["right"].set_visible(False)
     for xi, (o, e, r) in enumerate(zip(obs, exp, ratio)):
         ax_bar.text(xi, max(o, e) + 0.02, f"ratio={r:.2f}", ha="center", va="bottom", fontsize=FONT_SIZE_SMALL, color=COLOR_GRAY_TEXT, family=FONT_FAMILY)
-    pair_configs = []
-    for k in keys:
-        parts = k.split("+")
-        if len(parts) == 2 and parts[0] in sub_feats and parts[1] in sub_feats:
-            pair_configs.append((parts[0], sub_feats[parts[0]], parts[1], sub_feats[parts[1]]))
-    for i, ax_c in enumerate([fig.add_subplot(gs[1, i]) for i in range(3)]):
-        if i >= len(pair_configs):
-            ax_c.set_visible(False)
-            continue
-        na, fa, nb, fb = pair_configs[i]
-        stacked = np.concatenate([fa, fb], axis=0)
-        sizes = [len(fa), len(fb)]
-        names = [na, nb]
-        labels_arr = _source_labels_array(sizes, names)
-        D = _pairwise_rmse(stacked)
-        cond = squareform(D, checks=False)
-        Z = linkage(cond, method=linkage_method)
-        comp, sources, n_actual = _cluster_source_composition(Z, labels_arr)
-        if n_actual == 0:
-            ax_c.set_visible(False)
-            continue
-        row_sums = comp.sum(axis=1, keepdims=True)
-        row_sums[row_sums == 0] = 1
-        frac = comp / row_sums
-        bot = np.zeros(n_actual)
-        for si, src in enumerate(sources):
-            ax_c.bar(np.arange(n_actual), frac[:, si], bottom=bot, color=source_colors.get(src, COLOR_GRAY_MID), label=src, alpha=0.85)
-            bot += frac[:, si]
-        cluster_sizes = comp.sum(axis=1)
-        for j in range(n_actual):
-            ax_c.text(j, 1.02, f"n={cluster_sizes[j]}", ha="center", va="bottom", fontsize=FONT_SIZE_SMALL, family=FONT_FAMILY, color=COLOR_GRAY_TEXT)
-        ax_c.set_xticks(np.arange(n_actual))
-        ax_c.set_xticklabels([f"C{j+1}" for j in range(n_actual)], fontsize=FONT_SIZE_SMALL, family=FONT_FAMILY)
-        ax_c.set_ylabel("Source Fraction", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
-        ax_c.set_ylim(0, 1.05)
-        ax_c.set_title(f"{na} + {nb} — Cluster Composition", fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
-        ax_c.legend(fontsize=FONT_SIZE_SMALL, loc="upper right")
-        ax_c.spines["top"].set_visible(False)
-        ax_c.spines["right"].set_visible(False)
     fig.tight_layout()
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
-        _save_pdf_copy(plt.gcf(), output_path, save_pdf=True, display_root=display_root)
+        _save_pdf_copy(fig, output_path, save_pdf=True, display_root=display_root)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
 
@@ -759,11 +663,10 @@ def _write_clustering_figures(
     plot_cfg: dict,
     display_root: str | None,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
     n_subsample: int,
 ) -> str:
-    """Write pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity. Optionally save data/ when save_data. Returns path to primary figure."""
+    """Write pure_dendrograms, mixed_dendrograms, mixing_analysis (mixing score bar chart), rmse_similarity. Optionally save data/ when save_data. Returns path to primary figure."""
     os.makedirs(run_dir_this, exist_ok=True)
     dpi = plot_cfg["plot_dpi"]
     save_pdf = plot_cfg["save_pdf_copy"]
@@ -773,8 +676,8 @@ def _write_clustering_figures(
     mixing_path = os.path.join(run_dir_this, "mixing_analysis.png")
     rmse_path = os.path.join(run_dir_this, "rmse_similarity.png")
     _fig_pure_dendrograms(sub_feats, source_order, source_colors, pure_path, dpi, save_pdf, display_root, linkage_method)
-    mixing_stats = _fig_mixed_dendrograms(sub_feats, source_order, source_colors, mixed_path, dpi, save_pdf, display_root, k_mixing, n_clusters, linkage_method)
-    _fig_mixing_analysis(sub_feats, mixing_stats, source_order, source_colors, mixing_path, dpi, save_pdf, display_root, k_mixing, n_clusters, linkage_method)
+    mixing_stats = _fig_mixed_dendrograms(sub_feats, source_order, source_colors, mixed_path, dpi, save_pdf, display_root, k_mixing, linkage_method)
+    _fig_mixing_analysis(mixing_stats, source_colors, mixing_path, dpi, save_pdf, display_root, k_mixing)
     _fig_rmse_similarity(sub_feats, source_order, rmse_path, dpi, save_pdf, display_root)
     if save_data:
         data_dir = os.path.join(run_dir_this, "data")
@@ -787,7 +690,6 @@ def _write_clustering_figures(
                 out[key] = sub_feats[name]
         out["n_subsample"] = np.array(n_subsample, dtype=np.int64)
         out["k_mixing"] = np.array(k_mixing, dtype=np.int64)
-        out["n_clusters"] = np.array(n_clusters, dtype=np.int64)
         out["linkage_method"] = np.array(linkage_method, dtype=object)
         if mixing_stats:
             keys = list(mixing_stats.keys())
@@ -821,7 +723,6 @@ def run_distmap_clustering_gen_analysis(
     test_coords_np: np.ndarray | None = None,
     n_subsample: int,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
     feats_batch_size: int,
 ) -> str:
@@ -854,7 +755,7 @@ def run_distmap_clustering_gen_analysis(
     sub_feats = {"Train": train_feats, "Test": test_feats, "Gen": gen_feats}
     return _write_clustering_figures(
         run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
-        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+        plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
     )
 
 
@@ -879,7 +780,6 @@ def run_distmap_clustering_gen_analysis_multi(
     test_coords_np: np.ndarray | None = None,
     n_subsample: int,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
     feats_batch_size: int,
 ) -> list[str]:
@@ -911,7 +811,7 @@ def run_distmap_clustering_gen_analysis_multi(
         run_dir_this = os.path.join(run_dir, "analysis", "distmap_clustering", "gen", run_name)
         path = _write_clustering_figures(
             run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
-            plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+            plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
         )
         out_paths.append(path)
     return out_paths
@@ -930,7 +830,6 @@ def run_distmap_clustering_recon_analysis(
     recon_subdir: str = "",
     n_subsample: int,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
     feats_batch_size: int,
     device: torch.device | None = None,
@@ -960,7 +859,7 @@ def run_distmap_clustering_recon_analysis(
     run_dir_recon = os.path.join(run_dir, "analysis", "distmap_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "distmap_clustering", "recon")
     return _write_clustering_figures(
         run_dir_recon, sub_feats, SOURCE_ORDER_RECON, SOURCE_COLORS_RECON,
-        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+        plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
     )
 
 
@@ -985,7 +884,6 @@ def run_coord_clustering_gen_analysis(
     test_coords_np: np.ndarray | None = None,
     n_subsample: int,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
 ) -> str:
     """
@@ -1018,7 +916,7 @@ def run_coord_clustering_gen_analysis(
     sub_feats = {"Train": train_feats, "Test": test_feats, "Gen": gen_feats}
     return _write_clustering_figures(
         run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
-        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+        plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
     )
 
 
@@ -1043,7 +941,6 @@ def run_coord_clustering_gen_analysis_multi(
     test_coords_np: np.ndarray | None = None,
     n_subsample: int,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
 ) -> list[str]:
     """Run coord clustering gen for multiple num_samples with same variance."""
@@ -1075,7 +972,7 @@ def run_coord_clustering_gen_analysis_multi(
         run_dir_this = os.path.join(run_dir, "analysis", "coord_clustering", "gen", run_name)
         path = _write_clustering_figures(
             run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
-            plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+            plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
         )
         out_paths.append(path)
     return out_paths
@@ -1094,7 +991,6 @@ def run_coord_clustering_recon_analysis(
     recon_subdir: str = "",
     n_subsample: int,
     k_mixing: int,
-    n_clusters: int,
     linkage_method: str,
 ) -> str:
     """
@@ -1117,5 +1013,5 @@ def run_coord_clustering_recon_analysis(
     run_dir_recon = os.path.join(run_dir, "analysis", "coord_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "coord_clustering", "recon")
     return _write_clustering_figures(
         run_dir_recon, sub_feats, SOURCE_ORDER_RECON, SOURCE_COLORS_RECON,
-        plot_cfg, display_root, k_mixing, n_clusters, linkage_method, n_subsample,
+        plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
     )

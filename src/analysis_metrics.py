@@ -272,7 +272,6 @@ def _make_clustering_gen_extra_kwargs(prefix: str, include_batch_size: bool = Fa
         out = {
             "n_subsample": gen["n_subsample"],
             "k_mixing": gen["k_mixing"],
-            "n_clusters": gen["n_clusters"],
             "linkage_method": gen["linkage_method"],
         }
         if include_batch_size:
@@ -287,7 +286,6 @@ def _make_clustering_recon_extra_kwargs(prefix: str, include_batch_size: bool = 
         out = {
             "n_subsample": recon["n_subsample"],
             "k_mixing": recon["k_mixing"],
-            "n_clusters": recon["n_clusters"],
             "linkage_method": recon["linkage_method"],
         }
         if include_batch_size:

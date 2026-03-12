@@ -128,7 +128,6 @@ analysis:
     sample_variance: [1.0, 2.0]   # list of latent variances
     n_subsample: 150   # number of structures to subsample (FPS) for clustering; reduces cost
     k_mixing: 10   # number of nearest neighbours used to compute source mixing score (0–1, higher = more mixing)
-    n_clusters: 8   # number of clusters when cutting dendrogram for composition bars (C1..C8)
     linkage_method: "average"   # scipy linkage method for hierarchical clustering (e.g. average, single, complete)
     gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
     save_data: false   # if true, save clustering data as .npz
@@ -140,7 +139,6 @@ analysis:
     max_recon_test: [null]   # list of caps on test structures for recon; null = use all
     n_subsample: 150   # number of structures to subsample (FPS) for clustering
     k_mixing: 10   # nearest neighbours for mixing score
-    n_clusters: 8   # number of clusters for composition bars
     linkage_method: "average"   # scipy linkage method
     save_data: false   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies
@@ -152,7 +150,6 @@ analysis:
     sample_variance: [1.0, 2.0]   # list of latent variances
     n_subsample: 150   # number of structures to subsample (FPS) for clustering
     k_mixing: 10   # nearest neighbours for mixing score
-    n_clusters: 8   # number of clusters for composition bars
     linkage_method: "average"   # scipy linkage method
     gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
     feats_batch_size: 64   # batch size for computing distance-map features (cache and analysis)
@@ -165,7 +162,6 @@ analysis:
     max_recon_test: [null]   # list of caps on test structures for recon; null = use all
     n_subsample: 150   # number of structures to subsample (FPS) for clustering
     k_mixing: 10   # nearest neighbours for mixing score
-    n_clusters: 8   # number of clusters for composition bars
     linkage_method: "average"   # scipy linkage method
     feats_batch_size: 64   # batch size for computing distance-map features
     save_data: false   # if true, save clustering data as .npz
