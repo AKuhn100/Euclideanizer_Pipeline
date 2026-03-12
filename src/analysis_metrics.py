@@ -152,7 +152,7 @@ def _rmsd_precomputed_kwargs(tt, train_c, test_c):
 
 def _q_gen_extra_kwargs(analysis_cfg: dict) -> dict:
     gen = analysis_cfg["q_gen"]
-    return {"delta": gen["delta"]}
+    return {"delta": gen["delta"], "query_batch_size": gen["query_batch_size"]}
 
 
 def _q_recon_extra_kwargs(analysis_cfg: dict) -> dict:
