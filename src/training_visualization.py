@@ -190,7 +190,6 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     ax_sc.set_ylabel("Mean Dist (nm)", fontsize=7, color=FG)
     ax_sc.set_title("Genomic Scaling", fontsize=8, color=FG, pad=3)
     ax_sc.legend(fontsize=6.5, framealpha=0.2)
-    ax_sc.grid(True, alpha=0.2)
     ax_sc.spines[:].set_color("#30363d")
 
     bins = np.linspace(rg_xlim[0], rg_xlim[1], 35)
@@ -208,7 +207,6 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     ax_rg.set_ylabel("Density", fontsize=7, color=FG)
     ax_rg.set_title("Radius of Gyration", fontsize=8, color=FG, pad=3)
     ax_rg.legend(fontsize=6.5, framealpha=0.2)
-    ax_rg.grid(True, alpha=0.2)
     ax_rg.spines[:].set_color("#30363d")
 
     ep = np.arange(1, len(loss_history) + 1)
@@ -221,7 +219,6 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     ax_loss.set_ylabel("Loss", fontsize=7, color=FG)
     ax_loss.set_title("Training Loss", fontsize=8, color=FG, pad=3)
     ax_loss.legend(fontsize=6.5, framealpha=0.2)
-    ax_loss.grid(True, alpha=0.2)
     ax_loss.spines[:].set_color("#30363d")
 
 

@@ -50,7 +50,7 @@ SOURCE_COLORS_GEN = {
     "Gen": COLOR_GEN,
     "Test": COLOR_TEST,
 }
-SOURCE_ORDER_GEN = ["Train", "Gen", "Test"]
+SOURCE_ORDER_GEN = ["Train", "Test", "Gen"]
 
 # Gen: left-to-right top-to-bottom panel order — Train+Test, Train+Gen, Test+Gen, Train+Test+Gen
 MIXED_PANEL_ORDER_GEN = [
@@ -432,11 +432,13 @@ def _fig_pure_dendrograms(
 
 
 def _mixed_panel_title(names: list, is_gen: bool) -> str:
-    """Standardized panel title: gen = X vs Gen (Gen second); recon = X vs Y (train/test first, then recon)."""
+    """Standardized panel title: Train before Test when both present; gen = X vs Gen (Gen second); recon = X vs Y (train/test first, then recon)."""
+    canon_order = ("Train", "Test", "Gen", "Train Recon", "Test Recon")
+    ordered = sorted(names, key=lambda n: canon_order.index(n) if n in canon_order else 99)
     if len(names) == 3:
-        return " + ".join(names)
+        return " + ".join(ordered)
     if len(names) == 2:
-        a, b = names
+        a, b = ordered[0], ordered[1]
         if is_gen and "Gen" in names:
             first = a if a != "Gen" else b
             return f"{first} vs Gen"
@@ -448,7 +450,7 @@ def _mixed_panel_title(names: list, is_gen: bool) -> str:
             second = b if first == a else a
             return f"{first} vs {second}"
         return f"{a} + {b}"
-    return " + ".join(names)
+    return " + ".join(ordered)
 
 
 def _mixed_dendrogram_panel(
@@ -584,7 +586,6 @@ def _fig_mixing_analysis(
     ax_bar.set_ylim(0, 1.05)
     ax_bar.spines["top"].set_visible(False)
     ax_bar.spines["right"].set_visible(False)
-    ax_bar.grid(axis="y", alpha=0.3)
     for xi, (o, e, r) in enumerate(zip(obs, exp, ratio)):
         ax_bar.text(xi, max(o, e) + 0.02, f"ratio={r:.2f}", ha="center", va="bottom", fontsize=FONT_SIZE_SMALL, color=COLOR_GRAY_TEXT, family=FONT_FAMILY)
     pair_configs = []

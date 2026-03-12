@@ -403,7 +403,6 @@ def plot_bond_length_by_genomic_distance(
         ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
         ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax.legend(fontsize=FONT_SIZE_TINY)
-        ax.grid(True, alpha=0.3)
     for idx in range(n_plots, len(axes_flat)):
         axes_flat[idx].set_visible(False)
     plt.suptitle("Pairwise Distance d(i, i+k) by Genomic Lag k", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
@@ -442,7 +441,6 @@ def plot_loss_curves(
     ax.set_ylabel("Loss", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     ax.set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     ax.legend(fontsize=FONT_SIZE_LEGEND)
-    ax.grid(True, alpha=0.3)
     if max(train_loss) / (min(train_loss) + 1e-10) > 100:
         ax.set_yscale("log")
     plt.tight_layout()

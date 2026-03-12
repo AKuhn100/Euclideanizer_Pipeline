@@ -109,7 +109,6 @@ def plot_latent_distribution(
     ax_mean.set_ylabel("Mean", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     ax_mean.legend(loc="upper right", fontsize=FONT_SIZE_LEGEND)
     ax_mean.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-    ax_mean.grid(True, alpha=0.3)
     if n_dim > 5:
         ax_mean.set_xticks(_pos1)
         ax_mean.set_xticklabels(_lab1)
@@ -124,7 +123,6 @@ def plot_latent_distribution(
     ax_std.set_ylabel("Std", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     ax_std.legend(loc="upper right", fontsize=FONT_SIZE_LEGEND)
     ax_std.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-    ax_std.grid(True, alpha=0.3)
     if n_dim > 5:
         ax_std.set_xticks(_pos1)
         ax_std.set_xticklabels(_lab1)
@@ -185,7 +183,6 @@ def plot_latent_correlation(
         ax.plot([diag_lo, diag_hi], [diag_lo, diag_hi], "k--", alpha=0.6, label="y = x")
         ax.legend(loc="upper right", fontsize=FONT_SIZE_LEGEND)
         ax.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-        ax.grid(True, alpha=0.3)
     plt.tight_layout()
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     plt.savefig(out_path, dpi=plot_dpi)
