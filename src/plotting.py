@@ -202,7 +202,7 @@ def plot_recon_statistics(
     true_sc = exp_stats["exp_scaling"]
     recon_bonds = distmap_bond_lengths(recon_dm)
     recon_rg = distmap_rg(recon_dm)
-    _, recon_sc = distmap_scaling(recon_dm)
+    _, recon_sc = distmap_scaling(recon_dm, min(recon_dm.shape[-1] - 1, 999))
     # Use train/test colors and recon color by subset (like gen variance)
     is_train = subset_label and str(subset_label).lower() == "train"
     exp_color = COLOR_TRAIN if is_train else COLOR_TEST
@@ -261,7 +261,7 @@ def plot_gen_analysis(
     test_b, test_rg, test_sc = test_stats["exp_bonds"], test_stats["exp_rg"], test_stats["exp_scaling"]
     gen_b = distmap_bond_lengths(gen_distmaps)
     gen_rg = distmap_rg(gen_distmaps)
-    _, gen_sc = distmap_scaling(gen_distmaps)
+    _, gen_sc = distmap_scaling(gen_distmaps, min(gen_distmaps.shape[-1] - 1, 999))
     avg_train = train_stats["avg_exp_map"]
     avg_test = test_stats["avg_exp_map"]
     avg_gen = np.mean(gen_distmaps[: min(100, len(gen_distmaps))], axis=0)

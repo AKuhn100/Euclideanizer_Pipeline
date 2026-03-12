@@ -24,9 +24,6 @@ from .plot_config import (
     FONT_SIZE_LEGEND,
 )
 
-DEFAULT_DELTA = 1.0 / math.sqrt(2.0)
-
-
 def _distmap_from_coords(coords: np.ndarray) -> np.ndarray:
     """Single structure (N, 3) -> (N, N) pairwise distance matrix."""
     diff = coords[:, np.newaxis, :] - coords[np.newaxis, :, :]
@@ -78,7 +75,7 @@ def max_q_batch(
     queries: np.ndarray,
     ref_coords: np.ndarray,
     delta: float,
-    query_batch_size: int = 64,
+    query_batch_size: int,
     desc: str | None = None,
 ) -> np.ndarray:
     """
@@ -105,7 +102,7 @@ def get_or_compute_test_to_train_q(
     max_train: int,
     max_test: int,
     delta: float,
-    query_batch_size: int = 64,
+    query_batch_size: int,
     display_root: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -233,8 +230,8 @@ def run_q_analysis(
     *,
     num_samples: int | None = None,
     sample_variance: float | None = None,
-    query_batch_size: int | None = None,
-    delta: float = DEFAULT_DELTA,
+    query_batch_size: int,
+    delta: float,
     output_suffix: str = "",
     display_root: str | None = None,
     precomputed_test_to_train_max_q: np.ndarray | None = None,
@@ -255,7 +252,7 @@ def run_q_analysis(
     n_gen = num_samples if num_samples is not None else (_n[0] if isinstance(_n, list) else _n)
     _v = plot_cfg["q_sample_variance"]
     variance = sample_variance if sample_variance is not None else (_v[0] if isinstance(_v, list) else _v)
-    batch_size = query_batch_size if query_batch_size is not None else plot_cfg["q_query_batch_size"]
+    batch_size = query_batch_size
     print(f"  Q (max Q): n_gen={n_gen}, variance={variance} (test→train, gen→train, gen→test)...")
 
     if precomputed_test_to_train_max_q is not None and train_coords_np is not None and test_coords_np is not None:
@@ -315,8 +312,8 @@ def run_q_analysis_multi(
     *,
     num_samples_list: list[int],
     sample_variance: float,
-    delta: float = DEFAULT_DELTA,
-    query_batch_size: int | None = None,
+    delta: float,
+    query_batch_size: int,
     variance_suffix: str = "",
     display_root: str | None = None,
     precomputed_test_to_train_max_q: np.ndarray | None = None,
@@ -330,7 +327,7 @@ def run_q_analysis_multi(
     from .distmap.sample import generate_samples
     import shutil
 
-    batch_size = query_batch_size or plot_cfg["q_query_batch_size"]
+    batch_size = query_batch_size
     gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     save_data = plot_cfg["save_data"]
     save_structures_gro = plot_cfg["save_structures_gro"]
@@ -518,7 +515,7 @@ def run_q_recon_analysis(
     test_recon_coords_np: np.ndarray,
     run_dir: str,
     plot_cfg: dict,
-    delta: float = DEFAULT_DELTA,
+    delta: float,
     display_root: str | None = None,
     recon_subdir: str = "",
 ) -> str:

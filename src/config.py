@@ -16,7 +16,7 @@ except ImportError:
 # Required keys per section (no code-side defaults). Key order is standardized:
 # enabled/overwrite_existing first, then behavior params, then save_data, save_pdf_copy, save_structures_gro (or visualize_latent).
 REQUIRED_KEYS = {
-    "data": ["path", "split_seed", "training_split"],
+    "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample"],
     "distmap": [
         "latent_dim", "beta_kl",
         "epochs", "batch_size", "learning_rate",
@@ -102,7 +102,8 @@ REQUIRED_ANALYSIS_SUBKEYS = {
     ],
 }
 REQUIRED_KEYS = {
-    **{k: v for k, v in REQUIRED_KEYS.items() if k != "analysis"},
+    **{k: v for k, v in REQUIRED_KEYS.items() if k not in ("analysis", "data")},
+    "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample"],
     "analysis": [
         "rmsd_max_train", "rmsd_max_test",
         "rmsd_gen", "rmsd_recon",

@@ -39,9 +39,6 @@ from .plot_config import (
     FONT_SIZE_SMALL,
 )
 
-DEFAULT_N_SUBSAMPLE = 150
-DEFAULT_K_MIXING = 10
-DEFAULT_N_CLUSTERS = 8
 LINKAGE_METHOD = "average"
 FPS_SEED = 0
 
@@ -93,7 +90,7 @@ def _feats_from_coords(
     coords: torch.Tensor,
     device: torch.device,
     num_atoms: int,
-    batch_size: int = 64,
+    batch_size: int,
 ) -> np.ndarray:
     """Coords (total, N, 3) -> distance maps -> upper-triangle feature vectors. Returns (total, tri_dim) float32."""
     coords = coords.to(device)
@@ -130,7 +127,7 @@ def _feats_from_coords_aligned(coords_np: np.ndarray) -> np.ndarray:
     return np.stack(out, axis=0).astype(np.float32)
 
 
-def _fps_subsample(feats: np.ndarray, n: int, seed: int = 0) -> np.ndarray:
+def _fps_subsample(feats: np.ndarray, n: int, seed: int) -> np.ndarray:
     """Farthest-point sampling on PCA-compressed features. Returns indices of length min(n, len(feats))."""
     N = len(feats)
     if N <= n:
@@ -158,7 +155,7 @@ def _pairwise_rmse(feats: np.ndarray) -> np.ndarray:
     return np.sqrt(np.maximum(d2, 0.0)).astype(np.float32)
 
 
-def _compute_linkage_and_cophenetic(feats: np.ndarray, method: str = LINKAGE_METHOD) -> tuple:
+def _compute_linkage_and_cophenetic(feats: np.ndarray, method: str) -> tuple:
     """Return (linkage_matrix, cophenetic_r)."""
     D = _pairwise_rmse(feats)
     cond = squareform(D, checks=False)
@@ -175,7 +172,7 @@ def _source_labels_array(sizes: list, source_names: list) -> np.ndarray:
     return np.array(labels)
 
 
-def _mixing_score(feats: np.ndarray, labels: np.ndarray, k: int = DEFAULT_K_MIXING) -> tuple:
+def _mixing_score(feats: np.ndarray, labels: np.ndarray, k: int) -> tuple:
     """Mean and per-structure fraction of k-NN from a different source."""
     D = _pairwise_rmse(feats)
     np.fill_diagonal(D, np.inf)
@@ -184,7 +181,7 @@ def _mixing_score(feats: np.ndarray, labels: np.ndarray, k: int = DEFAULT_K_MIXI
     return mix.mean(), mix
 
 
-def _expected_mixing(labels: np.ndarray, k: int = DEFAULT_K_MIXING) -> float:
+def _expected_mixing(labels: np.ndarray, k: int) -> float:
     """Expected mixing under random assignment."""
     N = len(labels)
     if N <= 1:
@@ -199,7 +196,7 @@ def _expected_mixing(labels: np.ndarray, k: int = DEFAULT_K_MIXING) -> float:
 def _cluster_source_composition(
     Z: np.ndarray,
     labels: np.ndarray,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
+    n_clusters: int,
 ) -> tuple:
     """(n_clusters, n_sources) counts and sorted source names."""
     cluster_ids = fcluster(Z, n_clusters, criterion="maxclust")
@@ -219,8 +216,8 @@ def get_or_compute_distmap_clustering_feats(
     training_split: float,
     split_seed: int,
     n_subsample: int,
-    batch_size: int = 64,
-    fps_seed: int = FPS_SEED,
+    batch_size: int,
+    fps_seed: int,
     display_root: str | None = None,
     max_train: int | None = None,
     max_test: int | None = None,
@@ -289,7 +286,7 @@ def get_or_compute_coord_clustering_feats(
     training_split: float,
     split_seed: int,
     n_subsample: int,
-    fps_seed: int = FPS_SEED,
+    fps_seed: int,
     display_root: str | None = None,
     max_train: int | None = None,
     max_test: int | None = None,
@@ -403,6 +400,7 @@ def _fig_pure_dendrograms(
     plot_dpi: int,
     save_pdf_copy: bool,
     display_root: str | None,
+    linkage_method: str,
 ) -> None:
     """Pure-population dendrograms (one per source). Left to right per source_order; shared y-axis for comparability."""
     groups = [(name, sub_feats[name]) for name in source_order if name in sub_feats]
@@ -413,7 +411,7 @@ def _fig_pure_dendrograms(
         axes = [axes]
     fig.suptitle("Hierarchical Clustering — Pure Populations", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.02, family=FONT_FAMILY)
     for ax, (name, feats) in zip(axes, groups):
-        Z, c = _compute_linkage_and_cophenetic(feats)
+        Z, c = _compute_linkage_and_cophenetic(feats, method=linkage_method)
         color = source_colors[name]
         leaf_colors = np.array([color] * len(feats))
         _plot_panel(ax, Z, np.arange(len(feats)), name, c, source_colors, leaf_colors=leaf_colors)
@@ -495,9 +493,9 @@ def _fig_mixed_dendrograms(
     plot_dpi: int,
     save_pdf_copy: bool,
     display_root: str | None,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
 ) -> dict:
     """Mixed dendrograms: left-to-right top-to-bottom — gen: Train+Test, Train+Gen, Test+Gen, Train+Test+Gen; recon: Train+Test, Train+Train recon, Test+Test recon, Test recon+Train recon. Returns mixing_stats."""
     is_gen = "Gen" in sub_feats
@@ -560,9 +558,9 @@ def _fig_mixing_analysis(
     plot_dpi: int,
     save_pdf_copy: bool,
     display_root: str | None,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
 ) -> None:
     """Bar chart of mixing scores + cluster composition heatmaps."""
     keys = list(mixing_stats.keys())
@@ -723,7 +721,7 @@ def _write_clustering_figures(
     mixed_path = os.path.join(run_dir_this, "mixed_dendrograms.png")
     mixing_path = os.path.join(run_dir_this, "mixing_analysis.png")
     rmse_path = os.path.join(run_dir_this, "rmse_similarity.png")
-    _fig_pure_dendrograms(sub_feats, source_order, source_colors, pure_path, dpi, save_pdf, display_root)
+    _fig_pure_dendrograms(sub_feats, source_order, source_colors, pure_path, dpi, save_pdf, display_root, linkage_method)
     mixing_stats = _fig_mixed_dendrograms(sub_feats, source_order, source_colors, mixed_path, dpi, save_pdf, display_root, k_mixing, n_clusters, linkage_method)
     _fig_mixing_analysis(sub_feats, mixing_stats, source_order, source_colors, mixing_path, dpi, save_pdf, display_root, k_mixing, n_clusters, linkage_method)
     _fig_rmse_similarity(sub_feats, source_order, rmse_path, dpi, save_pdf, display_root)
@@ -770,11 +768,11 @@ def run_distmap_clustering_gen_analysis(
     clustering_seed_feats_path: str | None = None,
     train_coords_np: np.ndarray | None = None,
     test_coords_np: np.ndarray | None = None,
-    n_subsample: int = DEFAULT_N_SUBSAMPLE,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
-    feats_batch_size: int = 64,
+    n_subsample: int,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
+    feats_batch_size: int,
 ) -> str:
     """
     Distmap clustering gen: load train/test feats from cache, generate structures, subsample gen feats, produce four figures.
@@ -828,11 +826,11 @@ def run_distmap_clustering_gen_analysis_multi(
     clustering_seed_feats_path: str | None = None,
     train_coords_np: np.ndarray | None = None,
     test_coords_np: np.ndarray | None = None,
-    n_subsample: int = DEFAULT_N_SUBSAMPLE,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
-    feats_batch_size: int = 64,
+    n_subsample: int,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
+    feats_batch_size: int,
 ) -> list[str]:
     """Run distmap clustering gen for multiple num_samples with same variance."""
     from .distmap.sample import generate_samples
@@ -879,11 +877,11 @@ def run_distmap_clustering_recon_analysis(
     *,
     display_root: str | None = None,
     recon_subdir: str = "",
-    n_subsample: int = DEFAULT_N_SUBSAMPLE,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
-    feats_batch_size: int = 64,
+    n_subsample: int,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
+    feats_batch_size: int,
     device: torch.device | None = None,
 ) -> str:
     """
@@ -934,10 +932,10 @@ def run_coord_clustering_gen_analysis(
     coord_clustering_seed_feats_path: str | None = None,
     train_coords_np: np.ndarray | None = None,
     test_coords_np: np.ndarray | None = None,
-    n_subsample: int = DEFAULT_N_SUBSAMPLE,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
+    n_subsample: int,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
 ) -> str:
     """
     Coord clustering gen: load train/test coord feats from cache, generate structures, subsample gen feats, produce four figures.
@@ -992,10 +990,10 @@ def run_coord_clustering_gen_analysis_multi(
     coord_clustering_seed_feats_path: str | None = None,
     train_coords_np: np.ndarray | None = None,
     test_coords_np: np.ndarray | None = None,
-    n_subsample: int = DEFAULT_N_SUBSAMPLE,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
+    n_subsample: int,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
 ) -> list[str]:
     """Run coord clustering gen for multiple num_samples with same variance."""
     from .distmap.sample import generate_samples
@@ -1043,10 +1041,10 @@ def run_coord_clustering_recon_analysis(
     *,
     display_root: str | None = None,
     recon_subdir: str = "",
-    n_subsample: int = DEFAULT_N_SUBSAMPLE,
-    k_mixing: int = DEFAULT_K_MIXING,
-    n_clusters: int = DEFAULT_N_CLUSTERS,
-    linkage_method: str = LINKAGE_METHOD,
+    n_subsample: int,
+    k_mixing: int,
+    n_clusters: int,
+    linkage_method: str,
 ) -> str:
     """
     Coord clustering recon: use cached train/test coord feats; compute train_recon and test_recon aligned feats, FPS subsample; four populations.

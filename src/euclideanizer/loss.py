@@ -2,8 +2,6 @@ import torch
 import torch.nn.functional as F
 from typing import Optional
 
-DEFAULT_NUM_DIAGS = 50
-
 
 def kabsch_align(recon_coords: torch.Tensor, gt_coords: torch.Tensor) -> torch.Tensor:
     """Optimal rotation (Kabsch) to align recon_coords to gt_coords. All differentiable.
@@ -57,7 +55,7 @@ def calc_positionwise_wasserstein(gts, generated):
     return torch.mean(torch.abs(gt_sorted - gen_sorted))
 
 
-def calc_diagonal_wasserstein(gts, generated, num_diags=DEFAULT_NUM_DIAGS):
+def calc_diagonal_wasserstein(gts, generated, num_diags: int):
     """W1 loss computed per genomic separation (diagonal), then averaged.
 
     For each separation k = 1..num_diags, we sort the k-th diagonal

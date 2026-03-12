@@ -2270,8 +2270,9 @@ def _run_one_seed(
                 if plot_max_test is not None:
                     test_indices = test_indices[: plot_max_test]
                 _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
-                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
+                data_cfg = cfg["data"]
+                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
                     train_stats, test_stats,
@@ -2373,7 +2374,8 @@ def _worker(
             base_output_dir, data_path, num_structures, num_atoms
         )
         if exp_stats is None and (shared_args["do_plot"] or shared_args["do_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
-            exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
+            data_cfg = shared_args["cfg"]["data"]
+            exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"])
         for seed, gidx in task_list:
             output_dir = os.path.join(base_output_dir, f"seed_{seed}")
             train_stats = test_stats = None
@@ -2395,11 +2397,12 @@ def _worker(
                         train_indices = train_indices[: plot_mt]
                     if plot_mc is not None:
                         test_indices = test_indices[: plot_mc]
+                    data_cfg = shared_args["cfg"]["data"]
                     train_stats = compute_exp_statistics(
-                        coords_np, device, utils.get_distmaps, indices=train_indices
+                        coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices
                     )
                     test_stats = compute_exp_statistics(
-                        coords_np, device, utils.get_distmaps, indices=test_indices
+                        coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices
                     )
                     _save_exp_stats_split_cache(
                         output_dir, data_path, num_structures, num_atoms,
@@ -2544,8 +2547,9 @@ def _run_multi_gpu_tasks(
                     train_indices = train_indices[: plot_mt]
                 if plot_mc is not None:
                     test_indices = test_indices[: plot_mc]
-                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
+                data_cfg = cfg["data"]
+                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms,
                     seed, training_split, train_stats, test_stats,
@@ -3062,7 +3066,8 @@ def main():
                     and cached.get("num_atoms") == num_atoms
                 ):
                     _log("Experimental statistics cache invalid or corrupted, recomputing.", since_start=time.time() - pipeline_start, style="info")
-                    exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
+                    data_cfg = cfg["data"]
+                    exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"])
                     _save_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms, exp_stats)
                     _log(f"Cached experimental statistics to {EXP_STATS_CACHE_DIR}/.", since_start=time.time() - pipeline_start, style="success")
                 else:
@@ -3080,7 +3085,8 @@ def main():
                 )
             else:
                 _log("Computing experimental statistics (no valid cache for this dataset).", since_start=time.time() - pipeline_start, style="info")
-                exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps)
+                data_cfg = cfg["data"]
+                exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"])
                 _save_exp_stats_cache(base_output_dir, data_path, num_structures, num_atoms, exp_stats)
                 _log(f"Cached experimental statistics to {EXP_STATS_CACHE_DIR}/.", since_start=time.time() - pipeline_start, style="success")
         _log("Data ready.", since_start=time.time() - pipeline_start, since_phase=time.time() - phase_start, style="success")
@@ -3154,8 +3160,9 @@ def main():
                     train_indices = train_indices[: plot_mt]
                 if plot_mc is not None:
                     test_indices = test_indices[: plot_mc]
-                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, indices=test_indices)
+                data_cfg = cfg["data"]
+                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms, seed, training_split,
                     train_stats, test_stats,
