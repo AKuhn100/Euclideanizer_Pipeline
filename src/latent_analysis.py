@@ -183,9 +183,9 @@ def plot_latent_correlation(
         ax.plot([diag_lo, diag_hi], [diag_lo, diag_hi], "k--", alpha=0.6, label="y = x")
         ax.legend(loc="upper right", fontsize=FONT_SIZE_LEGEND)
         ax.tick_params(axis="both", labelsize=FONT_SIZE_TICK)
-    plt.tight_layout()
+    plt.tight_layout(rect=[0, 0, 1, 0.92])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.savefig(out_path, dpi=plot_dpi)
+    plt.savefig(out_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
     plt.close()

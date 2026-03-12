@@ -540,7 +540,7 @@ def _fig_mixing_analysis(
     display_root: str | None,
     k_mixing: int,
 ) -> None:
-    """Bar chart of mixing scores (observed vs expected) per combined population. Observed bars are diagonally striped with the two source colors; expected (random) is grey. Legend shows only Expected (Random)."""
+    """Bar chart of mixing scores (observed vs expected) per combined population. Observed bars one color; expected (random) is grey."""
     keys = list(mixing_stats.keys())
     if not keys:
         return
@@ -550,19 +550,7 @@ def _fig_mixing_analysis(
     fig, ax_bar = plt.subplots(figsize=(max(10, 4 * len(keys)), 5))
     x = np.arange(len(keys))
     w = 0.35
-    for xi, (key, o) in enumerate(zip(keys, obs)):
-        parts = [p.strip() for p in key.split("+")]
-        colors = [source_colors.get(p, COLOR_GRAY_MID) for p in parts]
-        c1 = colors[0] if colors else COLOR_GRAY_MID
-        c2 = colors[1] if len(colors) > 1 else COLOR_GRAY_MID
-        ax_bar.bar(
-            xi - w / 2, o, w,
-            color=c1,
-            edgecolor=c2,
-            hatch="///",
-            linewidth=1.2,
-            alpha=0.9,
-        )
+    ax_bar.bar(x - w / 2, obs, w, label="Observed Mixing", color=COLOR_TRAIN, alpha=0.8)
     ax_bar.bar(x + w / 2, exp, w, label="Expected (Random)", color=COLOR_GRAY_LIGHT, alpha=0.8)
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
