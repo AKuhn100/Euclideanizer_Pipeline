@@ -72,7 +72,7 @@ from src.distmap.model import ChromVAE_Conv
 from src.distmap.sample import generate_samples as dm_generate_samples
 from src.euclideanizer.model import Euclideanizer, load_frozen_vae
 from src.analysis_metrics import ANALYSIS_METRICS
-from src.rmsd import plot_latent_distribution, plot_latent_correlation
+from src.latent_analysis import plot_latent_distribution, plot_latent_correlation
 from src.gro_io import write_structures_gro
 
 # Log file in output root; also mirrored to stdout (set in main).
@@ -981,57 +981,65 @@ def _ensure_list(val):
 
 
 def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
-    """Build analysis_cfg dict from flattened do_rmsd/do_q and per-metric list kwargs for presence checks."""
-    cfg = {}
-    if kw.get("do_rmsd") or kw.get("do_rmsd_recon"):
-        cfg["rmsd_gen"] = {
-            "enabled": kw.get("do_rmsd", False),
-            "sample_variance": kw.get("variance_list") or [],
-            "num_samples": kw.get("num_samples_list") or [],
+    """Build a full analysis_cfg (all metric blocks present) from flattened need-data kwargs for presence checks.
+    Callers can use direct access; disabled metrics get enabled=False and empty/default recon lists."""
+    def _gen_block(enabled: bool, sample_variance: list, num_samples: list) -> dict:
+        return {"enabled": enabled, "sample_variance": sample_variance or [], "num_samples": num_samples or []}
+
+    def _recon_block(enabled: bool, max_recon_train, max_recon_test, visualize_latent: bool = False) -> dict:
+        return {
+            "enabled": enabled,
+            "max_recon_train": max_recon_train,
+            "max_recon_test": max_recon_test,
+            "visualize_latent": visualize_latent,
         }
-        cfg["rmsd_recon"] = {
-            "enabled": kw.get("do_rmsd_recon", False),
-            "max_recon_train": kw.get("max_recon_train_list"),
-            "max_recon_test": kw.get("max_recon_test_list"),
-            "visualize_latent": kw.get("visualize_latent", False),
-        }
-    if kw.get("do_q") or kw.get("do_q_recon"):
-        cfg["q_gen"] = {
-            "enabled": kw.get("do_q", False),
-            "sample_variance": kw.get("q_variance_list") or [],
-            "num_samples": kw.get("q_num_samples_list") or [],
-        }
-        cfg["q_recon"] = {
-            "enabled": kw.get("do_q_recon", False),
-            "max_recon_train": kw.get("q_max_recon_train_list"),
-            "max_recon_test": kw.get("q_max_recon_test_list"),
-            "visualize_latent": kw.get("q_visualize_latent", False),
-        }
-    if kw.get("do_coord_clustering_gen") or kw.get("do_coord_clustering_recon"):
-        cfg["coord_clustering_gen"] = {
-            "enabled": kw.get("do_coord_clustering_gen", False),
-            "sample_variance": kw.get("coord_clustering_variance_list") or [],
-            "num_samples": kw.get("coord_clustering_num_samples_list") or [],
-        }
-        cfg["coord_clustering_recon"] = {
-            "enabled": kw.get("do_coord_clustering_recon", False),
-            "max_recon_train": kw.get("coord_clustering_max_recon_train_list"),
-            "max_recon_test": kw.get("coord_clustering_max_recon_test_list"),
-            "visualize_latent": kw.get("coord_clustering_visualize_latent", False),
-        }
-    if kw.get("do_distmap_clustering_gen") or kw.get("do_distmap_clustering_recon"):
-        cfg["distmap_clustering_gen"] = {
-            "enabled": kw.get("do_distmap_clustering_gen", False),
-            "sample_variance": kw.get("distmap_clustering_variance_list") or [],
-            "num_samples": kw.get("distmap_clustering_num_samples_list") or [],
-        }
-        cfg["distmap_clustering_recon"] = {
-            "enabled": kw.get("do_distmap_clustering_recon", False),
-            "max_recon_train": kw.get("distmap_clustering_max_recon_train_list"),
-            "max_recon_test": kw.get("distmap_clustering_max_recon_test_list"),
-            "visualize_latent": kw.get("distmap_clustering_visualize_latent", False),
-        }
-    return cfg
+
+    return {
+        "rmsd_gen": _gen_block(
+            kw.get("do_rmsd", False),
+            kw.get("variance_list") or [],
+            kw.get("num_samples_list") or [],
+        ),
+        "rmsd_recon": _recon_block(
+            kw.get("do_rmsd_recon", False),
+            kw.get("max_recon_train_list"),
+            kw.get("max_recon_test_list"),
+            kw.get("visualize_latent", False),
+        ),
+        "q_gen": _gen_block(
+            kw.get("do_q", False),
+            kw.get("q_variance_list") or [],
+            kw.get("q_num_samples_list") or [],
+        ),
+        "q_recon": _recon_block(
+            kw.get("do_q_recon", False),
+            kw.get("q_max_recon_train_list"),
+            kw.get("q_max_recon_test_list"),
+            kw.get("q_visualize_latent", False),
+        ),
+        "coord_clustering_gen": _gen_block(
+            kw.get("do_coord_clustering_gen", False),
+            kw.get("coord_clustering_variance_list") or [],
+            kw.get("coord_clustering_num_samples_list") or [],
+        ),
+        "coord_clustering_recon": _recon_block(
+            kw.get("do_coord_clustering_recon", False),
+            kw.get("coord_clustering_max_recon_train_list"),
+            kw.get("coord_clustering_max_recon_test_list"),
+            kw.get("coord_clustering_visualize_latent", False),
+        ),
+        "distmap_clustering_gen": _gen_block(
+            kw.get("do_distmap_clustering_gen", False),
+            kw.get("distmap_clustering_variance_list") or [],
+            kw.get("distmap_clustering_num_samples_list") or [],
+        ),
+        "distmap_clustering_recon": _recon_block(
+            kw.get("do_distmap_clustering_recon", False),
+            kw.get("distmap_clustering_max_recon_train_list"),
+            kw.get("distmap_clustering_max_recon_test_list"),
+            kw.get("distmap_clustering_visualize_latent", False),
+        ),
+    }
 
 
 def _euclideanizer_plotting_all_present(
@@ -1132,15 +1140,14 @@ def _euclideanizer_analysis_all_present(
         })
     specs = metrics if metrics is not None else ANALYSIS_METRICS
     for spec in specs:
-        # analysis_cfg may be minimal (from _analysis_cfg_from_need_data_kwargs); only requested blocks are present.
-        gen_cfg = analysis_cfg.get(spec.gen_key)
-        recon_cfg = analysis_cfg.get(spec.recon_key)
-        do_gen = gen_cfg["enabled"] if gen_cfg else False
-        do_recon = recon_cfg["enabled"] if recon_cfg else False
+        gen_cfg = analysis_cfg[spec.gen_key]
+        recon_cfg = analysis_cfg[spec.recon_key]
+        do_gen = gen_cfg["enabled"]
+        do_recon = recon_cfg["enabled"]
         if not do_gen and not do_recon:
             continue
-        variance_list_s = _ensure_list(gen_cfg["sample_variance"]) if gen_cfg else []
-        num_samples_list_s = _ensure_list(gen_cfg["num_samples"]) if gen_cfg else []
+        variance_list_s = _ensure_list(gen_cfg["sample_variance"])
+        num_samples_list_s = _ensure_list(gen_cfg["num_samples"])
         if do_gen:
             for var in variance_list_s:
                 variance_suffix = f"_var{var}" if len(variance_list_s) > 1 else ""
@@ -1149,15 +1156,15 @@ def _euclideanizer_analysis_all_present(
                     fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
                     if not os.path.isfile(fig_path):
                         return False
-        max_recon_train_list_s = _ensure_list(recon_cfg["max_recon_train"]) if recon_cfg else []
-        max_recon_test_list_s = _ensure_list(recon_cfg["max_recon_test"]) if recon_cfg else []
+        max_recon_train_list_s = _ensure_list(recon_cfg["max_recon_train"])
+        max_recon_test_list_s = _ensure_list(recon_cfg["max_recon_test"])
         if do_recon:
             if not max_recon_train_list_s:
                 max_recon_train_list_s = [None]
             if not max_recon_test_list_s:
                 max_recon_test_list_s = [None]
             n_recon = len(max_recon_train_list_s) * len(max_recon_test_list_s)
-            vis_latent = recon_cfg["visualize_latent"] if recon_cfg else False
+            vis_latent = recon_cfg["visualize_latent"]
             if n_recon == 1:
                 recon_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/" + spec.figure_filename)
                 if not os.path.isfile(recon_fig):
@@ -1386,10 +1393,9 @@ def _pipeline_data_needs(
                                     if not resume or not os.path.isfile(_plot_path(eu_run_dir, "gen_variance", var=str(var))):
                                         need_exp_stats = True
                                         need_train_test_stats = True
-                        # _analysis_cfg is minimal (from _analysis_cfg_from_need_data_kwargs); use .get() for missing blocks.
                         has_any_analysis = any(
-                            _analysis_cfg.get(spec.gen_key, {}).get("enabled", False)
-                            or _analysis_cfg.get(spec.recon_key, {}).get("enabled", False)
+                            _analysis_cfg[spec.gen_key]["enabled"]
+                            or _analysis_cfg[spec.recon_key]["enabled"]
                             for spec in ANALYSIS_METRICS
                         )
                         if has_any_analysis and not _euclideanizer_analysis_all_present(
@@ -1788,7 +1794,7 @@ def _run_one_distmap_group(
                             recon_dm = _get_recon_dm_distmap(model, device, coords, dm_cfg, training_split, split_seed, utils, use_train=use_train)
                             plot_recon_statistics(
                                 recon_dm, stats, p,
-                                label_recon="VAE Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                label_recon="Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
                                 subset_label=subset_name,
                                 display_root=base_output_dir,
                             )
@@ -1804,7 +1810,7 @@ def _run_one_distmap_group(
                                 gen_dm_bond = gen_dm
                             plot_gen_analysis(
                                 exp_stats, train_stats, test_stats, gen_dm, p,
-                                sample_variance=var, label_gen="VAE Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                sample_variance=var, label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
                                 display_root=base_output_dir,
                             )
                         elif resume:
@@ -1816,7 +1822,7 @@ def _run_one_distmap_group(
                     if not (resume and os.path.isfile(p_bond)):
                         plot_bond_length_by_genomic_distance(
                             train_stats["exp_distmaps"], test_stats["exp_distmaps"], gen_dm_bond, p_bond,
-                            label_gen="VAE Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                            label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
                             display_root=base_output_dir,
                         )
                     elif resume:
@@ -1967,7 +1973,7 @@ def _run_one_distmap_group(
                                         recon_dm = _get_recon_dm_euclideanizer(embed, frozen_vae, device, coords, eu_cfg, training_split, split_seed, utils, use_train=use_train)
                                         plot_recon_statistics(
                                             recon_dm, stats, p,
-                                            label_recon="Eucl. Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                            label_recon="Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
                                             subset_label=subset_name,
                                             display_root=base_output_dir,
                                         )
@@ -1993,7 +1999,7 @@ def _run_one_distmap_group(
                                             gen_dm_bond = gen_dm
                                         plot_gen_analysis(
                                             exp_stats, train_stats, test_stats, gen_dm, p,
-                                            sample_variance=var, label_gen="Euclideanizer", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                            sample_variance=var, label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
                                             display_root=base_output_dir,
                                         )
                                     elif resume:
@@ -2007,7 +2013,7 @@ def _run_one_distmap_group(
                                 if not (resume and os.path.isfile(p_bond)):
                                     plot_bond_length_by_genomic_distance(
                                         train_stats["exp_distmaps"], test_stats["exp_distmaps"], gen_dm_bond, p_bond,
-                                        label_gen="Euclideanizer", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                                        label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
                                         display_root=base_output_dir,
                                     )
                                 elif resume:

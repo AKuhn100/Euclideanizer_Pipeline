@@ -16,7 +16,7 @@ import matplotlib.cm as cm
 from scipy.spatial.transform import Rotation
 
 # Visual theme for training video frames (dark background, accent colors).
-# Note: ACC_EXP/ACC_GEN here differ from plot_colors (COLOR_TRAIN/COLOR_GEN) for contrast on dark BG.
+# Note: ACC_EXP/ACC_GEN here differ from plot_config (COLOR_TRAIN/COLOR_GEN) for contrast on dark BG.
 BG = "#0d1117"
 FG = "#e6edf3"
 ACC_EXP = "#58a6ff"

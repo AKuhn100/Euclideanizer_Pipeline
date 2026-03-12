@@ -14,7 +14,23 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .metrics import distmap_bond_lengths, distmap_distances_at_lag, distmap_rg, distmap_scaling
 from .utils import display_path, get_train_test_split
-from .plot_colors import COLOR_EXP, COLOR_TRAIN, COLOR_TEST, COLOR_GEN, CMAP_DM, CMAP_DM_R
+from .plot_config import (
+    COLOR_EXP,
+    COLOR_TRAIN,
+    COLOR_TEST,
+    COLOR_GEN,
+    COLOR_TRAIN_RECON,
+    COLOR_TEST_RECON,
+    CMAP_DM,
+    CMAP_DM_R,
+    FONT_FAMILY,
+    FONT_SIZE_SUPTITLE,
+    FONT_SIZE_TITLE,
+    FONT_SIZE_AXIS,
+    FONT_SIZE_LEGEND,
+    FONT_SIZE_SMALL,
+    FONT_SIZE_TINY,
+)
 
 
 def _save_pdf_copy(fig, png_path: str, save_pdf: bool = True, display_root: str | None = None) -> None:
@@ -86,9 +102,9 @@ def plot_distmap_reconstruction(
         axes = axes.reshape(1, -1)
     for i in range(n_plot):
         axes[i, 0].imshow(original_dms[i], cmap=CMAP_DM, aspect="equal", vmin=vmin, vmax=vmax, interpolation="none")
-        axes[i, 0].set_title(f"Original Test {i+1}")
+        axes[i, 0].set_title(f"Original Test {i+1}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
         axes[i, 1].imshow(recon_dms[i], cmap=CMAP_DM, aspect="equal", vmin=vmin, vmax=vmax, interpolation="none")
-        axes[i, 1].set_title(f"Reconstructed {i+1}")
+        axes[i, 1].set_title(f"Reconstructed {i+1}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
@@ -117,7 +133,7 @@ def plot_euclideanizer_reconstruction(
     save_plot_data: bool = False,
     display_root: str | None = None,
 ) -> None:
-    """Original, VAE (non-Eucl.), Euclideanizer (test set)."""
+    """Original, Recon (non-Eucl.), Recon (test set)."""
     _, test_dataset = get_train_test_split(coords, training_split, split_seed)
     test_dl = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
     embed.eval()
@@ -151,11 +167,11 @@ def plot_euclideanizer_reconstruction(
     for i in range(n_plot):
         for j, (data, title) in enumerate([
             (orig_list[i], f"Original {i+1}"),
-            (vae_list[i], f"VAE (non-Eucl.) {i+1}"),
-            (euclid_list[i], f"Euclideanizer {i+1}"),
+            (vae_list[i], f"Recon (non-Eucl.) {i+1}"),
+            (euclid_list[i], f"Recon {i+1}"),
         ]):
             axes[i, j].imshow(data, cmap=CMAP_DM, aspect="equal", vmin=vmin, vmax=vmax, interpolation="none")
-            axes[i, j].set_title(title)
+            axes[i, j].set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
@@ -179,7 +195,7 @@ def plot_recon_statistics(
     save_plot_data: bool = False,
     display_root: str | None = None,
 ) -> None:
-    """Bond lengths, Rg, scaling: exp (same subset) vs recon. subset_label e.g. 'test' or 'train' for title."""
+    """Bond lengths, Rg, scaling: train or test (same subset) vs recon. subset_label 'train' or 'test' sets colors and labels."""
     true_bonds = exp_stats["exp_bonds"]
     true_rg = exp_stats["exp_rg"]
     s = exp_stats["genomic_distances"]
@@ -187,23 +203,28 @@ def plot_recon_statistics(
     recon_bonds = distmap_bond_lengths(recon_dm)
     recon_rg = distmap_rg(recon_dm)
     _, recon_sc = distmap_scaling(recon_dm)
+    # Use train/test colors and recon color by subset (like gen variance)
+    is_train = subset_label and str(subset_label).lower() == "train"
+    exp_color = COLOR_TRAIN if is_train else COLOR_TEST
+    exp_label = "Train" if is_train else "Test"
+    recon_color = COLOR_TRAIN_RECON if is_train else COLOR_TEST_RECON
     fig, axes = plt.subplots(1, 3, figsize=(21, 6))
     bmax = max(np.percentile(true_bonds, 99), np.percentile(recon_bonds, 99))
-    axes[0].hist(true_bonds, bins=60, alpha=0.5, label="Exp", density=True, range=(0, bmax), color=COLOR_EXP)
-    axes[0].hist(recon_bonds, bins=60, alpha=0.5, label=label_recon, density=True, range=(0, bmax))
-    axes[0].set_title("Bond Lengths")
-    axes[0].legend()
+    axes[0].hist(true_bonds, bins=60, alpha=0.5, label=exp_label, density=True, range=(0, bmax), color=exp_color)
+    axes[0].hist(recon_bonds, bins=60, alpha=0.5, label=label_recon, density=True, range=(0, bmax), color=recon_color)
+    axes[0].set_title("Bond Lengths", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[0].legend(fontsize=FONT_SIZE_LEGEND)
     rmax = max(np.percentile(true_rg, 99), np.percentile(recon_rg, 99)) * 1.1
-    axes[1].hist(true_rg, bins=40, alpha=0.5, label="Exp", density=True, range=(0, rmax), color=COLOR_EXP)
-    axes[1].hist(recon_rg, bins=40, alpha=0.5, label=label_recon, density=True, range=(0, rmax))
-    axes[1].set_title("Radius of Gyration")
-    axes[1].legend()
-    axes[2].loglog(s, true_sc, label="Exp", lw=2, color=COLOR_EXP)
-    axes[2].loglog(s, recon_sc, label=label_recon, lw=2, ls="--")
-    axes[2].set_title("Spatial Scaling P(s)")
-    axes[2].legend()
-    title = "Reconstruction Statistics" + (f" ({subset_label.title()} Set)" if subset_label else " (Test Set)")
-    fig.suptitle(title, fontsize=14, fontweight="bold")
+    axes[1].hist(true_rg, bins=40, alpha=0.5, label=exp_label, density=True, range=(0, rmax), color=exp_color)
+    axes[1].hist(recon_rg, bins=40, alpha=0.5, label=label_recon, density=True, range=(0, rmax), color=recon_color)
+    axes[1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[1].legend(fontsize=FONT_SIZE_LEGEND)
+    axes[2].loglog(s, true_sc, label=exp_label, lw=2, color=exp_color)
+    axes[2].loglog(s, recon_sc, label=label_recon, lw=2, ls="--", color=recon_color)
+    axes[2].set_title("Spatial Scaling P(s)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[2].legend(fontsize=FONT_SIZE_LEGEND)
+    title = "Reconstruction Statistics" + (f" ({exp_label} Set)" if subset_label else " (Test Set)")
+    fig.suptitle(title, fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
@@ -234,82 +255,75 @@ def plot_gen_analysis(
     save_plot_data: bool = False,
     display_root: str | None = None,
 ) -> None:
-    """Bond, Rg, scaling (full/train/test/gen); row2: avg maps train, test, gen; row3: diff test-train, train-gen, test-gen."""
+    """Bond, Rg, scaling (train/test/gen); row2: avg maps train, test, gen; row3: diff test-train, train-gen, test-gen."""
     s = full_stats["genomic_distances"]
-    full_b, full_rg, full_sc = full_stats["exp_bonds"], full_stats["exp_rg"], full_stats["exp_scaling"]
     train_b, train_rg, train_sc = train_stats["exp_bonds"], train_stats["exp_rg"], train_stats["exp_scaling"]
     test_b, test_rg, test_sc = test_stats["exp_bonds"], test_stats["exp_rg"], test_stats["exp_scaling"]
-    avg_train = train_stats["avg_exp_map"]
-    avg_test = test_stats["avg_exp_map"]
     gen_b = distmap_bond_lengths(gen_distmaps)
     gen_rg = distmap_rg(gen_distmaps)
     _, gen_sc = distmap_scaling(gen_distmaps)
+    avg_train = train_stats["avg_exp_map"]
+    avg_test = test_stats["avg_exp_map"]
     avg_gen = np.mean(gen_distmaps[: min(100, len(gen_distmaps))], axis=0)
 
     fig, axes = plt.subplots(3, 3, figsize=(20, 16))
 
-    # Row 0: Bonds, Rg, Scaling — Exp (full), Train, Test, Gen
+    # Row 0: Bonds, Rg, Scaling — Train, Test, Gen only
     bmax = max(
-        np.percentile(full_b, 99), np.percentile(train_b, 99),
-        np.percentile(test_b, 99), np.percentile(gen_b, 99),
+        np.percentile(train_b, 99), np.percentile(test_b, 99), np.percentile(gen_b, 99),
     )
-    axes[0, 0].hist(full_b, bins=50, alpha=0.4, label="Exp (full)", density=True, range=(0, bmax), histtype="step", lw=1.5, color=COLOR_EXP)
     axes[0, 0].hist(train_b, bins=50, alpha=0.4, label="Train", density=True, range=(0, bmax), histtype="step", lw=1.5, color=COLOR_TRAIN)
     axes[0, 0].hist(test_b, bins=50, alpha=0.4, label="Test", density=True, range=(0, bmax), histtype="step", lw=1.5, color=COLOR_TEST)
     axes[0, 0].hist(gen_b, bins=50, alpha=0.6, label=label_gen, density=True, range=(0, bmax), color=COLOR_GEN)
-    axes[0, 0].set_title("Bond Lengths")
-    axes[0, 0].legend(fontsize=7)
+    axes[0, 0].set_title("Bond Lengths", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[0, 0].legend(fontsize=FONT_SIZE_SMALL)
 
     rmax = max(
-        np.percentile(full_rg, 99), np.percentile(train_rg, 99),
-        np.percentile(test_rg, 99), np.percentile(gen_rg, 99),
+        np.percentile(train_rg, 99), np.percentile(test_rg, 99), np.percentile(gen_rg, 99),
     ) * 1.1
-    axes[0, 1].hist(full_rg, bins=30, alpha=0.4, label="Exp (full)", density=True, range=(0, rmax), histtype="step", lw=1.5, color=COLOR_EXP)
     axes[0, 1].hist(train_rg, bins=30, alpha=0.4, label="Train", density=True, range=(0, rmax), histtype="step", lw=1.5, color=COLOR_TRAIN)
     axes[0, 1].hist(test_rg, bins=30, alpha=0.4, label="Test", density=True, range=(0, rmax), histtype="step", lw=1.5, color=COLOR_TEST)
     axes[0, 1].hist(gen_rg, bins=30, alpha=0.6, label=label_gen, density=True, range=(0, rmax), color=COLOR_GEN)
-    axes[0, 1].set_title("Radius of Gyration")
-    axes[0, 1].legend(fontsize=7)
+    axes[0, 1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[0, 1].legend(fontsize=FONT_SIZE_SMALL)
 
-    y_lo = min(full_sc.min(), train_sc.min(), test_sc.min(), gen_sc.min())
-    y_hi = max(full_sc.max(), train_sc.max(), test_sc.max(), gen_sc.max())
-    axes[0, 2].loglog(s, full_sc, label="Exp (full)", lw=1.5, color=COLOR_EXP)
+    y_lo = min(train_sc.min(), test_sc.min(), gen_sc.min())
+    y_hi = max(train_sc.max(), test_sc.max(), gen_sc.max())
     axes[0, 2].loglog(s, train_sc, label="Train", lw=1.2, ls="--", color=COLOR_TRAIN)
     axes[0, 2].loglog(s, test_sc, label="Test", lw=1.2, ls="-.", color=COLOR_TEST)
     axes[0, 2].loglog(s, gen_sc, label=label_gen, lw=1.5, ls=":", color=COLOR_GEN)
     axes[0, 2].set_ylim(y_lo * 0.9, y_hi * 1.1)
-    axes[0, 2].set_title("Spatial Scaling P(s)")
-    axes[0, 2].legend(fontsize=7)
+    axes[0, 2].set_title("Spatial Scaling P(s)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[0, 2].legend(fontsize=FONT_SIZE_SMALL)
 
     # Row 1: Avg maps — train, test, gen
     vmin = min(avg_train.min(), avg_test.min(), avg_gen.min())
     vmax_m = max(avg_train.max(), avg_test.max(), avg_gen.max())
     axes[1, 0].imshow(avg_train, cmap=CMAP_DM_R, aspect="equal", vmin=vmin, vmax=vmax_m, interpolation="none")
-    axes[1, 0].set_title("Train: Avg Map")
+    axes[1, 0].set_title("Train: Avg Map", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     im1 = axes[1, 1].imshow(avg_test, cmap=CMAP_DM_R, aspect="equal", vmin=vmin, vmax=vmax_m, interpolation="none")
-    axes[1, 1].set_title("Test: Avg Map")
+    axes[1, 1].set_title("Test: Avg Map", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1, 2].imshow(avg_gen, cmap=CMAP_DM_R, aspect="equal", vmin=vmin, vmax=vmax_m, interpolation="none")
-    axes[1, 2].set_title(f"{label_gen}: Avg Map")
+    axes[1, 2].set_title(f"{label_gen}: Avg Map", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     divider = make_axes_locatable(axes[1, 1])
     cax = divider.append_axes("right", size="5%", pad=0.1)
     fig.colorbar(im1, cax=cax)
 
-    # Row 2: Difference maps — test−train, train−gen, test−gen
+    # Row 2: Difference maps — test−train, train−gen, test−gen (constant scale -1 to 1)
     diff_tt = avg_test - avg_train
     diff_tg = avg_train - avg_gen
     diff_test_gen = avg_test - avg_gen
-    v_diff = max(np.abs(diff_tt).max(), np.abs(diff_tg).max(), np.abs(diff_test_gen).max()) or 1.0
-    axes[2, 0].imshow(diff_tt, cmap="RdBu_r", aspect="equal", vmin=-v_diff, vmax=v_diff, interpolation="none")
-    axes[2, 0].set_title("Test − Train")
-    imd1 = axes[2, 1].imshow(diff_tg, cmap="RdBu_r", aspect="equal", vmin=-v_diff, vmax=v_diff, interpolation="none")
-    axes[2, 1].set_title(f"Train − {label_gen}")
-    axes[2, 2].imshow(diff_test_gen, cmap="RdBu_r", aspect="equal", vmin=-v_diff, vmax=v_diff, interpolation="none")
-    axes[2, 2].set_title(f"Test − {label_gen}")
+    axes[2, 0].imshow(diff_tt, cmap="RdBu_r", aspect="equal", vmin=-1, vmax=1, interpolation="none")
+    axes[2, 0].set_title("Test − Train", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    imd1 = axes[2, 1].imshow(diff_tg, cmap="RdBu_r", aspect="equal", vmin=-1, vmax=1, interpolation="none")
+    axes[2, 1].set_title(f"Train − {label_gen}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    axes[2, 2].imshow(diff_test_gen, cmap="RdBu_r", aspect="equal", vmin=-1, vmax=1, interpolation="none")
+    axes[2, 2].set_title(f"Test − {label_gen}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     divider2 = make_axes_locatable(axes[2, 1])
     cax2 = divider2.append_axes("right", size="5%", pad=0.1)
     fig.colorbar(imd1, cax=cax2)
 
-    plt.suptitle(f"Sample Variance = {sample_variance}", fontsize=14, fontweight="bold")
+    plt.suptitle(f"Sample Variance = {sample_variance}", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
@@ -319,7 +333,6 @@ def plot_gen_analysis(
             output_path,
             display_root=display_root,
             sample_variance=np.array(sample_variance),
-            full_bonds=full_b, full_rg=full_rg, full_scaling=full_sc,
             train_bonds=train_b, train_rg=train_rg, train_scaling=train_sc,
             test_bonds=test_b, test_rg=test_rg, test_scaling=test_sc,
             gen_bonds=gen_b, gen_rg=gen_rg, gen_scaling=gen_sc,
@@ -379,7 +392,7 @@ def plot_bond_length_by_genomic_distance(
         gen_vals = distmap_distances_at_lag(gen_dm, int(k))
         all_vals = np.concatenate([train_vals, test_vals, gen_vals])
         if len(all_vals) == 0:
-            ax.set_title(f"k = {k}")
+            ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
             continue
         x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
         x_max = max(x_max, 1e-6)
@@ -387,13 +400,13 @@ def plot_bond_length_by_genomic_distance(
         ax.hist(train_vals, bins=bins, alpha=0.4, label="Train", density=True, range=(0, x_max), histtype="step", lw=1.5, color=COLOR_TRAIN)
         ax.hist(test_vals, bins=bins, alpha=0.4, label="Test", density=True, range=(0, x_max), histtype="step", lw=1.5, color=COLOR_TEST)
         ax.hist(gen_vals, bins=bins, alpha=0.6, label=label_gen, density=True, range=(0, x_max), color=COLOR_GEN)
-        ax.set_title(f"k = {k}")
-        ax.set_xlabel("Distance")
-        ax.legend(fontsize=6)
+        ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+        ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.legend(fontsize=FONT_SIZE_TINY)
         ax.grid(True, alpha=0.3)
     for idx in range(n_plots, len(axes_flat)):
         axes_flat[idx].set_visible(False)
-    plt.suptitle("Pairwise Distance d(i, i+k) by Genomic Lag k", fontsize=14, fontweight="bold")
+    plt.suptitle("Pairwise Distance d(i, i+k) by Genomic Lag k", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
@@ -425,10 +438,10 @@ def plot_loss_curves(
     epochs = range(1, len(train_loss) + 1)
     ax.plot(epochs, train_loss, label="Train", lw=2, alpha=0.8, color=COLOR_TRAIN)
     ax.plot(epochs, val_loss, label="Val", lw=2, alpha=0.8, color=COLOR_TEST)
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.set_title(title)
-    ax.legend()
+    ax.set_xlabel("Epoch", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax.set_ylabel("Loss", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax.set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+    ax.legend(fontsize=FONT_SIZE_LEGEND)
     ax.grid(True, alpha=0.3)
     if max(train_loss) / (min(train_loss) + 1e-10) > 100:
         ax.set_yscale("log")

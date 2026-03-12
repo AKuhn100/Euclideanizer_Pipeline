@@ -19,13 +19,24 @@ from sklearn.decomposition import PCA
 from . import utils
 from .utils import display_path, get_train_test_split
 from .plotting import _save_pdf_copy
-from .plot_colors import (
+from .plot_config import (
     COLOR_TRAIN,
     COLOR_GEN,
     COLOR_TEST,
     COLOR_TRAIN_RECON,
     COLOR_TEST_RECON,
+    COLOR_GRAY_LIGHT,
+    COLOR_GRAY_MID,
+    COLOR_GRAY_DARK,
+    COLOR_GRAY_TEXT,
     CMAP_DM,
+    FONT_FAMILY,
+    FONT_SIZE_SUPTITLE,
+    FONT_SIZE_TITLE,
+    FONT_SIZE_AXIS,
+    FONT_SIZE_TICK,
+    FONT_SIZE_LEGEND,
+    FONT_SIZE_SMALL,
 )
 
 DEFAULT_N_SUBSAMPLE = 150
@@ -57,24 +68,24 @@ RMSE_PAIR_ORDER_GEN = [
 
 SOURCE_COLORS_RECON = {
     "Train": COLOR_TRAIN,
-    "Train recon": COLOR_TRAIN_RECON,
+    "Train Recon": COLOR_TRAIN_RECON,
     "Test": COLOR_TEST,
-    "Test recon": COLOR_TEST_RECON,
+    "Test Recon": COLOR_TEST_RECON,
 }
-SOURCE_ORDER_RECON = ["Train", "Train recon", "Test", "Test recon"]
+SOURCE_ORDER_RECON = ["Train", "Train Recon", "Test", "Test Recon"]
 
-# Recon: left-to-right top-to-bottom — Train+Test, Train+Train recon, Test+Test recon, Test recon+Train recon
+# Recon: left-to-right top-to-bottom — Train+Test, Train+Train Recon, Test+Test Recon, Test Recon+Train Recon
 MIXED_PANEL_ORDER_RECON = [
     ("Train", "Test"),
-    ("Train", "Train recon"),
-    ("Test", "Test recon"),
-    ("Test recon", "Train recon"),
+    ("Train", "Train Recon"),
+    ("Test", "Test Recon"),
+    ("Test Recon", "Train Recon"),
 ]
 RMSE_PAIR_ORDER_RECON = [
     ("Train", "Test"),
-    ("Train", "Train recon"),
-    ("Test", "Test recon"),
-    ("Test recon", "Train recon"),
+    ("Train", "Train Recon"),
+    ("Test", "Test Recon"),
+    ("Test Recon", "Train Recon"),
 ]
 
 
@@ -361,8 +372,8 @@ def _plot_panel(
         Z, ax=ax,
         no_labels=True,
         color_threshold=0,
-        above_threshold_color="#aaaaaa",
-        link_color_func=lambda _k: "#aaaaaa",
+        above_threshold_color=COLOR_GRAY_LIGHT,
+        link_color_func=lambda _k: COLOR_GRAY_LIGHT,
     )
     if leaf_colors is not None:
         y_bottom = ax.get_ylim()[0]
@@ -376,8 +387,8 @@ def _plot_panel(
             ))
         ax.set_ylim(y_bottom - strip_h, ax.get_ylim()[1])
     suffix = f"  (c={cophenetic_r:.3f})" if show_cophenetic else ""
-    ax.set_title(f"{title}{suffix}", fontsize=11, fontweight="bold", pad=4)
-    ax.set_ylabel("RMSE (Distance Map)", fontsize=9)
+    ax.set_title(f"{title}{suffix}", fontsize=FONT_SIZE_TITLE, fontweight="bold", pad=4, family=FONT_FAMILY)
+    ax.set_ylabel("RMSE (Distance Map)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     ax.tick_params(axis="x", bottom=False)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -400,14 +411,14 @@ def _fig_pure_dendrograms(
     fig, axes = plt.subplots(1, len(groups), figsize=(8 * len(groups), 7))
     if len(groups) == 1:
         axes = [axes]
-    fig.suptitle("Hierarchical Clustering — Pure Populations", fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle("Hierarchical Clustering — Pure Populations", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.02, family=FONT_FAMILY)
     for ax, (name, feats) in zip(axes, groups):
         Z, c = _compute_linkage_and_cophenetic(feats)
         color = source_colors[name]
         leaf_colors = np.array([color] * len(feats))
         _plot_panel(ax, Z, np.arange(len(feats)), name, c, source_colors, leaf_colors=leaf_colors)
         patch = mpatches.Patch(color=color, label=f"{name}  (n={len(feats)})")
-        ax.legend(handles=[patch], fontsize=9, loc="upper right")
+        ax.legend(handles=[patch], fontsize=FONT_SIZE_LEGEND, loc="upper right")
     y_max = max(ax.get_ylim()[1] for ax in axes)
     y_min = min(ax.get_ylim()[0] for ax in axes)
     for ax in axes:
@@ -470,7 +481,7 @@ def _mixed_dendrogram_panel(
     title_parts = panel_title if panel_title is not None else " + ".join(names)
     _plot_panel(ax, Z, labels, title_parts, c, source_colors, leaf_colors=leaf_colors)
     ax.text(0.5, -0.04, f"mixing={obs_mix:.2f} (expected={exp_mix:.2f}, ratio={norm_mix:.2f})",
-            transform=ax.transAxes, ha="center", va="top", fontsize=8, style="italic", color="#555555")
+            transform=ax.transAxes, ha="center", va="top", fontsize=FONT_SIZE_SMALL, style="italic", color=COLOR_GRAY_DARK, family=FONT_FAMILY)
     return obs_mix, exp_mix, norm_mix, Z, labels
 
 
@@ -527,8 +538,8 @@ def _fig_mixed_dendrograms(
         ax.set_ylim(y_min, y_max)
     patches = [mpatches.Patch(color=source_colors[s], label=s) for s in source_order if s in sub_feats]
     if patches:
-        fig.legend(handles=patches, loc="lower center", ncol=min(4, len(patches)), fontsize=11, frameon=True, bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle("Hierarchical Clustering — Mixed-Source Dendrograms", fontsize=13, fontweight="bold", y=1.01)
+        fig.legend(handles=patches, loc="lower center", ncol=min(4, len(patches)), fontsize=FONT_SIZE_TITLE, frameon=True, bbox_to_anchor=(0.5, -0.01))
+    fig.suptitle("Hierarchical Clustering — Mixed-Source Dendrograms", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.01, family=FONT_FAMILY)
     fig.tight_layout(rect=[0, 0.04, 1, 1])
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
@@ -564,18 +575,18 @@ def _fig_mixing_analysis(
     x = np.arange(len(keys))
     w = 0.35
     ax_bar.bar(x - w / 2, obs, w, label="Observed Mixing", color=COLOR_TRAIN, alpha=0.8)
-    ax_bar.bar(x + w / 2, exp, w, label="Expected (Random)", color="#aaaaaa", alpha=0.8)
+    ax_bar.bar(x + w / 2, exp, w, label="Expected (Random)", color=COLOR_GRAY_LIGHT, alpha=0.8)
     ax_bar.set_xticks(x)
-    ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=10)
-    ax_bar.set_ylabel("Mixing Score", fontsize=10)
-    ax_bar.set_title(f"Mixing Scores (k={k_mixing} Nearest Neighbors)", fontsize=11, fontweight="bold")
-    ax_bar.legend(fontsize=10)
+    ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax_bar.set_ylabel("Mixing Score", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax_bar.set_title(f"Mixing Scores (k={k_mixing} Nearest Neighbors)", fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
+    ax_bar.legend(fontsize=FONT_SIZE_AXIS)
     ax_bar.set_ylim(0, 1.05)
     ax_bar.spines["top"].set_visible(False)
     ax_bar.spines["right"].set_visible(False)
     ax_bar.grid(axis="y", alpha=0.3)
     for xi, (o, e, r) in enumerate(zip(obs, exp, ratio)):
-        ax_bar.text(xi, max(o, e) + 0.02, f"ratio={r:.2f}", ha="center", va="bottom", fontsize=8, color="#333333")
+        ax_bar.text(xi, max(o, e) + 0.02, f"ratio={r:.2f}", ha="center", va="bottom", fontsize=FONT_SIZE_SMALL, color=COLOR_GRAY_TEXT, family=FONT_FAMILY)
     pair_configs = []
     for k in keys:
         parts = k.split("+")
@@ -599,17 +610,16 @@ def _fig_mixing_analysis(
         frac = comp / row_sums
         bot = np.zeros(n_clusters)
         for si, src in enumerate(sources):
-            ax_c.bar(np.arange(n_clusters), frac[:, si], bottom=bot, color=source_colors.get(src, "#888888"), label=src, alpha=0.85)
+            ax_c.bar(np.arange(n_clusters), frac[:, si], bottom=bot, color=source_colors.get(src, COLOR_GRAY_MID), label=src, alpha=0.85)
             bot += frac[:, si]
         ax_c.set_xticks(np.arange(n_clusters))
-        ax_c.set_xticklabels([f"C{j+1}" for j in range(n_clusters)], fontsize=8)
-        ax_c.set_ylabel("Source Fraction", fontsize=9)
+        ax_c.set_xticklabels([f"C{j+1}" for j in range(n_clusters)], fontsize=FONT_SIZE_SMALL, family=FONT_FAMILY)
+        ax_c.set_ylabel("Source Fraction", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax_c.set_ylim(0, 1.05)
-        ax_c.set_title(f"{na} + {nb} — Cluster Composition", fontsize=9, fontweight="bold")
-        ax_c.legend(fontsize=8, loc="upper right")
+        ax_c.set_title(f"{na} + {nb} — Cluster Composition", fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
+        ax_c.legend(fontsize=FONT_SIZE_SMALL, loc="upper right")
         ax_c.spines["top"].set_visible(False)
         ax_c.spines["right"].set_visible(False)
-    fig.suptitle("Mixing Analysis", fontsize=13, fontweight="bold", y=1.01)
     fig.tight_layout()
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
@@ -662,26 +672,26 @@ def _fig_rmse_similarity(
         lim = max(qa.max(), qb.max()) * 1.05
         lims.append(lim)
         title = _rmse_panel_title(name_a, name_b, is_gen) + f" (r={corr:.3f})"
-        ax.set_title(title, fontsize=11, fontweight="bold")
-        ax.set_xlabel(f"{name_a} Pairwise RMSE", fontsize=10)
-        ax.set_ylabel(f"{name_b} Pairwise RMSE", fontsize=10)
+        ax.set_title(title, fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
+        ax.set_xlabel(f"{name_a} Pairwise RMSE", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.set_ylabel(f"{name_b} Pairwise RMSE", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
     global_lim = max(lims)
     for ax in axes:
         ax.plot([0, global_lim], [0, global_lim], "k--", lw=1.2, alpha=0.6, label="y=x")
-        ax.legend(fontsize=9)
+        ax.legend(fontsize=FONT_SIZE_LEGEND)
         ax.set_xlim(0, global_lim)
         ax.set_ylim(0, global_lim)
         ax.set_aspect("equal")
-    fig.suptitle("RMSE Similarity", fontsize=13, fontweight="bold", y=1.02)
+    fig.suptitle("RMSE Similarity", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.02, family=FONT_FAMILY)
     # Horizontal colorbar: full width, thin, quantile 0–100%
     fig.subplots_adjust(bottom=0.12)
     cbar_ax = fig.add_axes([0.12, 0.03, 0.76, 0.025])
     sm = plt.cm.ScalarMappable(cmap=CMAP_DM, norm=plt.Normalize(vmin=0, vmax=100))
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
-    cbar.set_label("Quantile (%)", fontsize=9)
+    cbar.set_label("Quantile (%)", fontsize=FONT_SIZE_TICK, family=FONT_FAMILY)
     cbar.ax.tick_params(labelsize=8)
     fig.tight_layout(rect=[0, 0.08, 1, 1])
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
@@ -893,9 +903,9 @@ def run_distmap_clustering_recon_analysis(
     test_recon_feats = test_recon_feats_full[te_recon_idx]
     sub_feats = {
         "Train": train_feats,
-        "Train recon": train_recon_feats,
+        "Train Recon": train_recon_feats,
         "Test": test_feats,
-        "Test recon": test_recon_feats,
+        "Test Recon": test_recon_feats,
     }
     run_dir_recon = os.path.join(run_dir, "analysis", "distmap_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "distmap_clustering", "recon")
     return _write_clustering_figures(
@@ -1050,9 +1060,9 @@ def run_coord_clustering_recon_analysis(
     test_recon_feats = test_recon_feats_full[te_recon_idx]
     sub_feats = {
         "Train": train_feats,
-        "Train recon": train_recon_feats,
+        "Train Recon": train_recon_feats,
         "Test": test_feats,
-        "Test recon": test_recon_feats,
+        "Test Recon": test_recon_feats,
     }
     run_dir_recon = os.path.join(run_dir, "analysis", "coord_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "coord_clustering", "recon")
     return _write_clustering_figures(

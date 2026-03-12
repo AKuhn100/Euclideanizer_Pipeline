@@ -825,6 +825,16 @@ def _html_content(manifest: dict) -> str:
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    const CLUSTERING_SUB_ORDER = ['Pure Dendrograms', 'Mixed Dendrograms', 'Rmse Similarity', 'Mixing Analysis'];
+    function clusteringSubOrder(name) {
+      if (!name) return 999;
+      const suffix = name.indexOf(' — ') >= 0 ? name.split(' — ').pop() : name;
+      const i = CLUSTERING_SUB_ORDER.indexOf(suffix);
+      return i >= 0 ? i : 999;
+    }
+    function isClusteringType(type) {
+      return type === 'coord_clustering_gen' || type === 'coord_clustering_recon' || type === 'distmap_clustering_gen' || type === 'distmap_clustering_recon';
+    }
     function blockTypeOrder(type, name) {
       const n = (name || '').toUpperCase();
       if (type === 'latent_distribution' || type === 'latent_correlation') {
@@ -853,7 +863,15 @@ def _html_content(manifest: dict) -> str:
         container.innerHTML = '<div class="empty-state"><span class="empty-state-title">No outputs</span><p>This run has no plots or videos.</p></div>';
         return;
       }
-      const sorted = [...run.blocks].sort((a, b) => blockTypeOrder(a.type, a.name) - blockTypeOrder(b.type, b.name) || (a.name || '').localeCompare(b.name || ''));
+      const sorted = [...run.blocks].sort((a, b) => {
+        const typeDiff = blockTypeOrder(a.type, a.name) - blockTypeOrder(b.type, b.name);
+        if (typeDiff !== 0) return typeDiff;
+        if (isClusteringType(a.type) && isClusteringType(b.type)) {
+          const subDiff = clusteringSubOrder(a.name) - clusteringSubOrder(b.name);
+          if (subDiff !== 0) return subDiff;
+        }
+        return (a.name || '').localeCompare(b.name || '');
+      });
       let html = '<div class="run-card"><h2 class="run-card-title">' + escapeHtml(run.label_short || run.id || 'Run') + '</h2>';
       sorted.forEach(b => {
         html += '<div class="block"><div class="block-title">' + escapeHtml(b.name) + '</div>';

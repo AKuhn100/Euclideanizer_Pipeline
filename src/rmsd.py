@@ -16,11 +16,12 @@ from tqdm import tqdm
 
 from .utils import display_path, get_train_test_split
 from .plotting import _save_pdf_copy
-from .plot_colors import (
+from .plot_config import (
     GEN_PANEL_COLORS,
     RECON_PANEL_COLORS,
-    COLOR_TRAIN,
-    COLOR_TEST,
+    FONT_FAMILY,
+    FONT_SIZE_TITLE,
+    FONT_SIZE_AXIS,
 )
 
 
@@ -148,21 +149,24 @@ def _run_one_min_rmsd(
     c0, c1, c2 = GEN_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
     axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
-    axes[0].set_ylabel("Density")
-    axes[0].set_title("Test → Train (Min RMSD to Train Set)")
+    axes[0].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[0].set_title("Test → Train (Min RMSD to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].set_xlim(x_min, x_max)
     axes[0].grid(True, alpha=0.3)
     axes[1].hist(gen_to_train, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
-    axes[1].set_ylabel("Density")
-    axes[1].set_title("Gen → Train (Min RMSD to Train Set)")
+    axes[1].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[1].set_title("Gen → Train (Min RMSD to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].set_xlim(x_min, x_max)
     axes[1].grid(True, alpha=0.3)
     axes[2].hist(gen_to_test, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
-    axes[2].set_ylabel("Density")
-    axes[2].set_xlabel("Min RMSD (Aligned Coords)")
-    axes[2].set_title("Gen → Test (Min RMSD to Test Set)")
+    axes[2].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[2].set_xlabel("Min RMSD (Aligned Coords)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[2].set_title("Gen → Test (Min RMSD to Test Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[2].set_xlim(x_min, x_max)
     axes[2].grid(True, alpha=0.3)
+    y_max = max(ax.get_ylim()[1] for ax in axes)
+    for ax in axes:
+        ax.set_ylim(0, y_max)
     plt.tight_layout()
     os.makedirs(run_dir_this, exist_ok=True)
     out_path = os.path.join(run_dir_this, "rmsd_distributions.png")
@@ -442,21 +446,24 @@ def _run_one_min_rmsd_recon(
     c0, c1, c2 = RECON_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
     axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
-    axes[0].set_ylabel("Density")
-    axes[0].set_title("Test → Train (Min RMSD to Train Set)")
+    axes[0].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[0].set_title("Test → Train (Min RMSD to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].set_xlim(x_min, x_max)
     axes[0].grid(True, alpha=0.3)
     axes[1].hist(train_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
-    axes[1].set_ylabel("Density")
-    axes[1].set_title("Train Recon (Aligned RMSD to Original)")
+    axes[1].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[1].set_title("Train Recon (Aligned RMSD to Original)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].set_xlim(x_min, x_max)
     axes[1].grid(True, alpha=0.3)
     axes[2].hist(test_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
-    axes[2].set_ylabel("Density")
-    axes[2].set_xlabel("Min RMSD (Aligned Coords)")
-    axes[2].set_title("Test Recon (Aligned RMSD to Original)")
+    axes[2].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[2].set_xlabel("Min RMSD (Aligned Coords)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    axes[2].set_title("Test Recon (Aligned RMSD to Original)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[2].set_xlim(x_min, x_max)
     axes[2].grid(True, alpha=0.3)
+    y_max = max(ax.get_ylim()[1] for ax in axes)
+    for ax in axes:
+        ax.set_ylim(0, y_max)
     plt.tight_layout()
     os.makedirs(run_dir_recon, exist_ok=True)
     out_path = os.path.join(run_dir_recon, "rmsd_distributions.png")
@@ -514,170 +521,3 @@ def run_min_rmsd_recon_analysis(
         run_dir_recon, test_to_train, train_recon_rmsd, test_recon_rmsd,
         plot_cfg, display_root, save_data,
     )
-
-
-def _latent_dim_xticks(n_dim: int, max_labels: int = 5):
-    """
-    Tick positions and string labels for latent dimension axis.
-    With large n_dim, label every dim is unreadable; use a few evenly spaced ticks only.
-    endpoint=False so we never force n_dim-1 as a tick—the axis still spans full range via xlim.
-    """
-    if n_dim <= 0:
-        return [], []
-    if n_dim <= max_labels:
-        positions = list(range(n_dim))
-        return positions, [str(i) for i in positions]
-    # Evenly spaced in [0, n_dim); do not label last dim explicitly
-    raw = np.linspace(0, n_dim - 1, max_labels, endpoint=False)
-    positions_int = np.clip(np.round(raw).astype(int), 0, n_dim - 1)
-    positions = []
-    for p in positions_int:
-        if not positions or positions[-1] != p:
-            positions.append(int(p))
-    return positions, [str(p) for p in positions]
-
-
-def plot_latent_distribution(
-    train_mu_np: np.ndarray,
-    test_mu_np: np.ndarray,
-    out_path: str,
-    plot_dpi: int = 150,
-    display_root: str | None = None,
-    save_pdf_copy: bool = False,
-) -> None:
-    """
-    Plot latent distribution: top row two box plots (train left, test right), shared y;
-    middle row one plot full width = mean per dimension (train vs test lines);
-    bottom row one plot full width = std per dimension (train vs test lines).
-    """
-    from .utils import display_path
-    n_dim = train_mu_np.shape[1]
-    dims = np.arange(n_dim)
-    fig = plt.figure(figsize=(12, 10))
-    # Top row: two box plots side by side (train left, test right)
-    ax1 = fig.add_subplot(3, 2, 1)
-    ax1.boxplot(
-        [train_mu_np[:, d] for d in range(n_dim)],
-        positions=np.arange(n_dim),
-        widths=0.6,
-        patch_artist=True,
-    )
-    ax1.set_ylabel("Latent Value")
-    ax1.set_title("Train Latent Distribution")
-    ax1.set_xlabel("Dimension")
-    ax1.set_xlim(-0.5, n_dim - 0.5)
-    _pos1, _lab1 = _latent_dim_xticks(n_dim)
-    if _pos1:
-        ax1.set_xticks(_pos1)
-        ax1.set_xticklabels(_lab1)
-
-    ax2 = fig.add_subplot(3, 2, 2)
-    ax2.boxplot(
-        [test_mu_np[:, d] for d in range(n_dim)],
-        positions=np.arange(n_dim),
-        widths=0.6,
-        patch_artist=True,
-    )
-    ax2.set_ylabel("Latent Value")
-    ax2.set_title("Test Latent Distribution")
-    ax2.set_xlabel("Dimension")
-    ax2.set_xlim(-0.5, n_dim - 0.5)
-    if _pos1:
-        ax2.set_xticks(_pos1)
-        ax2.set_xticklabels(_lab1)
-    y_min = min(train_mu_np.min(), test_mu_np.min())
-    y_max = max(train_mu_np.max(), test_mu_np.max())
-    ax1.set_ylim(y_min, y_max)
-    ax2.set_ylim(y_min, y_max)
-
-    # Middle row: mean per dimension (full width)
-    ax_mean = fig.add_subplot(3, 2, (3, 4))
-    mean_train = np.mean(train_mu_np, axis=0)
-    mean_test = np.mean(test_mu_np, axis=0)
-    ax_mean.plot(dims, mean_train, label="Train", color=COLOR_TRAIN)
-    ax_mean.plot(dims, mean_test, label="Test", color=COLOR_TEST)
-    ax_mean.set_xlabel("Dimension")
-    ax_mean.set_ylabel("Mean")
-    ax_mean.legend()
-    ax_mean.grid(True, alpha=0.3)
-    if n_dim > 5:
-        ax_mean.set_xticks(_pos1)
-        ax_mean.set_xticklabels(_lab1)
-
-    # Bottom row: std per dimension (full width)
-    ax_std = fig.add_subplot(3, 2, (5, 6))
-    std_train = np.std(train_mu_np, axis=0)
-    std_test = np.std(test_mu_np, axis=0)
-    ax_std.plot(dims, std_train, label="Train", color=COLOR_TRAIN)
-    ax_std.plot(dims, std_test, label="Test", color=COLOR_TEST)
-    ax_std.set_xlabel("Dimension")
-    ax_std.set_ylabel("Std")
-    ax_std.legend()
-    ax_std.grid(True, alpha=0.3)
-    if n_dim > 5:
-        ax_std.set_xticks(_pos1)
-        ax_std.set_xticklabels(_lab1)
-
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.savefig(out_path, dpi=plot_dpi)
-    if save_pdf_copy:
-        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
-    plt.close()
-    if display_root is not None:
-        print(f"  Saved: {display_path(out_path, display_root)}")
-
-
-def plot_latent_correlation(
-    train_mu_np: np.ndarray,
-    test_mu_np: np.ndarray,
-    out_path: str,
-    plot_dpi: int = 150,
-    display_root: str | None = None,
-    save_pdf_copy: bool = False,
-) -> None:
-    """
-    Plot Pearson correlation between train and test latent statistics: two square panels.
-    Left: mean per dimension (train mean vs test mean); right: std per dimension (train std vs test std).
-    Each panel has x = training value, y = test value, one point per dimension, dashed y=x, with Pearson r and R².
-    """
-    mean_train = np.mean(train_mu_np, axis=0)
-    mean_test = np.mean(test_mu_np, axis=0)
-    std_train = np.std(train_mu_np, axis=0)
-    std_test = np.std(test_mu_np, axis=0)
-
-    def _pearson_r2(x: np.ndarray, y: np.ndarray) -> tuple[float, float]:
-        r = np.corrcoef(x, y)[0, 1]
-        r = float(r) if not np.isnan(r) else 0.0
-        return r, r * r
-
-    r_mean, r2_mean = _pearson_r2(mean_train, mean_test)
-    r_std, r2_std = _pearson_r2(std_train, std_test)
-
-    fig, (ax_mean, ax_std) = plt.subplots(1, 2, figsize=(10, 5))
-    for ax, x_vals, y_vals, r_val, r2_val, title in [
-        (ax_mean, mean_train, mean_test, r_mean, r2_mean, "Mean (train vs test)"),
-        (ax_std, std_train, std_test, r_std, r2_std, "Std (train vs test)"),
-    ]:
-        ax.scatter(x_vals, y_vals, alpha=0.8, s=20)
-        ax.set_xlabel("Train")
-        ax.set_ylabel("Test")
-        ax.set_title(f"{title}\nPearson r = {r_val:.4f}, R² = {r2_val:.4f}")
-        lo = min(x_vals.min(), y_vals.min())
-        hi = max(x_vals.max(), y_vals.max())
-        margin = (hi - lo) * 0.05 if hi > lo else 0.1
-        ax.set_xlim(lo - margin, hi + margin)
-        ax.set_ylim(lo - margin, hi + margin)
-        ax.set_aspect("equal")
-        diag_lo = min(ax.get_xlim()[0], ax.get_ylim()[0])
-        diag_hi = max(ax.get_xlim()[1], ax.get_ylim()[1])
-        ax.plot([diag_lo, diag_hi], [diag_lo, diag_hi], "k--", alpha=0.6, label="y = x")
-        ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.savefig(out_path, dpi=plot_dpi)
-    if save_pdf_copy:
-        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
-    plt.close()
-    if display_root is not None:
-        print(f"  Saved: {display_path(out_path, display_root)}")
