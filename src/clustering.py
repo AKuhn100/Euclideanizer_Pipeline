@@ -193,20 +193,65 @@ def _expected_mixing(labels: np.ndarray, k: int) -> float:
     return float(per_struct.mean())
 
 
+def _find_gap_threshold(Z: np.ndarray) -> float:
+    """
+    Compute cut threshold from linkage Z using IQR-based outlier detection on gaps.
+    Merge heights are sorted; gaps between consecutive heights are computed.
+    A gap is treated as an outlier if it exceeds Q3 + 1.5 * IQR (same rule as a
+    boxplot). The cut is placed at the midpoint of the largest such outlier gap,
+    or at the largest gap if none exceed the bound. No manual parameter — adapts
+    to the scale of the tree. Used with fcluster(..., criterion="distance") so
+    the number of clusters is derived from tree structure.
+    """
+    heights = np.sort(np.asarray(Z[:, 2], dtype=np.float64))
+    n_merges = len(heights)
+    if n_merges <= 1:
+        return float(np.max(heights) + 1.0) if n_merges == 1 else 0.0
+    gaps = np.diff(heights)
+    if len(gaps) == 0:
+        return float(np.mean(heights))
+    q75, q25 = np.percentile(gaps, [75, 25])
+    iqr = q75 - q25
+    outlier_bound = q75 + 1.5 * iqr if iqr > 0 else q75
+    outlier_gaps = np.where(gaps > outlier_bound)[0]
+    if len(outlier_gaps) == 0:
+        cut_idx = int(np.argmax(gaps))
+    else:
+        cut_idx = int(outlier_gaps[np.argmax(gaps[outlier_gaps])])
+    return float((heights[cut_idx] + heights[cut_idx + 1]) / 2.0)
+
+
 def _cluster_source_composition(
     Z: np.ndarray,
     labels: np.ndarray,
-    n_clusters: int,
 ) -> tuple:
-    """(n_clusters, n_sources) counts and sorted source names."""
-    cluster_ids = fcluster(Z, n_clusters, criterion="maxclust")
+    """
+    Cluster by IQR-based gap cut in merge heights; return (comp, sources, n_actual).
+    The number of clusters is derived from the cut (not a fixed input), so
+    composition fractions are interpretable instead of being dominated by
+    one large cluster and many singleton outliers.
+    Returns comp shape (n_actual, n_sources), sources (sorted), and n_actual.
+    """
     sources = sorted(set(labels))
-    comp = np.zeros((n_clusters, len(sources)), dtype=int)
-    for ci in range(1, n_clusters + 1):
-        mask = cluster_ids == ci
-        for si, src in enumerate(sources):
-            comp[ci - 1, si] = (labels[mask] == src).sum()
-    return comp, sources
+    n_sources = len(sources)
+    source_to_idx = {s: i for i, s in enumerate(sources)}
+    n_obs = len(labels)
+    if n_obs == 0:
+        return np.zeros((0, n_sources), dtype=int), sources, 0
+    if len(Z) == 0:
+        cluster_ids = np.ones(n_obs, dtype=np.int32)
+    else:
+        threshold = _find_gap_threshold(Z)
+        cluster_ids = fcluster(Z, threshold, criterion="distance")
+    unique_ids = np.unique(cluster_ids)
+    n_actual = len(unique_ids)
+    id_to_row = {cid: j for j, cid in enumerate(unique_ids)}
+    comp = np.zeros((n_actual, n_sources), dtype=int)
+    for i in range(n_obs):
+        row = id_to_row[cluster_ids[i]]
+        si = source_to_idx[labels[i]]
+        comp[row, si] += 1
+    return comp, sources, n_actual
 
 
 def get_or_compute_distmap_clustering_feats(
@@ -599,20 +644,26 @@ def _fig_mixing_analysis(
         stacked = np.concatenate([fa, fb], axis=0)
         sizes = [len(fa), len(fb)]
         names = [na, nb]
-        labels = _source_labels_array(sizes, names)
+        labels_arr = _source_labels_array(sizes, names)
         D = _pairwise_rmse(stacked)
         cond = squareform(D, checks=False)
         Z = linkage(cond, method=linkage_method)
-        comp, sources = _cluster_source_composition(Z, labels, n_clusters)
+        comp, sources, n_actual = _cluster_source_composition(Z, labels_arr)
+        if n_actual == 0:
+            ax_c.set_visible(False)
+            continue
         row_sums = comp.sum(axis=1, keepdims=True)
         row_sums[row_sums == 0] = 1
         frac = comp / row_sums
-        bot = np.zeros(n_clusters)
+        bot = np.zeros(n_actual)
         for si, src in enumerate(sources):
-            ax_c.bar(np.arange(n_clusters), frac[:, si], bottom=bot, color=source_colors.get(src, COLOR_GRAY_MID), label=src, alpha=0.85)
+            ax_c.bar(np.arange(n_actual), frac[:, si], bottom=bot, color=source_colors.get(src, COLOR_GRAY_MID), label=src, alpha=0.85)
             bot += frac[:, si]
-        ax_c.set_xticks(np.arange(n_clusters))
-        ax_c.set_xticklabels([f"C{j+1}" for j in range(n_clusters)], fontsize=FONT_SIZE_SMALL, family=FONT_FAMILY)
+        cluster_sizes = comp.sum(axis=1)
+        for j in range(n_actual):
+            ax_c.text(j, 1.02, f"n={cluster_sizes[j]}", ha="center", va="bottom", fontsize=FONT_SIZE_SMALL, family=FONT_FAMILY, color=COLOR_GRAY_TEXT)
+        ax_c.set_xticks(np.arange(n_actual))
+        ax_c.set_xticklabels([f"C{j+1}" for j in range(n_actual)], fontsize=FONT_SIZE_SMALL, family=FONT_FAMILY)
         ax_c.set_ylabel("Source Fraction", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax_c.set_ylim(0, 1.05)
         ax_c.set_title(f"{na} + {nb} — Cluster Composition", fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
