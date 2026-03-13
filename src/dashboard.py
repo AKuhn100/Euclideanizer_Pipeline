@@ -106,7 +106,9 @@ def _append_rmsd_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) ->
             fig_path = os.path.join(gen_dir, run_name, _RMSD_FIG)
             if os.path.isfile(fig_path):
                 rel = os.path.join(base_rel, "gen", run_name, _RMSD_FIG)
-                blocks.append({"type": "rmsd_gen", "name": f"RMSD (gen) {run_name}", "source_path": rel})
+                label = run_name if run_name != "default" else ""
+                name = f"RMSD (gen) {label}".rstrip() or "RMSD (gen)"
+                blocks.append({"type": "rmsd_gen", "name": name, "source_path": rel})
     recon_dir = os.path.join(rmsd_root, "recon")
     recon_fig = os.path.join(recon_dir, _RMSD_FIG)
     if os.path.isfile(recon_fig):
@@ -152,7 +154,9 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                 fig_path = os.path.join(gen_dir, run_name, _Q_FIG)
                 if os.path.isfile(fig_path):
                     rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "gen", run_name, _Q_FIG)
-                    blocks.append({"type": "q_gen", "name": f"Q (gen) {run_name}", "source_path": rel})
+                    label = run_name if run_name != "default" else ""
+                    name = f"Q (gen) {label}".rstrip() or "Q (gen)"
+                    blocks.append({"type": "q_gen", "name": name, "source_path": rel})
         recon_dir = os.path.join(q_root, "recon")
         recon_fig = os.path.join(recon_dir, _Q_FIG)
         if os.path.isfile(recon_fig):
@@ -215,7 +219,11 @@ def _append_clustering_analysis_blocks(
                 if os.path.isfile(fig_path):
                     rel = os.path.join(base_rel, "gen", run_name, fig_name)
                     label = fig_name.replace(".png", "").replace("_", " ").title()
-                    blocks.append({"type": f"{type_prefix}_gen", "name": f"{display_name} (gen) {run_name} — {label}", "source_path": rel})
+                    if run_name == "default":
+                        name = f"{display_name} (gen) — {label}"
+                    else:
+                        name = f"{display_name} (gen) {run_name} — {label}"
+                    blocks.append({"type": f"{type_prefix}_gen", "name": name, "source_path": rel})
     recon_dir = os.path.join(clust_root, "recon")
     # Recon: same figure set and order as gen (pure, mixed, rmse_similarity, mixing_analysis)
     if os.path.isdir(recon_dir):
