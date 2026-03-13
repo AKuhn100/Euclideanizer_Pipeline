@@ -82,10 +82,9 @@ def train_distmap(
         # Resuming from same run's best (within-segment or interrupted later segment): offset = best_epoch
         resume_from_best = os.path.normpath(resume_from_path) == os.path.normpath(prev_best)
         if prev_cfg is not None:
-            # Run config may omit best_epoch / last_epoch_trained / best_val; use .get() for backward compatibility.
-            best_val = prev_cfg.get("best_val", float("inf"))
-            best_epoch = prev_cfg.get("best_epoch")
-            start_epoch_offset = prev_cfg.get("best_epoch", 0) if resume_from_best else prev_cfg.get("last_epoch_trained", 0)
+            best_val = prev_cfg["best_val"] if prev_cfg["best_val"] is not None else float("inf")
+            best_epoch = prev_cfg["best_epoch"]
+            start_epoch_offset = (prev_cfg["best_epoch"] or 0) if resume_from_best else (prev_cfg["last_epoch_trained"] or 0)
         if os.path.isfile(prev_best):
             shutil.copy2(prev_best, os.path.join(model_dir, "model.pt"))
             if not memory_efficient:

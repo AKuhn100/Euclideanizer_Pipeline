@@ -452,17 +452,15 @@ def save_run_config(
     best_epoch: Optional[int] = None,
     best_val: Optional[float] = None,
 ) -> str:
-    """Write the config for this run to directory/filename. Optionally set last_epoch_trained, best_epoch (1-indexed), best_val."""
+    """Write the config for this run to directory/filename. Always writes last_epoch_trained, best_epoch (1-indexed), best_val (use None when not applicable)."""
     if yaml is None:
         raise RuntimeError("PyYAML is required to save run config. pip install pyyaml")
     os.makedirs(directory, exist_ok=True)
     out = dict(run_cfg)
-    if last_epoch_trained is not None:
-        out["last_epoch_trained"] = last_epoch_trained
-    if best_epoch is not None:
-        out["best_epoch"] = best_epoch
-    if best_val is not None:
-        out["best_val"] = best_val
+    # Always write these keys so run config has a consistent schema (no backwards-compat branches when loading).
+    out["last_epoch_trained"] = last_epoch_trained
+    out["best_epoch"] = best_epoch
+    out["best_val"] = best_val
     path = os.path.join(directory, filename)
     with open(path, "w") as f:
         yaml.dump(_to_serializable(out), f, default_flow_style=False, sort_keys=False)

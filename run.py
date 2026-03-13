@@ -1653,7 +1653,7 @@ def _run_scoring_for_run(
     pipeline_start: float,
 ) -> None:
     """Run scoring for one Euclideanizer run (after a plotting/analysis block). Always overwrites scores with current data."""
-    if not cfg.get("scoring", {}).get("enabled", False):
+    if not cfg["scoring"]["enabled"]:
         return
     try:
         out_path = scoring_module.compute_and_save(run_dir_eu, seed_dir, cfg, scores_filename="scores.json")
@@ -2970,25 +2970,25 @@ def main():
                 # Collect which chunks (plotting, rmsd_gen, rmsd_recon) differ from saved
                 if not configs_match_sections(saved_compare, effective_compare, ["plotting"]):
                     chunks_to_update.add("plotting")
-                s_analysis = (saved_compare.get("analysis") or {})
-                e_analysis = (effective_compare.get("analysis") or {})
-                if s_analysis.get("rmsd_gen") != e_analysis.get("rmsd_gen"):
+                s_analysis = saved_compare["analysis"]
+                e_analysis = effective_compare["analysis"]
+                if s_analysis["rmsd_gen"] != e_analysis["rmsd_gen"]:
                     chunks_to_update.add("rmsd_gen")
-                if s_analysis.get("rmsd_recon") != e_analysis.get("rmsd_recon"):
+                if s_analysis["rmsd_recon"] != e_analysis["rmsd_recon"]:
                     chunks_to_update.add("rmsd_recon")
-                if s_analysis.get("q_gen") != e_analysis.get("q_gen"):
+                if s_analysis["q_gen"] != e_analysis["q_gen"]:
                     chunks_to_update.add("q_gen")
-                if s_analysis.get("q_recon") != e_analysis.get("q_recon"):
+                if s_analysis["q_recon"] != e_analysis["q_recon"]:
                     chunks_to_update.add("q_recon")
-                if s_analysis.get("coord_clustering_gen") != e_analysis.get("coord_clustering_gen"):
+                if s_analysis["coord_clustering_gen"] != e_analysis["coord_clustering_gen"]:
                     chunks_to_update.add("coord_clustering_gen")
-                if s_analysis.get("coord_clustering_recon") != e_analysis.get("coord_clustering_recon"):
+                if s_analysis["coord_clustering_recon"] != e_analysis["coord_clustering_recon"]:
                     chunks_to_update.add("coord_clustering_recon")
-                if s_analysis.get("distmap_clustering_gen") != e_analysis.get("distmap_clustering_gen"):
+                if s_analysis["distmap_clustering_gen"] != e_analysis["distmap_clustering_gen"]:
                     chunks_to_update.add("distmap_clustering_gen")
-                if s_analysis.get("distmap_clustering_recon") != e_analysis.get("distmap_clustering_recon"):
+                if s_analysis["distmap_clustering_recon"] != e_analysis["distmap_clustering_recon"]:
                     chunks_to_update.add("distmap_clustering_recon")
-                if s_analysis.get("latent") != e_analysis.get("latent"):
+                if s_analysis["latent"] != e_analysis["latent"]:
                     chunks_to_update.add("latent")
         chunks_to_update = sorted(chunks_to_update)  # stable order: rmsd_gen, rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
@@ -3120,8 +3120,11 @@ def main():
     if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg or scoring_needs_run):
         _delete_dashboard(base_output_dir)
 
+    # Scoring-only: no coords/stats needed; run scoring for every run without loading data
+    scoring_only = need_any and scoring_needs_run and not needs.need_any()
+
     stats_only_ok = False
-    if need_any and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):
+    if need_any and not scoring_only and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):
         exp_st, num_at, num_stru = _try_load_stats_only(
             base_output_dir, data_path, seeds, training_split,
             max_train=plot_cfg["max_train"], max_test=plot_cfg["max_test"],
@@ -3139,7 +3142,7 @@ def main():
             _log(f"Reused stats for {num_structures} structures, {num_atoms} atoms.", since_start=time.time() - pipeline_start, style="success")
             _log("Data ready (stats only).", since_start=time.time() - pipeline_start, since_phase=time.time() - phase_start, style="success")
 
-    if need_any and not stats_only_ok:
+    if need_any and not stats_only_ok and not scoring_only:
         phase_start = time.time()
         _log("Loading data...", since_start=time.time() - pipeline_start, style="info")
         coords_np = utils.load_data(data_path)
@@ -3194,6 +3197,9 @@ def main():
         coords_np = coords = device = num_atoms = num_structures = exp_stats = None
         if data_path and (do_plot or do_rmsd):
             _log("Skipping data load (all runs complete and all plot/analysis outputs present).", since_start=time.time() - pipeline_start, style="skip")
+    elif scoring_only:
+        coords_np = coords = device = num_atoms = num_structures = exp_stats = None
+        _log("Scoring only: skipping data load (reading NPZ from existing run outputs).", since_start=time.time() - pipeline_start, style="skip")
 
     vis_cfg = cfg["training_visualization"]
     vis_enabled = vis_cfg["enabled"]
@@ -3290,7 +3296,11 @@ def main():
         coords_np = coords = exp_stats = None
         gc.collect()
 
-    if not use_multi_gpu:
+    if scoring_only:
+        _log("Running scoring for all runs (no data load).", since_start=time.time() - pipeline_start, style="info")
+        for run_dir_eu, seed_dir in _iter_euclideanizer_runs(base_output_dir):
+            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+    elif not use_multi_gpu:
         for seed in seeds:
             _run_one_seed(
             seed=seed,
@@ -3352,7 +3362,7 @@ def main():
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
         )
-    else:
+    elif use_multi_gpu:
         _run_multi_gpu_tasks(
             tasks=tasks,
             n_gpus=n_gpus,
@@ -3427,7 +3437,7 @@ def main():
                     dd = os.path.join(var_dir, "data")
                     if os.path.isdir(dd):
                         shutil.rmtree(dd, ignore_errors=True)
-            if ana.get("latent") and not ana.get("latent", {}).get("save_data", True):
+            if ana["latent"] and not ana["latent"]["save_data"]:
                 latent_data = os.path.join(run_dir_eu, "analysis", "latent", "data")
                 if os.path.isdir(latent_data):
                     shutil.rmtree(latent_data, ignore_errors=True)

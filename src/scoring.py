@@ -37,7 +37,7 @@ SCORES_SPIDER_FILENAME = "scores_spider.png"
 
 # Clustering mixing key to component id (coord vs distmap, gen vs recon)
 CLUSTERING_KEY_TO_COMPONENT = {
-    "Train+Gen": ("coord_gen_train", "distmap_gen_train"),  # one per coord/distmap run
+    "Train+Gen": ("coord_gen_train", "distmap_gen_train"),
     "Test+Gen": ("coord_gen_test", "distmap_gen_test"),
     "Train+Train Recon": ("coord_recon_train", "distmap_recon_train"),
     "Test+Test Recon": ("coord_recon_test", "distmap_recon_test"),
@@ -264,41 +264,6 @@ def _recon_q_components(
     return out
 
 
-def _clustering_components(
-    mixing_keys: np.ndarray | None,
-    mixing_ratio: np.ndarray | None,
-    coord_keys: set[str],
-    distmap_keys: set[str],
-) -> dict[str, float]:
-    """
-    Clustering (8): one score per (coord/distmap) x (gen_train, gen_test, recon_train, recon_test).
-    mixing_keys and mixing_ratio are arrays from one NPZ; we need two NPZ (coord and distmap) to get 8.
-    This function scores one set (coord or distmap) given keys and ratio arrays; caller calls twice.
-    """
-    out = {}
-    if mixing_keys is None or mixing_ratio is None or len(mixing_keys) != len(mixing_ratio):
-        return out
-    key_to_components = {
-        "Train+Gen": ["coord_gen_train", "distmap_gen_train"],
-        "Test+Gen": ["coord_gen_test", "distmap_gen_test"],
-        "Train+Train Recon": ["coord_recon_train", "distmap_recon_train"],
-        "Test+Test Recon": ["coord_recon_test", "distmap_recon_test"],
-    }
-    for i, key in enumerate(mixing_keys):
-        key_str = str(key).strip()
-        ratio = float(mixing_ratio[i]) if i < len(mixing_ratio) else 0.0
-        d = clustering_d(ratio)
-        s = exp_score(d)
-        if key_str in key_to_components:
-            for comp in key_to_components[key_str]:
-                if comp in coord_keys:
-                    out["clustering_coord_" + comp.replace("coord_", "").replace("distmap_", "")] = s
-                elif comp in distmap_keys:
-                    out["clustering_distmap_" + comp.replace("coord_", "").replace("distmap_", "")] = s
-    # Simpler: map key to single component id by prefix (coord vs distmap passed as which run we're in)
-    return out
-
-
 def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compute all component scores from a data dict (arrays and scalars).
@@ -398,7 +363,6 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
 
     present = [k for k, v in component_scores.items() if np.isfinite(v) and 0 <= v <= 1]
     missing = [k for k in component_scores if k not in present]
-    # Overall score only when all components are present, so composite scores are comparable across runs.
     scores_list = [component_scores[k] for k in present]
     overall = (
         geometric_mean(scores_list)
@@ -430,7 +394,7 @@ def render_scores_spider(
     """
     Draw a clean radar/spider chart of all component scores.
     Saves PNG (and optional PDF) under output_dir. Returns path to PNG or None on failure.
-    Uses plot_config colors; all points use COLOR_GEN. Red labels for missing components.
+    All points use COLOR_GEN. Labels are orange for missing components, COLOR_GRAY_TEXT otherwise.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -458,42 +422,39 @@ def render_scores_spider(
     angles_closed = angles + angles[:1]
     values_closed = values + values[:1]
 
-    # Figure setup
-    fig = plt.figure(figsize=(8, 8), facecolor="white")
-    ax = fig.add_subplot(111, projection="polar", facecolor="white")
+    # ── figure setup ──────────────────────────────────────────────────────────
+    # Extra figure height so bottom labels don't get clipped
+    fig = plt.figure(figsize=(9, 9), facecolor="white")
+    # Shrink axes vertically to leave room at bottom for crowded labels
+    ax = fig.add_axes([0.1, 0.12, 0.8, 0.8], projection="polar", facecolor="white")
 
-    # Grid rings
+    # Fully suppress matplotlib's built-in polar grid before drawing anything
+    ax.grid(False)
+    ax.set_axisbelow(True)
+
+    # ── manual grid rings ─────────────────────────────────────────────────────
     ring_levels = [0.25, 0.5, 0.75, 1.0]
     for level in ring_levels:
-        ring_vals = [level] * (n + 1)
         ax.plot(
-            angles_closed, ring_vals,
+            angles_closed, [level] * (n + 1),
             color=COLOR_GRAY_LIGHT, linewidth=0.6, linestyle="-", zorder=1,
         )
 
-    # Spoke lines
+    # ── spoke lines ───────────────────────────────────────────────────────────
     for angle in angles:
         ax.plot(
             [angle, angle], [0, 1],
-            color=COLOR_GRAY_LIGHT, linewidth=0.5, linestyle="-", zorder=1,
+            color=COLOR_GRAY_LIGHT, linewidth=0.5, zorder=1,
         )
 
-    # Filled area and line (COLOR_GEN)
+    # ── filled area + border line ─────────────────────────────────────────────
     ax.fill(angles_closed, values_closed, alpha=0.12, color=COLOR_GEN, zorder=2)
-    ax.plot(
-        angles_closed, values_closed,
-        color=COLOR_GEN, linewidth=1.5, zorder=3,
-    )
+    ax.plot(angles_closed, values_closed, color=COLOR_GEN, linewidth=1.5, zorder=3)
 
-    # Data points: all COLOR_GEN
-    for angle, value in zip(angles, values):
-        ax.scatter(
-            [angle], [value],
-            s=40, color=COLOR_GEN, edgecolors=COLOR_GEN, linewidths=0.8,
-            zorder=4,
-        )
+    # ── data points (all COLOR_GEN) ───────────────────────────────────────────
+    ax.scatter(angles, values, s=35, color=COLOR_GEN, zorder=4, clip_on=False)
 
-    # Axis appearance
+    # ── axis config ───────────────────────────────────────────────────────────
     ax.set_ylim(0, 1)
     ax.set_yticks(ring_levels)
     ax.set_yticklabels(
@@ -501,54 +462,54 @@ def render_scores_spider(
         fontsize=FONT_SIZE_TICK, color=COLOR_GRAY_TEXT,
     )
     ax.yaxis.set_tick_params(pad=2)
-
-    ax.set_xticks(angles)
-    ax.set_xticklabels([])
-    ax.grid(False)
+    ax.set_rlabel_position(90)
+    ax.set_xticks([])
     ax.spines["polar"].set_visible(False)
 
-    # Custom tick labels (red for missing, gray for present)
-    label_padding = 1.13
+# ── spoke labels ──────────────────────────────────────────────────────────
+    label_r = 1.15  # bump out a touch more since we're no longer side-hugging
     for angle, comp in zip(angles, components):
         is_missing = comp in missing_set
-        color = "#C44444" if is_missing else COLOR_GRAY_TEXT
+        label_color = "#E07B00" if is_missing else COLOR_GRAY_TEXT
+        label_weight = "semibold" if is_missing else "normal"
 
-        short = comp.replace("_", " ")
+        raw = comp.replace("_", " ")
+        if len(raw) > 16:
+            mid = raw.rfind(" ", 0, 17)
+            if mid == -1:
+                mid = 16
+            raw = raw[:mid] + "\n" + raw[mid + 1:]
 
-        ha = "left"
-        va = "center"
-        x_deg = np.degrees(angle) % 360
-        if 10 < x_deg < 170:
-            va = "bottom"
-        elif 190 < x_deg < 350:
-            va = "top"
-        if 90 < x_deg < 270:
-            ha = "right"
+        deg = np.degrees(angle) % 360
+        # All labels center-aligned; va flips at the bottom half so text
+        # grows away from the ring rather than back through it
+        va = "bottom" if deg <= 180 else "top"
 
         ax.text(
-            angle, label_padding, short,
-            ha=ha, va=va,
+            angle, label_r, raw,
+            ha="center", va=va,
             fontsize=FONT_SIZE_SMALL,
-            color=color,
-            fontweight="500" if is_missing else "normal",
-            transform=ax.get_xaxis_transform(),
+            color=label_color,
+            fontweight=label_weight,
+            linespacing=1.3,
         )
 
-    ax.set_rlabel_position(90)
+    # # ── overall score — inside axes at centre, below the rings ───────────────
+    # if not missing_set:
+    #     pos_scores = [v for v in values if v > 0]
+    #     if pos_scores:
+    #         overall = float(np.exp(np.mean(np.log(pos_scores))))
+    #         ax.text(
+    #             0, 0,
+    #             f"{overall:.3f}",
+    #             ha="center", va="center",
+    #             fontsize=FONT_SIZE_TICK + 1,
+    #             color=COLOR_GRAY_TEXT,
+    #             transform=ax.transData,
+    #             zorder=5,
+    #         )
 
-    # Overall score badge
-    present_scores = [v for v, c in zip(values, components) if c not in missing_set]
-    if present_scores and not missing_set:
-        overall = float(np.exp(np.mean(np.log([s for s in present_scores if s > 0]))))
-        fig.text(
-            0.5, 0.02,
-            f"overall  {overall:.3f}",
-            ha="center", va="bottom",
-            fontsize=FONT_SIZE_SMALL, color=COLOR_GRAY_TEXT,
-        )
-
-    # Save
-    plt.tight_layout(pad=1.5)
+    # ── save ──────────────────────────────────────────────────────────────────
     os.makedirs(output_dir, exist_ok=True)
     png_path = os.path.join(output_dir, SCORES_SPIDER_FILENAME)
     try:
@@ -608,14 +569,13 @@ def compute_and_save(
         ])
         data["exp_scaling_composite"] = (
             np.asarray(train_stats.get("exp_scaling", [])) + np.asarray(test_stats.get("exp_scaling", []))
-        ) / 2.0  # same length curves: average
+        ) / 2.0
         data["exp_avgmap_composite"] = (
             np.asarray(train_stats.get("avg_exp_map", [])) + np.asarray(test_stats.get("avg_exp_map", []))
         ) / 2.0
 
     # Run dir: plot data and analysis data
     plots = os.path.join(run_dir, "plots")
-    # Recon statistics (train/test) - optional data subdir
     for subset, key_suffix in [("train", "train"), ("test", "test")]:
         recon_dir = os.path.join(plots, "recon_statistics", "data")
         recon_npz = os.path.join(recon_dir, f"recon_statistics_{subset}_data.npz")
@@ -623,11 +583,10 @@ def compute_and_save(
         if r:
             data[f"recon_rg_{key_suffix}"] = r.get("recon_rg")
             data[f"recon_scaling_{key_suffix}"] = r.get("recon_scaling")
-            data[f"recon_avgmap_{key_suffix}"] = r.get("recon_avg_map")  # key may vary
+            data[f"recon_avgmap_{key_suffix}"] = r.get("recon_avg_map")
             if data[f"recon_avgmap_{key_suffix}"] is None:
                 data[f"recon_avgmap_{key_suffix}"] = r.get("recon_avgmap")
 
-    # Gen variance plot data (one per variance)
     gen_plots = os.path.join(plots, "gen_variance")
     if os.path.isdir(gen_plots):
         for name in os.listdir(gen_plots):
@@ -647,14 +606,12 @@ def compute_and_save(
         for root, _dirs, files in os.walk(rmsd_dir):
             for f in files:
                 if f == "rmsd_data.npz":
-                    npz_path = os.path.join(root, f)
-                    rmsd = _load_npz_safe(npz_path)
+                    rmsd = _load_npz_safe(os.path.join(root, f))
                     if rmsd:
                         data.setdefault("gen_train_rmsd", rmsd.get("gen_to_train_rmsd"))
                         data.setdefault("gen_test_rmsd", rmsd.get("gen_to_test_rmsd"))
                 if f == "rmsd_recon_data.npz":
-                    npz_path = os.path.join(root, f)
-                    rec = _load_npz_safe(npz_path)
+                    rec = _load_npz_safe(os.path.join(root, f))
                     if rec:
                         data.setdefault("recon_train_rmsd", rec.get("recon_train_rmsd"))
                         data.setdefault("recon_test_rmsd", rec.get("recon_test_rmsd"))
@@ -695,10 +652,10 @@ def compute_and_save(
                 data["test_to_train_q"] = tt_q_npz[k]
                 break
 
-    # Latent (under analysis/latent/data/)
+    # Latent
     latent_npz = os.path.join(analysis_dir, "latent", "data", "latent_stats.npz")
     if not os.path.isfile(latent_npz):
-        latent_npz = os.path.join(run_dir, "plots", "latent", "data", "latent_stats.npz")  # backward compat
+        latent_npz = os.path.join(run_dir, "plots", "latent", "data", "latent_stats.npz")
     lat = _load_npz_safe(latent_npz)
     if lat:
         data["latent_mean_train"] = lat.get("mean_train")
@@ -749,6 +706,6 @@ def compute_and_save(
             f,
             indent=2,
         )
-    save_pdf = bool(cfg.get("scoring", {}).get("save_pdf_copy", False))
+    save_pdf = bool(cfg["scoring"]["save_pdf_copy"])
     render_scores_spider(result, scoring_dir, save_pdf=save_pdf)
     return out_path
