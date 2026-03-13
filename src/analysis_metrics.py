@@ -10,6 +10,7 @@ from typing import Any, Callable
 from . import rmsd
 from . import q_analysis
 from . import clustering
+from .plot_config import PLOT_DPI
 
 
 def _rmsd_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
@@ -50,10 +51,10 @@ def _rmsd_get_or_compute(
     )
 
 
-def _rmsd_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+def _rmsd_build_gen_plot_cfg(analysis_cfg: dict) -> dict:
     gen = analysis_cfg["rmsd_gen"]
     return {
-        "plot_dpi": plot_dpi,
+        "plot_dpi": PLOT_DPI,
         "save_pdf_copy": gen["save_pdf_copy"],
         "rmsd_num_samples": gen["num_samples"],
         "rmsd_sample_variance": gen["sample_variance"],
@@ -65,11 +66,11 @@ def _rmsd_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
     }
 
 
-def _rmsd_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+def _rmsd_build_recon_plot_cfg(analysis_cfg: dict) -> dict:
     recon = analysis_cfg["rmsd_recon"]
     return {
         "save_data": recon["save_data"],
-        "plot_dpi": plot_dpi,
+        "plot_dpi": PLOT_DPI,
         "save_pdf_copy": recon["save_pdf_copy"],
     }
 
@@ -114,10 +115,10 @@ def _q_get_or_compute(
     )
 
 
-def _q_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+def _q_build_gen_plot_cfg(analysis_cfg: dict) -> dict:
     gen = analysis_cfg["q_gen"]
     return {
-        "plot_dpi": plot_dpi,
+        "plot_dpi": PLOT_DPI,
         "save_pdf_copy": gen["save_pdf_copy"],
         "q_num_samples": gen["num_samples"],
         "q_sample_variance": gen["sample_variance"],
@@ -129,11 +130,11 @@ def _q_build_gen_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
     }
 
 
-def _q_build_recon_plot_cfg(analysis_cfg: dict, plot_dpi: int) -> dict:
+def _q_build_recon_plot_cfg(analysis_cfg: dict) -> dict:
     recon = analysis_cfg["q_recon"]
     return {
         "save_data": recon["save_data"],
-        "plot_dpi": plot_dpi,
+        "plot_dpi": PLOT_DPI,
         "save_pdf_copy": recon["save_pdf_copy"],
     }
 
@@ -236,10 +237,10 @@ def _make_clustering_get_or_compute(use_batch_size: bool):
 
 
 def _make_clustering_build_gen_plot_cfg(prefix: str):
-    def _fn(analysis_cfg: dict, plot_dpi: int) -> dict:
+    def _fn(analysis_cfg: dict) -> dict:
         gen = analysis_cfg[f"{prefix}_gen"]
         return {
-            "plot_dpi": plot_dpi,
+            "plot_dpi": PLOT_DPI,
             "save_pdf_copy": gen["save_pdf_copy"],
             "save_data": gen["save_data"],
             "gen_decode_batch_size": gen["gen_decode_batch_size"],
@@ -248,11 +249,11 @@ def _make_clustering_build_gen_plot_cfg(prefix: str):
 
 
 def _make_clustering_build_recon_plot_cfg(prefix: str):
-    def _fn(analysis_cfg: dict, plot_dpi: int) -> dict:
+    def _fn(analysis_cfg: dict) -> dict:
         recon = analysis_cfg[f"{prefix}_recon"]
         return {
             "save_data": recon["save_data"],
-            "plot_dpi": plot_dpi,
+            "plot_dpi": PLOT_DPI,
             "save_pdf_copy": recon["save_pdf_copy"],
         }
     return _fn
@@ -329,8 +330,8 @@ class AnalysisMetricSpec:
     run_recon_analysis: Callable[..., str]
     cache_filename: Callable[[dict, int | None, int | None], str]
     kwargs_for_cache: Callable[[dict, int | None, int | None], dict]
-    build_gen_plot_cfg: Callable[[dict, int], dict]
-    build_recon_plot_cfg: Callable[[dict, int], dict]
+    build_gen_plot_cfg: Callable[[dict], dict]
+    build_recon_plot_cfg: Callable[[dict], dict]
     precomputed_kwargs: Callable[[Any, Any, Any], dict]  # (tt, train_coords, test_coords) -> kwargs for run_* and run_recon
     gen_extra_kwargs: Callable[[dict], dict]   # e.g. {"delta": ...} for q; {} for rmsd
     recon_extra_kwargs: Callable[[dict], dict]

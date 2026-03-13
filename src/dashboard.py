@@ -15,10 +15,15 @@ import shutil
 from datetime import datetime
 from typing import Any, Optional
 
-from .config import load_run_config
+import numpy as np
+
+from .config import load_pipeline_config, load_run_config
+from .plot_config import COLOR_GEN, PLOT_DPI
+from .scoring import CATEGORY_ORDER
 
 # Path patterns (aligned with run.py; no import from run to avoid circular deps)
 _PLOTS_BASE = "plots"
+_LATENT_PLOTS_DIR = os.path.join(_PLOTS_BASE, "latent")
 _RECONSTRUCTION = os.path.join(_PLOTS_BASE, "reconstruction", "reconstruction.png")
 _RECON_STAT_TRAIN = os.path.join(_PLOTS_BASE, "recon_statistics", "recon_statistics_train.png")
 _RECON_STAT_TEST = os.path.join(_PLOTS_BASE, "recon_statistics", "recon_statistics_test.png")
@@ -122,29 +127,34 @@ def _append_rmsd_analysis_blocks(run_root: str, blocks: list[dict[str, str]]) ->
                 if os.path.isfile(subdir_fig):
                     rel = os.path.join(base_rel, "recon", subdir, _RMSD_FIG)
                     blocks.append({"type": "rmsd_recon", "name": f"RMSD (recon) {subdir}", "source_path": rel})
-    latent_fig = os.path.join(recon_dir, "latent_distribution.png")
-    if os.path.isfile(latent_fig):
-        rel = os.path.join(base_rel, "recon", "latent_distribution.png")
-        blocks.append({"type": "latent_distribution", "name": "Latent distribution (RMSD)", "source_path": rel})
-        latent_corr = os.path.join(recon_dir, "latent_correlation.png")
-        if os.path.isfile(latent_corr):
-            rel = os.path.join(base_rel, "recon", "latent_correlation.png")
-            blocks.append({"type": "latent_correlation", "name": "Latent correlation (RMSD)", "source_path": rel})
-    else:
-        for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-            subdir_path = os.path.join(recon_dir, subdir)
-            latent_sub = os.path.join(subdir_path, "latent_distribution.png")
-            if os.path.isfile(latent_sub):
-                rel = os.path.join(base_rel, "recon", subdir, "latent_distribution.png")
-                blocks.append({"type": "latent_distribution", "name": f"Latent distribution (RMSD) {subdir}", "source_path": rel})
-                latent_corr = os.path.join(subdir_path, "latent_correlation.png")
-                if os.path.isfile(latent_corr):
-                    rel = os.path.join(base_rel, "recon", subdir, "latent_correlation.png")
-                    blocks.append({"type": "latent_correlation", "name": f"Latent correlation (RMSD) {subdir}", "source_path": rel})
 
 
-def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
-    blocks = _blocks_for_distmap_run(run_root)
+def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = _blocks_for_distmap_run(run_root)
+    # One latent block per run from plots/latent/ (not per analysis metric)
+    latent_dist = os.path.join(run_root, _LATENT_PLOTS_DIR, "latent_distribution.png")
+    latent_corr = os.path.join(run_root, _LATENT_PLOTS_DIR, "latent_correlation.png")
+    if os.path.isfile(latent_dist):
+        blocks.append({"type": "latent_distribution", "name": "Latent distribution", "source_path": os.path.join(_LATENT_PLOTS_DIR, "latent_distribution.png")})
+    if os.path.isfile(latent_corr):
+        blocks.append({"type": "latent_correlation", "name": "Latent correlation", "source_path": os.path.join(_LATENT_PLOTS_DIR, "latent_correlation.png")})
+    # Scores block when scores.json exists
+    scores_path = os.path.join(run_root, "scores.json")
+    if os.path.isfile(scores_path):
+        try:
+            with open(scores_path, encoding="utf-8") as f:
+                data = json.load(f)
+            blocks.append({
+                "type": "scores",
+                "name": "Scores",
+                "source_path": "",
+                "scores_data": {
+                    "overall_score": data.get("overall_score"),
+                    "category_scores": data.get("category_scores") or {},
+                },
+            })
+        except (json.JSONDecodeError, OSError):
+            pass
     _append_rmsd_analysis_blocks(run_root, blocks)
     q_root = os.path.join(run_root, _ANALYSIS_DIR, _ANALYSIS_Q_DIR)
     if os.path.isdir(q_root):
@@ -170,27 +180,8 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, str]]:
                     if os.path.isfile(subdir_fig):
                         rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, _Q_FIG)
                         blocks.append({"type": "q_recon", "name": f"Q (recon) {subdir}", "source_path": rel})
-        latent_fig = os.path.join(recon_dir, "latent_distribution.png")
-        if os.path.isfile(latent_fig):
-            rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", "latent_distribution.png")
-            blocks.append({"type": "latent_distribution", "name": "Latent distribution (Q)", "source_path": rel})
-            latent_corr = os.path.join(recon_dir, "latent_correlation.png")
-            if os.path.isfile(latent_corr):
-                rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", "latent_correlation.png")
-                blocks.append({"type": "latent_correlation", "name": "Latent correlation (Q)", "source_path": rel})
-        else:
-            for subdir in (sorted(os.listdir(recon_dir)) if os.path.isdir(recon_dir) else []):
-                subdir_path = os.path.join(recon_dir, subdir)
-                latent_sub = os.path.join(subdir_path, "latent_distribution.png")
-                if os.path.isfile(latent_sub):
-                    rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_distribution.png")
-                    blocks.append({"type": "latent_distribution", "name": f"Latent distribution (Q) {subdir}", "source_path": rel})
-                    latent_corr = os.path.join(subdir_path, "latent_correlation.png")
-                    if os.path.isfile(latent_corr):
-                        rel = os.path.join(_ANALYSIS_DIR, _ANALYSIS_Q_DIR, "recon", subdir, "latent_correlation.png")
-                        blocks.append({"type": "latent_correlation", "name": f"Latent correlation (Q) {subdir}", "source_path": rel})
     _append_clustering_analysis_blocks(run_root, blocks, _COORD_CLUSTERING_DIR, "coord_clustering", "Coord clustering")
-    _append_clustering_analysis_blocks(run_root, blocks, _DISTMAP_CLUSTERING_DIR, "distmap_clustering", "Distmap clustering", include_latent=True)
+    _append_clustering_analysis_blocks(run_root, blocks, _DISTMAP_CLUSTERING_DIR, "distmap_clustering", "Distmap clustering", include_latent=False)
     return blocks
 
 
@@ -391,7 +382,51 @@ def _block_extension(source_path: str) -> str:
     return ".mp4" if source_path.strip().lower().endswith(".mp4") else ".png"
 
 
-def _copy_assets_and_update_paths(runs: list[dict], assets_dir: str) -> list[dict[str, Any]]:
+def _render_scores_spider(
+    scores_data: dict[str, Any],
+    output_path: str,
+    gen_color: str = COLOR_GEN,
+    save_pdf: bool = False,
+) -> bool:
+    """Draw a spider/radar chart of category scores and save to output_path. Missing categories show as 0 with red labels."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    cats = list(CATEGORY_ORDER)
+    if not cats:
+        return False
+    category_scores = scores_data.get("category_scores") or {}
+    values = [float(category_scores.get(c, 0.0)) for c in cats]
+    missing = [c not in category_scores for c in cats]
+    n = len(cats)
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
+    angles += angles[:1]
+    values_closed = values + values[:1]
+    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(projection="polar"))
+    ax.plot(angles, values_closed, color=gen_color, lw=2)
+    ax.fill(angles, values_closed, alpha=0.25, color=gen_color)
+    ax.set_xticks(angles[:-1])
+    labels = [c.replace("_", " ").title() for c in cats]
+    ticks = ax.set_xticklabels(labels)
+    for i, (tick, is_missing) in enumerate(zip(ticks, missing)):
+        tick.set_color("#c44" if is_missing else "k")
+    ax.set_ylim(0, 1)
+    ax.set_yticks([0.25, 0.5, 0.75, 1.0])
+    plt.tight_layout()
+    try:
+        fig.savefig(output_path, dpi=PLOT_DPI, bbox_inches="tight")
+        if save_pdf:
+            pdf_path = os.path.splitext(output_path)[0] + ".pdf"
+            fig.savefig(pdf_path, bbox_inches="tight", format="pdf")
+    finally:
+        plt.close(fig)
+    return True
+
+
+def _copy_assets_and_update_paths(
+    runs: list[dict], assets_dir: str, scoring_save_pdf_copy: bool
+) -> list[dict[str, Any]]:
     """Copy each block's source file to assets_dir (once per unique asset); return runs with blocks containing path (assets/...) only."""
     runs_by_id = {r["id"]: r for r in runs}
     copied = set()
@@ -400,12 +435,32 @@ def _copy_assets_and_update_paths(runs: list[dict], assets_dir: str) -> list[dic
     for run in runs:
         blocks_out = []
         for block in run["blocks"]:
+            if block.get("type") == "scores":
+                sd = block.get("scores_data") or {}
+                owning_id = block.get("run_id") or run["id"]
+                spider_name = f"{owning_id}_scores_spider.png"
+                spider_path = os.path.join(assets_dir, spider_name)
+                if _render_scores_spider(sd, spider_path, save_pdf=scoring_save_pdf_copy):
+                    blocks_out.append({
+                        "type": "scores",
+                        "name": block.get("name", "Scores"),
+                        "path": f"assets/{spider_name}",
+                        "scores_data": sd,
+                    })
+                else:
+                    blocks_out.append({
+                        "type": "scores",
+                        "name": block.get("name", "Scores"),
+                        "path": None,
+                        "scores_data": sd,
+                    })
+                continue
             owning_id = block.get("run_id") or run["id"]
             owner = runs_by_id.get(owning_id)
             if not owner or not owner.get("run_root"):
                 continue
-            src = os.path.join(owner["run_root"], block["source_path"])
-            if not os.path.isfile(src):
+            src = os.path.join(owner["run_root"], block.get("source_path", ""))
+            if not src or not os.path.isfile(src):
                 continue
             slug = _block_asset_slug(block, owning_id)
             ext = _block_extension(block["source_path"])
@@ -487,6 +542,11 @@ def _html_content(manifest: dict) -> str:
     .block { margin-bottom: 1.75rem; }
     .block:last-child { margin-bottom: 0; }
     .block-title { display: block; font-size: 1rem; color: var(--text-secondary); margin: 0 0 0.6rem 0; padding: 0.4rem 0.6rem; font-weight: 600; background: #333; border-radius: 4px; border-left: 3px solid var(--accent-block); }
+    .scores-overall { margin-bottom: 0.75rem; font-size: 1rem; }
+    .scores-categories table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .scores-categories th, .scores-categories td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--border); }
+    .scores-categories th { color: var(--text-muted); font-weight: 500; }
+    .scores-empty { color: var(--text-muted); margin: 0.5rem 0; font-size: 0.9rem; }
     .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
     .compare .column { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; background: var(--bg-card); }
     .compare .column .run-card { margin-bottom: 0; }
@@ -844,13 +904,8 @@ def _html_content(manifest: dict) -> str:
       return type === 'coord_clustering_gen' || type === 'coord_clustering_recon' || type === 'distmap_clustering_gen' || type === 'distmap_clustering_recon';
     }
     function blockTypeOrder(type, name) {
-      const n = (name || '').toUpperCase();
-      if (type === 'latent_distribution' || type === 'latent_correlation') {
-        if (n.indexOf('RMSD') >= 0) return 7;
-        if (n.indexOf('(Q)') >= 0 || n.indexOf(' Q)') >= 0) return 10;
-        if (n.indexOf('CLUSTERING') >= 0) return 13;
-        return 10;
-      }
+      if (type === 'scores') return 0;
+      if (type === 'latent_distribution' || type === 'latent_correlation') return 6;
       const order = [
         'reconstruction', 'recon_statistics', 'gen_variance', 'bond_length_by_genomic_distance', 'training_video',
         'rmsd_gen', 'rmsd_recon',
@@ -883,11 +938,35 @@ def _html_content(manifest: dict) -> str:
       let html = '<div class="run-card"><h2 class="run-card-title">' + escapeHtml(run.label_short || run.id || 'Run') + '</h2>';
       sorted.forEach(b => {
         html += '<div class="block"><div class="block-title">' + escapeHtml(b.name) + '</div>';
-        const isVideo = (b.path || '').toLowerCase().endsWith('.mp4');
-        if (isVideo) {
-          html += '<video controls preload="metadata" src="' + b.path + '" style="max-width:100%"></video>';
+        if (b.type === 'scores') {
+          const sd = b.scores_data || {};
+          const overall = sd.overall_score;
+          const cats = sd.category_scores || {};
+          let scoreHtml = '';
+          if (typeof overall === 'number' && !Number.isNaN(overall)) {
+            scoreHtml += '<div class="scores-overall">Overall: <strong>' + escapeHtml(String(Number(overall).toFixed(4))) + '</strong></div>';
+          }
+          if (b.path) {
+            scoreHtml += '<img loading="lazy" src="' + b.path + '" alt="Scores spider">';
+          }
+          if (!b.path && Object.keys(cats).length) {
+            scoreHtml += '<div class="scores-categories"><table><thead><tr><th>Category</th><th>Score</th></tr></thead><tbody>';
+            for (const [k, v] of Object.entries(cats)) {
+              if (typeof v === 'number' && !Number.isNaN(v)) {
+                scoreHtml += '<tr><td>' + escapeHtml(k) + '</td><td>' + escapeHtml(Number(v).toFixed(4)) + '</td></tr>';
+              }
+            }
+            scoreHtml += '</tbody></table></div>';
+          }
+          if (!b.path && !Object.keys(cats).length) scoreHtml += '<p class="scores-empty">No score data.</p>';
+          html += scoreHtml;
         } else {
-          html += '<img loading="lazy" src="' + b.path + '" alt="' + escapeHtml(b.name) + '">';
+          const isVideo = (b.path || '').toLowerCase().endsWith('.mp4');
+          if (isVideo) {
+            html += '<video controls preload="metadata" src="' + (b.path || '') + '" style="max-width:100%"></video>';
+          } else {
+            html += '<img loading="lazy" src="' + (b.path || '') + '" alt="' + escapeHtml(b.name) + '">';
+          }
         }
         html += '</div>';
       });
@@ -1247,7 +1326,12 @@ def build_dashboard(base_output_dir: str) -> Optional[str]:
     dashboard_dir = os.path.join(base_output_dir, DASHBOARD_DIR)
     assets_dir = os.path.join(dashboard_dir, ASSETS_DIR)
     os.makedirs(assets_dir, exist_ok=True)
-    runs_for_manifest = _copy_assets_and_update_paths(runs, assets_dir)
+    cfg = load_pipeline_config(base_output_dir)
+    if cfg and "scoring" in cfg:
+        scoring_save_pdf_copy = cfg["scoring"]["save_pdf_copy"]
+    else:
+        scoring_save_pdf_copy = False
+    runs_for_manifest = _copy_assets_and_update_paths(runs, assets_dir, scoring_save_pdf_copy)
     manifest = _make_manifest(base_output_dir, runs_for_manifest)
     _write_manifest(dashboard_dir, manifest)
     _write_index_html(dashboard_dir, manifest)

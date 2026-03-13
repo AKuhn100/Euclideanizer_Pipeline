@@ -10,7 +10,7 @@ are shown as "experimental structures" (one color) in RMSD/Q panels and clusteri
 # Colors (canonical palette; clustering SOURCE_COLORS align with these)
 # ---------------------------------------------------------------------------
 COLOR_TRAIN = "#00A8CC"      # blue (used where train is distinct from "experimental" ref)
-COLOR_GEN = "#D42248"        # green
+COLOR_GEN = "#D42248"        # red (generated structures)
 COLOR_TEST = "#00B84E"       # orange (used where test is distinct from "experimental" ref)
 COLOR_TRAIN_RECON = "#80DDED"   # darker green
 COLOR_TEST_RECON = "#80DDA8"    # lighter orange
@@ -34,6 +34,8 @@ RECON_PANEL_COLORS = (COLOR_EXP, COLOR_TRAIN_RECON, COLOR_TEST_RECON)
 CMAP_DM = "viridis"
 CMAP_DM_R = "viridis_r"  # reversed (e.g. avg maps: high = warm)
 
+# DPI for saved figure files (PNG, etc.); single definition for all pipeline plots
+PLOT_DPI = 150
 
 # ---------------------------------------------------------------------------
 # Font and font sizes (use in every plotting call for consistency)

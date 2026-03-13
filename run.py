@@ -72,8 +72,10 @@ from src.distmap.model import ChromVAE_Conv
 from src.distmap.sample import generate_samples as dm_generate_samples
 from src.euclideanizer.model import Euclideanizer, load_frozen_vae
 from src.analysis_metrics import ANALYSIS_METRICS
-from src.latent_analysis import plot_latent_distribution, plot_latent_correlation
+from src.latent_analysis import plot_latent_distribution, plot_latent_correlation, save_latent_stats_npz
+from src.plot_config import PLOT_DPI
 from src.gro_io import write_structures_gro
+from src import scoring as scoring_module
 
 # Log file in output root; also mirrored to stdout (set in main).
 _LOG_FILE = None
@@ -351,6 +353,34 @@ def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) 
     return False
 
 
+def _iter_euclideanizer_runs(base_output_dir: str):
+    """Yield (run_dir_eu, seed_dir) for each Euclideanizer run under base_output_dir."""
+    if not os.path.isdir(base_output_dir):
+        return
+    for seed_name in sorted(os.listdir(base_output_dir)):
+        if not seed_name.startswith("seed_") or not seed_name[5:].isdigit():
+            continue
+        seed_dir = os.path.join(base_output_dir, seed_name)
+        if not os.path.isdir(seed_dir):
+            continue
+        distmap_dir = os.path.join(seed_dir, "distmap")
+        if not os.path.isdir(distmap_dir):
+            continue
+        for dm_name in sorted(os.listdir(distmap_dir), key=lambda x: (len(x), x)):
+            if not dm_name.isdigit():
+                continue
+            dm_run_root = os.path.join(distmap_dir, dm_name)
+            eu_dir = os.path.join(dm_run_root, "euclideanizer")
+            if not os.path.isdir(eu_dir):
+                continue
+            for eu_name in sorted(os.listdir(eu_dir), key=lambda x: (len(x), x)):
+                if not eu_name.isdigit():
+                    continue
+                run_dir_eu = os.path.join(eu_dir, eu_name)
+                if os.path.isdir(run_dir_eu):
+                    yield run_dir_eu, seed_dir
+
+
 def _delete_dashboard(base_output_dir: str) -> None:
     """Remove the dashboard directory so a fresh one can be built after re-running plotting or analysis."""
     dashboard_dir = os.path.join(base_output_dir, "dashboard")
@@ -368,20 +398,21 @@ def _reference_size_config(cfg: dict) -> dict:
         "q": (ana["q_max_train"], ana["q_max_test"]),
         "coord_clustering": (ana["coord_clustering_max_train"], ana["coord_clustering_max_test"]),
         "distmap_clustering": (ana["distmap_clustering_max_train"], ana["distmap_clustering_max_test"]),
+        "latent": (ana["latent_max_train"], ana["latent_max_test"]),
     }
 
 
 def _reference_size_changed(saved_ref: dict, current_ref: dict) -> set:
-    """Return set of component names ('plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering') whose reference-size config differs."""
+    """Return set of component names ('plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering', 'latent') whose reference-size config differs."""
     out = set()
-    for key in ("plotting", "rmsd", "q", "coord_clustering", "distmap_clustering"):
+    for key in ("plotting", "rmsd", "q", "coord_clustering", "distmap_clustering", "latent"):
         if saved_ref.get(key) != current_ref.get(key):
             out.add(key)
     return out
 
 
 def _delete_reference_size_caches(base_output_dir: str, seeds: list, components: set) -> None:
-    """Remove cached data that depends on reference sizes so it can be recomputed. components: 'plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering'."""
+    """Remove cached data that depends on reference sizes so it can be recomputed. components: 'plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering', 'latent'. Latent has no seed-level cache (outputs are per-run)."""
     import glob as _glob
     for seed in seeds:
         seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -425,7 +456,7 @@ def _delete_reference_size_caches(base_output_dir: str, seeds: list, components:
 def _confirm_reference_size_cache_purge(components: set) -> None:
     """Prompt user to confirm removal of cached data when reference-size config changed. Else abort."""
     labels = sorted(components)
-    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "coord_clustering": "Coord clustering (train/test feats)", "distmap_clustering": "Distmap clustering (train/test feats)"}
+    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "coord_clustering": "Coord clustering (train/test feats)", "distmap_clustering": "Distmap clustering (train/test feats)", "latent": "Latent (plots/latent/; no seed cache)"}
     line = "=" * 70
     print()
     print(_red(line))
@@ -986,12 +1017,11 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
     def _gen_block(enabled: bool, sample_variance: list, num_samples: list) -> dict:
         return {"enabled": enabled, "sample_variance": sample_variance or [], "num_samples": num_samples or []}
 
-    def _recon_block(enabled: bool, max_recon_train, max_recon_test, visualize_latent: bool = False) -> dict:
+    def _recon_block(enabled: bool, max_recon_train, max_recon_test) -> dict:
         return {
             "enabled": enabled,
             "max_recon_train": max_recon_train,
             "max_recon_test": max_recon_test,
-            "visualize_latent": visualize_latent,
         }
 
     return {
@@ -1004,7 +1034,6 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
             kw.get("do_rmsd_recon", False),
             kw.get("max_recon_train_list"),
             kw.get("max_recon_test_list"),
-            kw.get("visualize_latent", False),
         ),
         "q_gen": _gen_block(
             kw.get("do_q", False),
@@ -1015,7 +1044,6 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
             kw.get("do_q_recon", False),
             kw.get("q_max_recon_train_list"),
             kw.get("q_max_recon_test_list"),
-            kw.get("q_visualize_latent", False),
         ),
         "coord_clustering_gen": _gen_block(
             kw.get("do_coord_clustering_gen", False),
@@ -1026,7 +1054,6 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
             kw.get("do_coord_clustering_recon", False),
             kw.get("coord_clustering_max_recon_train_list"),
             kw.get("coord_clustering_max_recon_test_list"),
-            kw.get("coord_clustering_visualize_latent", False),
         ),
         "distmap_clustering_gen": _gen_block(
             kw.get("do_distmap_clustering_gen", False),
@@ -1037,8 +1064,8 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
             kw.get("do_distmap_clustering_recon", False),
             kw.get("distmap_clustering_max_recon_train_list"),
             kw.get("distmap_clustering_max_recon_test_list"),
-            kw.get("distmap_clustering_visualize_latent", False),
         ),
+        "latent": {"enabled": kw.get("do_latent", False)},
     }
 
 
@@ -1079,7 +1106,6 @@ def _euclideanizer_analysis_all_present(
     variance_list: list | None = None,
     num_samples_list: list | None = None,
     do_rmsd_recon: bool = False,
-    visualize_latent: bool = False,
     max_recon_train_list: list | None = None,
     max_recon_test_list: list | None = None,
     do_q: bool = False,
@@ -1088,23 +1114,20 @@ def _euclideanizer_analysis_all_present(
     q_num_samples_list: list | None = None,
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
-    q_visualize_latent: bool = False,
     do_coord_clustering_gen: bool = False,
     do_coord_clustering_recon: bool = False,
     coord_clustering_variance_list: list | None = None,
     coord_clustering_num_samples_list: list | None = None,
     coord_clustering_max_recon_train_list: list | None = None,
     coord_clustering_max_recon_test_list: list | None = None,
-    coord_clustering_visualize_latent: bool = False,
     do_distmap_clustering_gen: bool = False,
     do_distmap_clustering_recon: bool = False,
     distmap_clustering_variance_list: list | None = None,
     distmap_clustering_num_samples_list: list | None = None,
     distmap_clustering_max_recon_train_list: list | None = None,
     distmap_clustering_max_recon_test_list: list | None = None,
-    distmap_clustering_visualize_latent: bool = False,
 ) -> bool:
-    """True if resume and all enabled metric (rmsd, q, coord_clustering, distmap_clustering) analysis outputs we would generate already exist."""
+    """True if resume and all enabled metric (rmsd, q, coord_clustering, distmap_clustering, latent) analysis outputs we would generate already exist."""
     if not resume:
         return True
     if analysis_cfg is None:
@@ -1113,7 +1136,6 @@ def _euclideanizer_analysis_all_present(
             "variance_list": variance_list or [],
             "num_samples_list": num_samples_list or [],
             "do_rmsd_recon": do_rmsd_recon,
-            "visualize_latent": visualize_latent,
             "max_recon_train_list": max_recon_train_list,
             "max_recon_test_list": max_recon_test_list,
             "do_q": do_q,
@@ -1122,21 +1144,18 @@ def _euclideanizer_analysis_all_present(
             "q_num_samples_list": q_num_samples_list or [],
             "q_max_recon_train_list": q_max_recon_train_list,
             "q_max_recon_test_list": q_max_recon_test_list,
-            "q_visualize_latent": q_visualize_latent,
             "do_coord_clustering_gen": do_coord_clustering_gen,
             "do_coord_clustering_recon": do_coord_clustering_recon,
             "coord_clustering_variance_list": coord_clustering_variance_list or [],
             "coord_clustering_num_samples_list": coord_clustering_num_samples_list or [],
             "coord_clustering_max_recon_train_list": coord_clustering_max_recon_train_list,
             "coord_clustering_max_recon_test_list": coord_clustering_max_recon_test_list,
-            "coord_clustering_visualize_latent": coord_clustering_visualize_latent,
             "do_distmap_clustering_gen": do_distmap_clustering_gen,
             "do_distmap_clustering_recon": do_distmap_clustering_recon,
             "distmap_clustering_variance_list": distmap_clustering_variance_list or [],
             "distmap_clustering_num_samples_list": distmap_clustering_num_samples_list or [],
             "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
             "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
-            "distmap_clustering_visualize_latent": distmap_clustering_visualize_latent,
         })
     specs = metrics if metrics is not None else ANALYSIS_METRICS
     for spec in specs:
@@ -1164,16 +1183,10 @@ def _euclideanizer_analysis_all_present(
             if not max_recon_test_list_s:
                 max_recon_test_list_s = [None]
             n_recon = len(max_recon_train_list_s) * len(max_recon_test_list_s)
-            vis_latent = recon_cfg["visualize_latent"]
             if n_recon == 1:
                 recon_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/" + spec.figure_filename)
                 if not os.path.isfile(recon_fig):
                     return False
-                if vis_latent:
-                    latent_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/latent_distribution.png")
-                    latent_corr_fig = _analysis_path(run_dir_eu, spec.subdir, "recon/latent_correlation.png")
-                    if not os.path.isfile(latent_fig) or not os.path.isfile(latent_corr_fig):
-                        return False
             else:
                 for max_train in max_recon_train_list_s:
                     for max_test in max_recon_test_list_s:
@@ -1181,11 +1194,11 @@ def _euclideanizer_analysis_all_present(
                         recon_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{subdir}/{spec.figure_filename}")
                         if not os.path.isfile(recon_fig):
                             return False
-                        if vis_latent:
-                            latent_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{subdir}/latent_distribution.png")
-                            latent_corr_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{subdir}/latent_correlation.png")
-                            if not os.path.isfile(latent_fig) or not os.path.isfile(latent_corr_fig):
-                                return False
+    latent_cfg = analysis_cfg["latent"]
+    if latent_cfg["enabled"]:
+        latent_dir = os.path.join(run_dir_eu, "plots", "latent")
+        if not os.path.isfile(os.path.join(latent_dir, "latent_distribution.png")) or not os.path.isfile(os.path.join(latent_dir, "latent_correlation.png")):
+            return False
     return True
 
 
@@ -1205,7 +1218,6 @@ def _pipeline_need_data(
     variance_list: list,
     num_samples_list: list,
     do_rmsd_recon: bool = False,
-    visualize_latent: bool = False,
     max_recon_train_list: list | None = None,
     max_recon_test_list: list | None = None,
     do_q: bool = False,
@@ -1214,19 +1226,17 @@ def _pipeline_need_data(
     q_num_samples_list: list | None = None,
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
-    q_visualize_latent: bool = False,
 ) -> bool:
     """True if any run is incomplete or any plot/analysis output is missing (so we must load something)."""
     return _pipeline_data_needs(
         base_output_dir, seeds, dm_groups, eu_groups,
         resume, do_plot, do_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance,
         plot_variances, variance_list, num_samples_list,
-        do_rmsd_recon=do_rmsd_recon, visualize_latent=visualize_latent,
+        do_rmsd_recon=do_rmsd_recon,
         max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
         do_q=do_q, do_q_recon=do_q_recon,
         q_variance_list=q_variance_list or [], q_num_samples_list=q_num_samples_list or [],
         q_max_recon_train_list=q_max_recon_train_list or [], q_max_recon_test_list=q_max_recon_test_list or [],
-        q_visualize_latent=q_visualize_latent,
     ).need_any()
 
 
@@ -1258,7 +1268,6 @@ def _pipeline_data_needs(
     variance_list: list,
     num_samples_list: list,
     do_rmsd_recon: bool = False,
-    visualize_latent: bool = False,
     max_recon_train_list: list | None = None,
     max_recon_test_list: list | None = None,
     do_q: bool = False,
@@ -1267,21 +1276,18 @@ def _pipeline_data_needs(
     q_num_samples_list: list | None = None,
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
-    q_visualize_latent: bool = False,
     do_coord_clustering_gen: bool = False,
     do_coord_clustering_recon: bool = False,
     coord_clustering_variance_list: list | None = None,
     coord_clustering_num_samples_list: list | None = None,
     coord_clustering_max_recon_train_list: list | None = None,
     coord_clustering_max_recon_test_list: list | None = None,
-    coord_clustering_visualize_latent: bool = False,
     do_distmap_clustering_gen: bool = False,
     do_distmap_clustering_recon: bool = False,
     distmap_clustering_variance_list: list | None = None,
     distmap_clustering_num_samples_list: list | None = None,
     distmap_clustering_max_recon_train_list: list | None = None,
     distmap_clustering_max_recon_test_list: list | None = None,
-    distmap_clustering_visualize_latent: bool = False,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
@@ -1297,7 +1303,6 @@ def _pipeline_data_needs(
         "variance_list": variance_list,
         "num_samples_list": num_samples_list,
         "do_rmsd_recon": do_rmsd_recon,
-        "visualize_latent": visualize_latent,
         "max_recon_train_list": max_recon_train_list,
         "max_recon_test_list": max_recon_test_list,
         "do_q": do_q,
@@ -1306,21 +1311,18 @@ def _pipeline_data_needs(
         "q_num_samples_list": q_num_samples_list or [],
         "q_max_recon_train_list": q_max_recon_train_list,
         "q_max_recon_test_list": q_max_recon_test_list,
-        "q_visualize_latent": q_visualize_latent,
         "do_coord_clustering_gen": do_coord_clustering_gen,
         "do_coord_clustering_recon": do_coord_clustering_recon,
         "coord_clustering_variance_list": coord_clustering_variance_list or [],
         "coord_clustering_num_samples_list": coord_clustering_num_samples_list or [],
         "coord_clustering_max_recon_train_list": coord_clustering_max_recon_train_list,
         "coord_clustering_max_recon_test_list": coord_clustering_max_recon_test_list,
-        "coord_clustering_visualize_latent": coord_clustering_visualize_latent,
         "do_distmap_clustering_gen": do_distmap_clustering_gen,
         "do_distmap_clustering_recon": do_distmap_clustering_recon,
         "distmap_clustering_variance_list": distmap_clustering_variance_list or [],
         "distmap_clustering_num_samples_list": distmap_clustering_num_samples_list or [],
         "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
         "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
-        "distmap_clustering_visualize_latent": distmap_clustering_visualize_latent,
     })
     for seed in seeds:
         output_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -1449,7 +1451,6 @@ def _parse_args():
     p.add_argument("--generation.num_samples", type=int, default=None, dest="gen_num_samples")
     p.add_argument("--generation.sample_variance", type=float, nargs="*", default=None, dest="gen_sample_variance")
     p.add_argument("--plotting.num_reconstruction_samples", type=int, default=None, dest="plot_num_recon")
-    p.add_argument("--plotting.plot_dpi", type=int, default=None, dest="plot_dpi")
     return p.parse_args()
 
 
@@ -1503,8 +1504,6 @@ def _args_to_overrides(args) -> dict:
         o.setdefault("plotting", {})["sample_variance"] = args.gen_sample_variance
     if args.plot_num_recon is not None:
         o.setdefault("plotting", {})["num_reconstruction_samples"] = args.plot_num_recon
-    if args.plot_dpi is not None:
-        o.setdefault("plotting", {})["plot_dpi"] = args.plot_dpi
     return o
 
 
@@ -1651,7 +1650,6 @@ def _run_one_distmap_group(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_recon_delta: float = 0.7071067811865475,
-    q_visualize_latent: bool = False,
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
@@ -2058,7 +2056,6 @@ def _run_one_distmap_group(
                                     _max_recon_test_list = [None]  # one run with no cap
                                 if not isinstance(_max_recon_test_list, list):
                                     _max_recon_test_list = [_max_recon_test_list]
-                                _visualize_latent = recon_cfg["visualize_latent"]
                                 _ref_mt = analysis_cfg[f"{spec.id}_max_train"]
                                 _ref_mc = analysis_cfg[f"{spec.id}_max_test"]
 
@@ -2081,7 +2078,7 @@ def _run_one_distmap_group(
                                     if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
                                         continue
                                     _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
-                                    plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg, plot_dpi)
+                                    plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
                                     pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                                     extra_kw = spec.gen_extra_kwargs(analysis_cfg)
                                     for var in _variance_list:
@@ -2124,7 +2121,7 @@ def _run_one_distmap_group(
 
                                 if do_recon and _max_recon_train_list and _max_recon_test_list:
                                     n_recon = len(_max_recon_train_list) * len(_max_recon_test_list)
-                                    plot_cfg_recon = spec.build_recon_plot_cfg(analysis_cfg, plot_dpi)
+                                    plot_cfg_recon = spec.build_recon_plot_cfg(analysis_cfg)
                                     recon_extra = spec.recon_extra_kwargs(analysis_cfg)
                                     for max_recon_train in _max_recon_train_list:
                                         for max_recon_test in _max_recon_test_list:
@@ -2154,25 +2151,42 @@ def _run_one_distmap_group(
                                                 )
                                             elif resume and n_recon == 1:
                                                 _log(f"  [skip] {spec.id} recon", since_start=time.time() - pipeline_start, style="skip")
-                                            latent_corr_fig = os.path.join(os.path.dirname(latent_fig), "latent_correlation.png") if _visualize_latent else None
-                                            if _visualize_latent and not (resume and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig)):
-                                                train_mu, test_mu = _get_latent_vectors_euclideanizer(
-                                                    frozen_vae, device, coords, training_split, split_seed, utils,
-                                                    max_train=max_recon_train, max_test=max_recon_test,
-                                                )
-                                                plot_latent_distribution(
-                                                    train_mu, test_mu, latent_fig,
-                                                    plot_dpi=plot_dpi, display_root=base_output_dir,
-                                                    save_pdf_copy=recon_cfg["save_pdf_copy"],
-                                                )
-                                                plot_latent_correlation(
-                                                    train_mu, test_mu, latent_corr_fig,
-                                                    plot_dpi=plot_dpi, display_root=base_output_dir,
-                                                    save_pdf_copy=recon_cfg["save_pdf_copy"],
-                                                )
-                                            elif resume and _visualize_latent and n_recon == 1 and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig):
-                                                _log(f"  [skip] latent distribution", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    
+                        # Latent block: one plot per run (analysis.latent), own max_train/max_test
+                        latent_cfg = analysis_cfg["latent"]
+                        do_latent = latent_cfg["enabled"] and coords is not None
+                        if do_latent:
+                            latent_dir = os.path.join(run_dir_eu, "plots", "latent")
+                            latent_fig = os.path.join(latent_dir, "latent_distribution.png")
+                            latent_corr_fig = os.path.join(latent_dir, "latent_correlation.png")
+                            latent_data_dir = os.path.join(latent_dir, "data")
+                            latent_stats_npz = os.path.join(latent_data_dir, "latent_stats.npz")
+                            if not (resume and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig)):
+                                train_mu_lat, test_mu_lat = _get_latent_vectors_euclideanizer(
+                                    frozen_vae, device, coords, training_split, split_seed, utils,
+                                    max_train=analysis_cfg.get("latent_max_train"),
+                                    max_test=analysis_cfg.get("latent_max_test"),
+                                )
+                                os.makedirs(latent_dir, exist_ok=True)
+                                plot_latent_distribution(
+                                    train_mu_lat, test_mu_lat, latent_fig,
+                                    plot_dpi=plot_dpi, display_root=base_output_dir,
+                                    save_pdf_copy=latent_cfg["save_pdf_copy"],
+                                )
+                                plot_latent_correlation(
+                                    train_mu_lat, test_mu_lat, latent_corr_fig,
+                                    plot_dpi=plot_dpi, display_root=base_output_dir,
+                                    save_pdf_copy=latent_cfg["save_pdf_copy"],
+                                )
+                                effective_latent_save = latent_cfg["save_data"] or cfg["scoring"]["enabled"]
+                                if effective_latent_save:
+                                    save_latent_stats_npz(
+                                        train_mu_lat, test_mu_lat, latent_stats_npz,
+                                        display_root=base_output_dir,
+                                    )
+                            elif resume:
+                                _log("  [skip] latent (all present)", since_start=time.time() - pipeline_start, style="skip")
     
                         del embed, frozen_vae
                         torch.cuda.empty_cache()
@@ -2235,7 +2249,6 @@ def _run_one_seed(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_recon_delta: float = 0.7071067811865475,
-    q_visualize_latent: bool = False,
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
@@ -2300,7 +2313,7 @@ def _run_one_seed(
             q_max_train=q_max_train, q_max_test=q_max_test,
             q_num_samples_list=q_num_samples_list or [], q_variance_list=q_variance_list or [],
             q_delta=q_delta, q_max_recon_train_list=q_max_recon_train_list or [], q_max_recon_test_list=q_max_recon_test_list or [],
-            q_recon_delta=q_recon_delta, q_visualize_latent=q_visualize_latent,
+            q_recon_delta=q_recon_delta,
             make_distmap_epoch_hook=make_distmap_epoch_hook,
             make_euclideanizer_epoch_hook=make_euclideanizer_epoch_hook,
             assemble_video_fn=assemble_video_fn,
@@ -2440,7 +2453,6 @@ def _worker(
                 q_max_recon_train_list=shared_args.get("q_max_recon_train_list", []),
                 q_max_recon_test_list=shared_args.get("q_max_recon_test_list", []),
                 q_recon_delta=shared_args.get("q_recon_delta", 0.7071067811865475),
-                q_visualize_latent=shared_args.get("q_visualize_latent", False),
                 make_distmap_epoch_hook=shared_args.get("make_distmap_epoch_hook"),
                 make_euclideanizer_epoch_hook=shared_args.get("make_euclideanizer_epoch_hook"),
                 assemble_video_fn=shared_args.get("assemble_video_fn"),
@@ -2519,7 +2531,6 @@ def _run_multi_gpu_tasks(
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
     q_recon_delta: float = 0.7071067811865475,
-    q_visualize_latent: bool = False,
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
@@ -2609,7 +2620,6 @@ def _run_multi_gpu_tasks(
         "q_max_recon_train_list": q_max_recon_train_list or [],
         "q_max_recon_test_list": q_max_recon_test_list or [],
         "q_recon_delta": q_recon_delta,
-        "q_visualize_latent": q_visualize_latent,
         "make_distmap_epoch_hook": make_distmap_epoch_hook,
         "make_euclideanizer_epoch_hook": make_euclideanizer_epoch_hook,
         "assemble_video_fn": assemble_video_fn,
@@ -2710,9 +2720,10 @@ def main():
     seeds = get_seeds(cfg)
     plot_cfg = cfg["plotting"]
     do_plot = plot_cfg["enabled"]
-    plot_dpi = plot_cfg["plot_dpi"]
+    plot_dpi = PLOT_DPI
     save_pdf = plot_cfg["save_pdf_copy"]
-    save_plot_data = plot_cfg["save_data"]  # config key is save_data (same as analysis); variable name for clarity
+    scoring_enabled = cfg["scoring"]["enabled"]
+    save_plot_data = plot_cfg["save_data"] or scoring_enabled  # effective: save when scoring needs NPZ
     num_recon_samples = plot_cfg["num_reconstruction_samples"]
     do_recon_plot = plot_cfg["reconstruction"]
     do_bond_rg_scaling = plot_cfg["bond_rg_scaling"]
@@ -2988,7 +2999,6 @@ def main():
     # Decide what to load from pipeline segments (resume) or from flags (no resume)
     if not resume or not data_path:
         do_rmsd_recon = analysis_cfg["rmsd_recon"]["enabled"]
-        do_visualize_latent = analysis_cfg["rmsd_recon"]["visualize_latent"]
         do_q_recon = analysis_cfg["q_recon"]["enabled"]
         needs = PipelineDataNeeds(
             need_coords=(need_train or do_plot or do_rmsd or do_rmsd_recon or do_q or do_q_recon or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg),
@@ -3000,20 +3010,17 @@ def main():
             base_output_dir, seeds, dm_groups, eu_groups,
             resume, do_plot, do_rmsd, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance,
             plot_variances_for_scan, variance_list, num_samples_list,
-            do_rmsd_recon=analysis_cfg["rmsd_recon"]["enabled"], visualize_latent=analysis_cfg["rmsd_recon"]["visualize_latent"],
+            do_rmsd_recon=analysis_cfg["rmsd_recon"]["enabled"],
             max_recon_train_list=max_recon_train_list, max_recon_test_list=max_recon_test_list,
             do_q=do_q, do_q_recon=do_q_recon_cfg,
             q_variance_list=q_variance_list, q_num_samples_list=q_num_samples_list,
             q_max_recon_train_list=q_max_recon_train_list, q_max_recon_test_list=q_max_recon_test_list,
-            q_visualize_latent=analysis_cfg["q_recon"]["visualize_latent"],
             do_coord_clustering_gen=do_coord_clustering_gen, do_coord_clustering_recon=do_coord_clustering_recon_cfg,
             coord_clustering_variance_list=coord_clustering_variance_list, coord_clustering_num_samples_list=coord_clustering_num_samples_list,
             coord_clustering_max_recon_train_list=coord_clustering_max_recon_train_list, coord_clustering_max_recon_test_list=coord_clustering_max_recon_test_list,
-            coord_clustering_visualize_latent=analysis_cfg["coord_clustering_recon"]["visualize_latent"],
             do_distmap_clustering_gen=do_distmap_clustering_gen, do_distmap_clustering_recon=do_distmap_clustering_recon_cfg,
             distmap_clustering_variance_list=distmap_clustering_variance_list, distmap_clustering_num_samples_list=distmap_clustering_num_samples_list,
             distmap_clustering_max_recon_train_list=distmap_clustering_max_recon_train_list, distmap_clustering_max_recon_test_list=distmap_clustering_max_recon_test_list,
-            distmap_clustering_visualize_latent=analysis_cfg["distmap_clustering_recon"]["visualize_latent"],
         )
     need_any = needs.need_any() and data_path
 
@@ -3123,7 +3130,7 @@ def main():
         or (do_q_recon_cfg and coords is not None)
     )
     save_structures_gro_plot = plot_cfg["save_structures_gro"]
-    analysis_save_data = analysis_cfg["rmsd_gen"]["save_data"]
+    analysis_save_data = analysis_cfg["rmsd_gen"]["save_data"] or scoring_enabled  # effective: save when scoring needs NPZ
     analysis_save_structures_gro = analysis_cfg["rmsd_gen"]["save_structures_gro"]
 
     tasks = [(s, g) for s in seeds for g in range(len(dm_groups))]
@@ -3249,7 +3256,6 @@ def main():
             q_max_recon_train_list=q_max_recon_train_list,
             q_max_recon_test_list=q_max_recon_test_list,
             q_recon_delta=q_recon_delta,
-            q_visualize_latent=analysis_cfg["q_recon"]["visualize_latent"],
             make_distmap_epoch_hook=make_dm_hook,
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
@@ -3310,11 +3316,65 @@ def main():
             q_max_recon_train_list=q_max_recon_train_list,
             q_max_recon_test_list=q_max_recon_test_list,
             q_recon_delta=q_recon_delta,
-            q_visualize_latent=analysis_cfg["q_recon"]["visualize_latent"],
             make_distmap_epoch_hook=make_dm_hook,
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
         )
+
+    # Scoring: per-run scores from NPZ; then delete NPZ for blocks with save_data false
+    if scoring_enabled:
+        overwrite_scoring = cfg["scoring"]["overwrite_existing"]
+        scores_filename = "scores.json"
+        for run_dir_eu, seed_dir in _iter_euclideanizer_runs(base_output_dir):
+            scores_path = os.path.join(run_dir_eu, scores_filename)
+            if os.path.isfile(scores_path) and not overwrite_scoring:
+                continue
+            try:
+                out_path = scoring_module.compute_and_save(run_dir_eu, seed_dir, cfg, scores_filename=scores_filename)
+                if out_path:
+                    _log(f"Scoring: {utils.display_path(out_path, base_output_dir)}", since_start=time.time() - pipeline_start, style="success")
+                    with open(out_path, encoding="utf-8") as _f:
+                        _scores = json.load(_f)
+                    _missing = _scores.get("missing") or []
+                    if _missing:
+                        _log(
+                            f"Scoring: some data is missing for {utils.display_path(run_dir_eu, base_output_dir)}. "
+                            f"Missing components: {', '.join(_missing)}. "
+                            "Re-run the pipeline with the relevant plotting/analysis blocks enabled (or with scoring enabled after running those blocks) to generate these scores.",
+                            since_start=time.time() - pipeline_start,
+                            style="error",
+                        )
+            except Exception as e:
+                _log(f"Scoring failed for {run_dir_eu}: {e}", since_start=time.time() - pipeline_start, style="error")
+        # Post-scoring cleanup: remove NPZ for blocks where save_data is false
+        plot_cfg = cfg["plotting"]
+        ana = cfg["analysis"]
+        for run_dir_eu, _ in _iter_euclideanizer_runs(base_output_dir):
+            if not plot_cfg["save_data"]:
+                for sub in ("recon_statistics", "gen_variance", "bond_length_by_genomic_distance"):
+                    data_dir = os.path.join(run_dir_eu, "plots", sub, "data")
+                    if os.path.isdir(data_dir):
+                        shutil.rmtree(data_dir, ignore_errors=True)
+                for var_dir in (os.path.join(run_dir_eu, "plots", "gen_variance", x) for x in os.listdir(os.path.join(run_dir_eu, "plots", "gen_variance")) if os.path.isdir(os.path.join(run_dir_eu, "plots", "gen_variance", x))):
+                    dd = os.path.join(var_dir, "data")
+                    if os.path.isdir(dd):
+                        shutil.rmtree(dd, ignore_errors=True)
+            if ana["latent"] and not ana["latent"]["save_data"]:
+                latent_data = os.path.join(run_dir_eu, "plots", "latent", "data")
+                if os.path.isdir(latent_data):
+                    shutil.rmtree(latent_data, ignore_errors=True)
+            for spec in ANALYSIS_METRICS:
+                gen_save = ana[spec.gen_key]["save_data"]
+                recon_save = ana[spec.recon_key]["save_data"]
+                for sub, save_ok in [("gen", gen_save), ("recon", recon_save)]:
+                    if save_ok:
+                        continue
+                    branch = os.path.join(run_dir_eu, "analysis", spec.subdir, sub)
+                    if not os.path.isdir(branch):
+                        continue
+                    for root, dirs, _ in os.walk(branch, topdown=True):
+                        if "data" in dirs:
+                            shutil.rmtree(os.path.join(root, "data"), ignore_errors=True)
 
     if do_dashboard:
         from src.dashboard import build_dashboard

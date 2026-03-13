@@ -30,10 +30,11 @@ from .plot_config import (
     FONT_SIZE_LEGEND,
     FONT_SIZE_SMALL,
     FONT_SIZE_TINY,
+    PLOT_DPI,
 )
 
 
-def _save_pdf_copy(fig, png_path: str, save_pdf: bool = True, display_root: str | None = None) -> None:
+def _save_pdf_copy(fig, png_path: str, save_pdf: bool, display_root: str | None = None) -> None:
     """If save_pdf is True, save a PDF version of the figure in a pdf/ subdir next to the PNG."""
     if not save_pdf:
         return
@@ -67,7 +68,7 @@ def plot_distmap_reconstruction(
     split_seed: int = 42,
     batch_size: int = 256,
     num_to_plot: int = 5,
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     display_root: str | None = None,
@@ -128,7 +129,7 @@ def plot_euclideanizer_reconstruction(
     split_seed: int = 42,
     batch_size: int = 32,
     num_to_plot: int = 5,
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     display_root: str | None = None,
@@ -190,7 +191,7 @@ def plot_recon_statistics(
     *,
     label_recon: str = "Recon",
     subset_label: str | None = None,
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     display_root: str | None = None,
@@ -230,11 +231,13 @@ def plot_recon_statistics(
     plt.savefig(output_path, dpi=dpi)
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
     if save_plot_data:
+        recon_avg_map = np.mean(recon_dm, axis=0)
         _save_plot_data_npz(
             output_path,
             display_root=display_root,
             exp_bonds=true_bonds, exp_rg=true_rg, genomic_distances=s, exp_scaling=true_sc,
             recon_bonds=recon_bonds, recon_rg=recon_rg, recon_scaling=recon_sc,
+            recon_avg_map=recon_avg_map,
         )
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
@@ -250,7 +253,7 @@ def plot_gen_analysis(
     *,
     sample_variance: float = 1.0,
     label_gen: str = "Gen",
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     display_root: str | None = None,
@@ -367,7 +370,7 @@ def plot_bond_length_by_genomic_distance(
     *,
     num_k: int = NUM_K_DEFAULT,
     label_gen: str = "Gen",
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     display_root: str | None = None,
@@ -428,7 +431,7 @@ def plot_loss_curves(
     output_path: str,
     title: str = "Training Loss",
     *,
-    dpi: int = 150,
+    dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     display_root: str | None = None,

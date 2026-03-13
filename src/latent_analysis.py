@@ -1,7 +1,7 @@
 """
 Latent space visualization: distribution (box plots + mean/std per dimension) and
-correlation (train vs test mean and std). Used by recon analysis blocks (RMSD, Q,
-coord clustering, distmap clustering) when visualize_latent is enabled.
+correlation (train vs test mean and std). Used by the standalone analysis.latent
+block (one plot set per Euclideanizer run under plots/latent/).
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from .utils import display_path
 from .plotting import _save_pdf_copy
 from .plot_config import (
+    PLOT_DPI,
     COLOR_TRAIN,
     COLOR_TEST,
     FONT_FAMILY,
@@ -49,9 +50,9 @@ def plot_latent_distribution(
     train_mu_np: np.ndarray,
     test_mu_np: np.ndarray,
     out_path: str,
-    plot_dpi: int = 150,
+    save_pdf_copy: bool,
+    plot_dpi: int = PLOT_DPI,
     display_root: str | None = None,
-    save_pdf_copy: bool = False,
 ) -> None:
     """
     Plot latent distribution: top row two box plots (train left, test right), shared y;
@@ -141,9 +142,9 @@ def plot_latent_correlation(
     train_mu_np: np.ndarray,
     test_mu_np: np.ndarray,
     out_path: str,
-    plot_dpi: int = 150,
+    save_pdf_copy: bool,
+    plot_dpi: int = PLOT_DPI,
     display_root: str | None = None,
-    save_pdf_copy: bool = False,
 ) -> None:
     """
     Plot Pearson correlation between train and test latent statistics: two square panels.
@@ -191,3 +192,29 @@ def plot_latent_correlation(
     plt.close()
     if display_root is not None:
         print(f"  Saved: {display_path(out_path, display_root)}")
+
+
+def save_latent_stats_npz(
+    train_mu_np: np.ndarray,
+    test_mu_np: np.ndarray,
+    output_path: str,
+    display_root: str | None = None,
+) -> None:
+    """
+    Save latent_stats.npz with mean_train, mean_test, std_train, std_test (shape (n_dim,))
+    for scoring. Call when latent block has save_data (or effective save_data) true.
+    """
+    mean_train = np.mean(train_mu_np, axis=0)
+    mean_test = np.mean(test_mu_np, axis=0)
+    std_train = np.std(train_mu_np, axis=0)
+    std_test = np.std(test_mu_np, axis=0)
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    np.savez_compressed(
+        output_path,
+        mean_train=mean_train,
+        mean_test=mean_test,
+        std_train=std_train,
+        std_test=std_test,
+    )
+    if display_root is not None:
+        print(f"  Saved: {display_path(output_path, display_root)}")

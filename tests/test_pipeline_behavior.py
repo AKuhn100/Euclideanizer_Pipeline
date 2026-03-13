@@ -24,6 +24,8 @@ Run from the pipeline root:
 """
 from __future__ import annotations
 
+import json
+import math
 import os
 import sys
 
@@ -65,6 +67,7 @@ from run import (
     EXP_STATS_TRAIN_NPZ,
     EXP_STATS_TEST_NPZ,
 )
+from src import scoring as scoring_module
 
 
 def _load_test_config():
@@ -704,17 +707,15 @@ def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missi
     ) is False
 
 
-def test_euclideanizer_analysis_all_present_true_when_q_recon_and_latent_exist(tmp_path):
-    """When do_q_recon and q_visualize_latent are True, recon and latent figures must exist."""
+def test_euclideanizer_analysis_all_present_true_when_q_recon_exists(tmp_path):
+    """When do_q_recon is True, recon figure must exist (no per-metric latent; use analysis.latent for plots/latent/)."""
     (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "q" / "recon").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "recon" / "q_distributions.png").write_bytes(b"x")
-    (tmp_path / "analysis" / "q" / "recon" / "latent_distribution.png").write_bytes(b"x")
-    (tmp_path / "analysis" / "q" / "recon" / "latent_correlation.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=True, do_q_recon=True, q_visualize_latent=True,
+        do_q=True, do_q_recon=True,
         q_variance_list=[1.0], q_num_samples_list=[10],
         q_max_recon_train_list=[500], q_max_recon_test_list=[200],
     ) is True
@@ -744,7 +745,7 @@ def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path
     (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_rmsd_recon=False, visualize_latent=False,
+        do_rmsd_recon=False,
     ) is True
 
 
@@ -755,23 +756,49 @@ def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing
     (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_rmsd_recon=True, visualize_latent=False,
+        do_rmsd_recon=True,
         max_recon_train_list=[None], max_recon_test_list=[None],
     ) is False
 
 
-def test_euclideanizer_analysis_all_present_true_when_recon_and_latent_exist(tmp_path):
+def test_euclideanizer_analysis_all_present_true_when_recon_exists(tmp_path):
+    """When do_rmsd_recon is True, recon figure must exist (no per-metric latent)."""
     (tmp_path / "analysis" / "rmsd" / "gen" / "default").mkdir(parents=True)
     (tmp_path / "analysis" / "rmsd" / "gen" / "default" / "rmsd_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "rmsd" / "recon").mkdir(parents=True)
     (tmp_path / "analysis" / "rmsd" / "recon" / "rmsd_distributions.png").write_bytes(b"x")
-    (tmp_path / "analysis" / "rmsd" / "recon" / "latent_distribution.png").write_bytes(b"x")
-    (tmp_path / "analysis" / "rmsd" / "recon" / "latent_correlation.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_rmsd_recon=True, visualize_latent=True,
+        do_rmsd_recon=True,
         max_recon_train_list=[None], max_recon_test_list=[None],
     ) is True
+
+
+def test_euclideanizer_analysis_all_present_true_when_latent_enabled_and_exists(tmp_path):
+    """When analysis.latent is enabled, plots/latent/latent_distribution.png and latent_correlation.png must exist."""
+    (tmp_path / "plots" / "latent").mkdir(parents=True)
+    (tmp_path / "plots" / "latent" / "latent_distribution.png").write_bytes(b"x")
+    (tmp_path / "plots" / "latent" / "latent_correlation.png").write_bytes(b"x")
+    analysis_cfg = {
+        "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
+        "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
+        "coord_clustering_gen": {"enabled": False}, "coord_clustering_recon": {"enabled": False},
+        "distmap_clustering_gen": {"enabled": False}, "distmap_clustering_recon": {"enabled": False},
+        "latent": {"enabled": True},
+    }
+    assert _euclideanizer_analysis_all_present(str(tmp_path), resume=True, analysis_cfg=analysis_cfg) is True
+
+
+def test_euclideanizer_analysis_all_present_false_when_latent_enabled_but_missing(tmp_path):
+    """When analysis.latent is enabled but plots/latent/ figures are missing, analysis is not all present."""
+    analysis_cfg = {
+        "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
+        "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
+        "coord_clustering_gen": {"enabled": False}, "coord_clustering_recon": {"enabled": False},
+        "distmap_clustering_gen": {"enabled": False}, "distmap_clustering_recon": {"enabled": False},
+        "latent": {"enabled": True},
+    }
+    assert _euclideanizer_analysis_all_present(str(tmp_path), resume=True, analysis_cfg=analysis_cfg) is False
 
 
 def test_euclideanizer_analysis_all_present_true_when_coord_clustering_gen_exists(tmp_path):
@@ -864,6 +891,7 @@ def test_reference_size_config_extracts_keys():
             "q_max_train": 300, "q_max_test": 50,
             "coord_clustering_max_train": 350, "coord_clustering_max_test": 70,
             "distmap_clustering_max_train": 400, "distmap_clustering_max_test": 80,
+            "latent_max_train": 250, "latent_max_test": 60,
         },
     }
     ref = _reference_size_config(cfg)
@@ -872,15 +900,18 @@ def test_reference_size_config_extracts_keys():
     assert ref["q"] == (300, 50)
     assert ref["coord_clustering"] == (350, 70)
     assert ref["distmap_clustering"] == (400, 80)
+    assert ref["latent"] == (250, 60)
 
 
 def test_reference_size_changed_detects_differences():
     """_reference_size_changed returns components whose ref config differs."""
-    saved = {"plotting": (100, 200), "rmsd": (500, 100), "q": (300, 50), "coord_clustering": (350, 70), "distmap_clustering": (400, 80)}
-    current = {"plotting": (100, 200), "rmsd": (500, 200), "q": (300, 50), "coord_clustering": (350, 70), "distmap_clustering": (400, 80)}
+    saved = {"plotting": (100, 200), "rmsd": (500, 100), "q": (300, 50), "coord_clustering": (350, 70), "distmap_clustering": (400, 80), "latent": (250, 60)}
+    current = {"plotting": (100, 200), "rmsd": (500, 200), "q": (300, 50), "coord_clustering": (350, 70), "distmap_clustering": (400, 80), "latent": (250, 60)}
     assert _reference_size_changed(saved, current) == {"rmsd"}
     current["plotting"] = (50, 200)
     assert _reference_size_changed(saved, current) == {"plotting", "rmsd"}
+    current["latent"] = (100, 60)
+    assert _reference_size_changed(saved, current) == {"plotting", "rmsd", "latent"}
     assert _reference_size_changed(saved, saved) == set()
 
 
@@ -908,3 +939,72 @@ def test_delete_reference_size_caches_removes_rmsd_and_q_files(tmp_path):
     _delete_reference_size_caches(base, [0], {"rmsd", "q"})
     assert not os.path.isfile(os.path.join(cache_dir, "test_to_train_rmsd.npz"))
     assert not os.path.isfile(os.path.join(cache_dir, "q_test_to_train_500_200.npz"))
+
+
+# ---------------------------------------------------------------------------
+# Scoring (behavior: score file created, missing components reported)
+# ---------------------------------------------------------------------------
+
+def test_scoring_compute_scores_from_data_empty_reports_missing():
+    """With no data, compute_scores_from_data returns structure with empty present and nan overall."""
+    result = scoring_module.compute_scores_from_data({})
+    assert "overall_score" in result
+    assert "category_scores" in result
+    assert "component_scores" in result
+    assert "present" in result
+    assert "missing" in result
+    assert isinstance(result["missing"], list)
+    assert isinstance(result["present"], list)
+    # Component builders omit entries when data is missing, so empty data -> no components
+    assert len(result["present"]) == 0
+    assert len(result["component_scores"]) == 0
+    assert result["missing"] == []
+    assert math.isnan(result["overall_score"])
+
+
+def test_scoring_compute_and_save_creates_scores_json(tmp_path):
+    """compute_and_save writes scores.json when seed and run dir have minimal NPZ for recon."""
+    import numpy as np
+    seed_dir = tmp_path / "seed_0"
+    exp_cache = seed_dir / "experimental_statistics"
+    exp_cache.mkdir(parents=True)
+    # Minimal exp stats train/test (scoring loads exp_rg, exp_scaling, avg_exp_map)
+    arr = np.array([1.0, 2.0, 3.0])
+    np.savez(exp_cache / "exp_stats_train.npz", exp_rg=arr, exp_scaling=arr, avg_exp_map=np.eye(3))
+    np.savez(exp_cache / "exp_stats_test.npz", exp_rg=arr, exp_scaling=arr, avg_exp_map=np.eye(3))
+    run_dir = tmp_path / "run"
+    recon_data = run_dir / "plots" / "recon_statistics" / "data"
+    recon_data.mkdir(parents=True)
+    np.savez(recon_data / "recon_statistics_train_data.npz", recon_rg=arr, recon_scaling=arr, recon_avg_map=np.eye(3))
+    np.savez(recon_data / "recon_statistics_test_data.npz", recon_rg=arr, recon_scaling=arr, recon_avg_map=np.eye(3))
+    cfg = _load_test_config()
+    out = scoring_module.compute_and_save(str(run_dir), str(seed_dir), cfg, scores_filename="scores.json")
+    assert out is not None
+    assert os.path.isfile(os.path.join(run_dir, "scores.json"))
+    with open(os.path.join(run_dir, "scores.json"), encoding="utf-8") as f:
+        data = json.load(f)
+    assert "overall_score" in data
+    assert "category_scores" in data
+    assert "present" in data
+    assert "missing" in data
+
+
+def test_scoring_compute_and_save_no_overwrite_when_called_still_writes(tmp_path):
+    """compute_and_save overwrites existing scores.json when called (overwrite is enforced by run.py)."""
+    import numpy as np
+    seed_dir = tmp_path / "seed_0"
+    (seed_dir / "experimental_statistics").mkdir(parents=True)
+    arr = np.array([1.0])
+    np.savez(seed_dir / "experimental_statistics" / "exp_stats_train.npz", exp_rg=arr, exp_scaling=arr, avg_exp_map=arr)
+    np.savez(seed_dir / "experimental_statistics" / "exp_stats_test.npz", exp_rg=arr, exp_scaling=arr, avg_exp_map=arr)
+    run_dir = tmp_path / "run"
+    (run_dir / "plots" / "recon_statistics" / "data").mkdir(parents=True)
+    np.savez(run_dir / "plots" / "recon_statistics" / "data" / "recon_statistics_train_data.npz", recon_rg=arr, recon_scaling=arr, recon_avg_map=arr)
+    np.savez(run_dir / "plots" / "recon_statistics" / "data" / "recon_statistics_test_data.npz", recon_rg=arr, recon_scaling=arr, recon_avg_map=arr)
+    cfg = _load_test_config()
+    scoring_module.compute_and_save(str(run_dir), str(seed_dir), cfg)
+    path = os.path.join(run_dir, "scores.json")
+    assert os.path.isfile(path)
+    first_mtime = os.path.getmtime(path)
+    scoring_module.compute_and_save(str(run_dir), str(seed_dir), cfg)
+    assert os.path.getmtime(path) >= first_mtime  # overwritten

@@ -14,7 +14,7 @@ except ImportError:
     yaml = None
 
 # Required keys per section (no code-side defaults). Key order is standardized:
-# enabled/overwrite_existing first, then behavior params, then save_data, save_pdf_copy, save_structures_gro (or visualize_latent).
+# enabled/overwrite_existing first, then behavior params, then save_data, save_pdf_copy, save_structures_gro.
 REQUIRED_KEYS = {
     "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample"],
     "distmap": [
@@ -35,7 +35,7 @@ REQUIRED_KEYS = {
         "enabled", "overwrite_existing",
         "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp", "bond_length_by_genomic_distance",
         "num_samples", "gen_decode_batch_size", "sample_variance",
-        "num_reconstruction_samples", "plot_dpi",
+        "num_reconstruction_samples",
         "max_train", "max_test",
         "save_data", "save_pdf_copy", "save_structures_gro",
     ],
@@ -60,7 +60,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
     "rmsd_recon": [
         "enabled", "overwrite_existing",
         "max_recon_train", "max_recon_test",
-        "save_data", "save_pdf_copy", "visualize_latent",
+        "save_data", "save_pdf_copy",
     ],
     "q_gen": [
         "enabled", "overwrite_existing",
@@ -71,7 +71,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
     "q_recon": [
         "enabled", "overwrite_existing",
         "max_recon_train", "max_recon_test", "delta",
-        "save_data", "save_pdf_copy", "visualize_latent",
+        "save_data", "save_pdf_copy",
     ],
     "coord_clustering_gen": [
         "enabled", "overwrite_existing",
@@ -84,7 +84,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
         "enabled", "overwrite_existing",
         "max_recon_train", "max_recon_test", "n_subsample",
         "k_mixing", "linkage_method",
-        "save_data", "save_pdf_copy", "visualize_latent",
+        "save_data", "save_pdf_copy",
     ],
     "distmap_clustering_gen": [
         "enabled", "overwrite_existing",
@@ -98,7 +98,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
         "max_recon_train", "max_recon_test", "n_subsample",
         "k_mixing", "linkage_method",
         "feats_batch_size",
-        "save_data", "save_pdf_copy", "visualize_latent",
+        "save_data", "save_pdf_copy",
     ],
 }
 REQUIRED_KEYS = {
@@ -113,6 +113,8 @@ REQUIRED_KEYS = {
         "coord_clustering_gen", "coord_clustering_recon",
         "distmap_clustering_max_train", "distmap_clustering_max_test",
         "distmap_clustering_gen", "distmap_clustering_recon",
+        "latent_max_train", "latent_max_test",
+        "latent",
     ],
     "training_visualization": [
         "enabled",
@@ -121,14 +123,20 @@ REQUIRED_KEYS = {
         "delete_frames_after_video",
     ],
     "dashboard": ["enabled"],
+    "scoring": ["enabled", "overwrite_existing", "save_pdf_copy"],
 }
+# Required keys inside analysis.latent (latent is its own block: one plot per run; uses analysis.latent_max_train / latent_max_test).
+REQUIRED_ANALYSIS_SUBKEYS["latent"] = [
+    "enabled", "overwrite_existing",
+    "save_data", "save_pdf_copy",
+]
 # Order: training_visualization before plotting so training-related config is grouped.
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard"]
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
 
 # Sections that must match exactly when resuming (training and training visualization).
 TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization"]
 # Sections that may differ on resume; if they do, user is prompted and plotting/analysis outputs are removed and re-run.
-PLOTTING_ANALYSIS_KEYS = ["plotting", "analysis"]
+PLOTTING_ANALYSIS_KEYS = ["plotting", "analysis", "scoring"]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

@@ -11,6 +11,7 @@ from . import utils
 from .config import load_run_config, save_run_config
 from .distmap.model import ChromVAE_Conv
 from .distmap.loss import distmap_vae_loss
+from .plot_config import PLOT_DPI
 from .plotting import plot_loss_curves
 
 
@@ -24,7 +25,7 @@ def train_distmap(
     training_split: float,
     epoch_callback=None,
     plot_loss: bool = True,
-    plot_dpi: int = 150,
+    plot_dpi: int = PLOT_DPI,
     save_pdf: bool = True,
     save_plot_data: bool = False,
     resume_from_path: str | None = None,
