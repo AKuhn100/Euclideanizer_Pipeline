@@ -562,6 +562,17 @@ def _html_content(manifest: dict) -> str:
     .filter-bar { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; align-items: center; margin-bottom: 1rem; padding: 0.5rem 0; }
     .filter-bar label { font-size: 0.85rem; color: var(--text-muted); }
     .filter-bar select { min-width: 100px; }
+    .radar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.25rem; }
+    .radar-grid-cell { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; text-align: center; }
+    .radar-grid-cell:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .radar-grid-cell img { max-width: 100%; height: auto; display: block; margin: 0 auto 0.5rem; }
+    .radar-grid-score { font-size: 1rem; font-weight: 600; color: var(--accent); }
+    .radar-grid-tooltip { position: absolute; left: 50%; transform: translateX(-50%); top: 100%; margin-top: 0.5rem; width: max-content; max-width: 320px; padding: 0.75rem; background: #1e1e1e; border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); font-size: 0.8rem; text-align: left; pointer-events: none; visibility: hidden; opacity: 0; transition: visibility 0.15s, opacity 0.15s; z-index: 20; }
+    .radar-grid-cell:hover .radar-grid-tooltip { visibility: visible; opacity: 1; }
+    .radar-grid-tooltip table { width: 100%; border-collapse: collapse; }
+    .radar-grid-tooltip th { text-align: left; padding: 0.25rem 0.5rem; color: var(--text-muted); font-weight: 500; }
+    .radar-grid-tooltip td { padding: 0.25rem 0.5rem; color: var(--text); }
+    .radar-grid-tooltip tr.section-row th { padding-top: 0.5rem; color: var(--accent); }
     @media (max-width: 768px) {
       .compare { grid-template-columns: 1fr; }
       .content { margin-left: 1rem; margin-right: 1rem; }
@@ -585,6 +596,7 @@ def _html_content(manifest: dict) -> str:
           <option value="detail">Detail</option>
           <option value="compare">Compare</option>
           <option value="aspect">Vary aspect</option>
+          <option value="radar_grid">Radar grid</option>
         </select>
       </span>
       <span class="control-group control-group-sep" aria-hidden="true">|</span>
@@ -1165,6 +1177,62 @@ def _html_content(manifest: dict) -> str:
       renderBlocks(run, document.getElementById('detailBlocks'));
     }
 
+    function getRunsWithScores() {
+      if (!manifest || !manifest.runs) return [];
+      const list = [];
+      manifest.runs.forEach(r => {
+        if (r.level !== 'euclideanizer') return;
+        const scoresBlock = (r.blocks || []).find(b => b.type === 'scores');
+        if (!scoresBlock || !scoresBlock.path) return;
+        const overall = scoresBlock.scores_data && typeof scoresBlock.scores_data.overall_score === 'number' && !Number.isNaN(scoresBlock.scores_data.overall_score) ? scoresBlock.scores_data.overall_score : null;
+        list.push({ run: r, overallScore: overall, scoresBlock: scoresBlock });
+      });
+      list.sort((a, b) => {
+        const sa = a.overallScore;
+        const sb = b.overallScore;
+        if (sa != null && sb != null) return sb - sa;
+        if (sa != null) return -1;
+        if (sb != null) return 1;
+        return 0;
+      });
+      return list;
+    }
+
+    function paramTooltipHtml(run) {
+      if (!run) return '';
+      let html = '<table>';
+      if (run.parent_params && Object.keys(run.parent_params).length) {
+        html += '<tr class="section-row"><th colspan="2">Frozen DistMap</th></tr>';
+        Object.keys(run.parent_params).sort().forEach(k => { html += '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(String(run.parent_params[k])) + '</td></tr>'; });
+      }
+      if (run.params && Object.keys(run.params).length) {
+        html += '<tr class="section-row"><th colspan="2">Euclideanizer</th></tr>';
+        Object.keys(run.params).sort().forEach(k => { html += '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(String(run.params[k])) + '</td></tr>'; });
+      }
+      html += '</table>';
+      return html;
+    }
+
+    function renderRadarGrid(container) {
+      const list = getRunsWithScores();
+      if (!list.length) {
+        container.innerHTML = '<div class="empty-state"><span class="empty-state-title">No scored runs</span><p>No Euclideanizer runs with scores (radar plots) found. Run scoring to see the radar grid.</p></div>';
+        return;
+      }
+      let html = '<div class="radar-grid">';
+      list.forEach(({ run, overallScore, scoresBlock }) => {
+        const scoreLabel = overallScore != null ? Number(overallScore).toFixed(4) : '—';
+        const tooltipHtml = paramTooltipHtml(run);
+        html += '<div class="radar-grid-cell">';
+        html += '<img loading="lazy" src="' + escapeHtml(scoresBlock.path) + '" alt="Scores">';
+        html += '<div class="radar-grid-score">' + escapeHtml(scoreLabel) + '</div>';
+        if (tooltipHtml) html += '<div class="radar-grid-tooltip" role="tooltip">' + tooltipHtml + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
     function updateContent() {
       if (!manifest) return;
       state.viewMode = viewModeEl ? viewModeEl.value : state.viewMode;
@@ -1172,6 +1240,12 @@ def _html_content(manifest: dict) -> str:
       viewCompareEl.style.display = state.viewMode === 'compare' ? 'inline-flex' : 'none';
       viewAspectEl.style.display = state.viewMode === 'aspect' ? 'inline-flex' : 'none';
       viewBrowseEl.style.display = state.viewMode === 'browse' ? 'inline-flex' : 'none';
+      if (state.viewMode === 'radar_grid') {
+        breadcrumbEl.style.display = 'none';
+        contentEl.innerHTML = '<div id="radarGridContainer"></div>';
+        renderRadarGrid(document.getElementById('radarGridContainer'));
+        return;
+      }
       if (state.viewMode === 'browse') {
         breadcrumbEl.style.display = 'block';
         renderBrowse();

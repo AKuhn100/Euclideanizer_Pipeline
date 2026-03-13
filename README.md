@@ -376,7 +376,7 @@ All outputs live under `output_dir` (from config or `--output-dir`). With multip
 
 Index `i` is the run index in the expanded DistMap grid; `j` is the Euclideanizer config index. When `plotting.save_data` is true, many plots also write a `data/` subdir with `.npz` files (see **Saved plot data**).
 
-When **dashboard.enabled** is true, the pipeline writes **dashboard/** in the run root (`output_dir/dashboard/`): `index.html`, `manifest.json`, and `assets/` (copies of plots and videos). Open `index.html` in a browser for an interactive report. Views: **Browse** (hierarchical drill-down: seeds → DistMap runs → Euclideanizer runs, with full parameters at each level), **Detail** (single run with full parameter panel and all blocks), **Compare** (side-by-side comparison of two DistMap runs or two Euclideanizer runs, with parameter panels and “Set as A” / “Set as B” from Browse or Detail), and **Vary aspect** (sweep one parameter on the x-axis with full context config per row; horizontal scroll when needed). Block order groups RMSD latent analysis after RMSD plots and Q latent analysis after Q plots.
+When **dashboard.enabled** is true, the pipeline writes **dashboard/** in the run root (`output_dir/dashboard/`): `index.html`, `manifest.json`, and `assets/` (copies of plots and videos). Open `index.html` in a browser for an interactive report. Views: **Browse** (hierarchical drill-down: seeds → DistMap runs → Euclideanizer runs, with full parameters at each level), **Detail** (single run with full parameter panel and all blocks), **Compare** (side-by-side comparison of two DistMap runs or two Euclideanizer runs, with parameter panels and “Set as A” / “Set as B” from Browse or Detail), **Vary aspect** (sweep one parameter on the x-axis with full context config per row; horizontal scroll when needed), and **Radar grid** (grid of all scored runs’ radar plots, ordered best-to-worst by overall score; hover a cell to see that run’s parameters). Block order groups RMSD latent analysis after RMSD plots and Q latent analysis after Q plots.
 
 ### Example tree (2 DistMap runs, 2 Euclideanizer configs)
 
@@ -492,7 +492,7 @@ Euclideanizer_Pipeline/
     clustering.py        # Coord and distmap clustering / dendrogram analysis (optional, via analysis.coord_clustering_* / distmap_clustering_*)
     gro_io.py            # Write 3D structures to GROMACS GRO format
     training_visualization.py  # Training videos (optional, requires ffmpeg)
-    dashboard.py         # Interactive HTML dashboard (Browse, Detail, Compare, Vary aspect)
+    dashboard.py         # Interactive HTML dashboard (Browse, Detail, Compare, Vary aspect, Radar grid)
     distmap/             # DistMap VAE (model, loss, sampling)
     euclideanizer/       # Euclideanizer model and frozen VAE loader
 ```
