@@ -563,7 +563,7 @@ def _html_content(manifest: dict) -> str:
     .filter-bar label { font-size: 0.85rem; color: var(--text-muted); }
     .filter-bar select { min-width: 100px; }
     .radar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1.25rem; }
-    .radar-grid-cell { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; text-align: center; }
+    .radar-grid-cell { position: relative; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem; text-align: center; cursor: pointer; }
     .radar-grid-cell:hover { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
     .radar-grid-cell img { max-width: 100%; height: auto; display: block; margin: 0 auto 0.5rem; }
     .radar-grid-score { font-size: 1rem; font-weight: 600; color: var(--accent); }
@@ -1073,8 +1073,7 @@ def _html_content(manifest: dict) -> str:
             const run = getRunById(id);
             if (!run || run.level === 'seed') return;
             state.compareLevel = run.level; state.compareRunA = id; state.compareRunB = null;
-            state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = id; runBEl.value = '';
-            updateContent();
+            levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = id; runBEl.value = '';
           });
         });
         contentEl.querySelectorAll('[data-set-compare-b]').forEach(btn => {
@@ -1084,8 +1083,7 @@ def _html_content(manifest: dict) -> str:
             if (!run || run.level === 'seed') return;
             if (run.level !== state.compareLevel) state.compareRunA = null;
             state.compareLevel = run.level; state.compareRunB = id;
-            state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = id;
-            updateContent();
+            levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = id;
           });
         });
         return;
@@ -1116,8 +1114,7 @@ def _html_content(manifest: dict) -> str:
           const run = getRunById(id);
           if (!run || run.level === 'seed') return;
           state.compareLevel = run.level; state.compareRunA = id; state.compareRunB = null;
-          state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = id; runBEl.value = '';
-          updateContent();
+          levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = id; runBEl.value = '';
         });
       });
       contentEl.querySelectorAll('[data-set-compare-b]').forEach(btn => {
@@ -1127,8 +1124,7 @@ def _html_content(manifest: dict) -> str:
           if (!run || run.level === 'seed') return;
           if (run.level !== state.compareLevel) state.compareRunA = null;
           state.compareLevel = run.level; state.compareRunB = id;
-          state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = id;
-          updateContent();
+          levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = id;
         });
       });
     }
@@ -1165,14 +1161,12 @@ def _html_content(manifest: dict) -> str:
       contentEl.innerHTML = html;
       document.getElementById('btnSetCompareA').addEventListener('click', function() {
         state.compareLevel = run.level; state.compareRunA = run.id; state.compareRunB = null;
-        state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = run.id; runBEl.value = '';
-        updateContent();
+        levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); runAEl.value = run.id; runBEl.value = '';
       });
       document.getElementById('btnSetCompareB').addEventListener('click', function() {
         if (run.level !== state.compareLevel) state.compareRunA = null;
         state.compareLevel = run.level; state.compareRunB = run.id;
-        state.viewMode = 'compare'; viewModeEl.value = 'compare'; levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = run.id;
-        updateContent();
+        levelEl.value = run.level; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; runBEl.value = run.id;
       });
       renderBlocks(run, document.getElementById('detailBlocks'));
     }
@@ -1223,7 +1217,7 @@ def _html_content(manifest: dict) -> str:
       list.forEach(({ run, overallScore, scoresBlock }) => {
         const scoreLabel = overallScore != null ? Number(overallScore).toFixed(4) : '—';
         const tooltipHtml = paramTooltipHtml(run);
-        html += '<div class="radar-grid-cell">';
+        html += '<div class="radar-grid-cell" data-run-id="' + escapeHtml(run.id) + '" role="button" tabindex="0" aria-label="View run details">';
         html += '<img loading="lazy" src="' + escapeHtml(scoresBlock.path) + '" alt="Scores">';
         html += '<div class="radar-grid-score">' + escapeHtml(scoreLabel) + '</div>';
         if (tooltipHtml) html += '<div class="radar-grid-tooltip" role="tooltip">' + tooltipHtml + '</div>';
@@ -1231,6 +1225,18 @@ def _html_content(manifest: dict) -> str:
       });
       html += '</div>';
       container.innerHTML = html;
+      container.querySelectorAll('.radar-grid-cell').forEach(cell => {
+        function goToDetail() {
+          const runId = cell.getAttribute('data-run-id');
+          if (!runId) return;
+          state.detailRunId = runId;
+          state.viewMode = 'detail';
+          viewModeEl.value = 'detail';
+          updateContent();
+        }
+        cell.addEventListener('click', goToDetail);
+        cell.addEventListener('keydown', function(e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToDetail(); } });
+      });
     }
 
     function updateContent() {
