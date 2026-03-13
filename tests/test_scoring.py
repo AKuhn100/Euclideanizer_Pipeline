@@ -188,3 +188,4 @@ def test_compute_scores_from_data_latent():
     assert "latent_stds" in result["component_scores"]
     assert result["component_scores"]["latent_means"] == 1.0  # identical -> MAE 0 -> score 1
     assert result["component_scores"]["latent_stds"] == 1.0
+

@@ -1,7 +1,7 @@
 """
 Latent space visualization: distribution (box plots + mean/std per dimension) and
 correlation (train vs test mean and std). Used by the standalone analysis.latent
-block (one plot set per Euclideanizer run under plots/latent/).
+block (one plot set per Euclideanizer run under analysis/latent/).
 """
 from __future__ import annotations
 

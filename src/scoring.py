@@ -19,17 +19,21 @@ except ImportError:
 # Fixed tau = 1 for exponential kernel score = exp(-d)
 TAU = 1.0
 
-# Categories and component ids for output (order matches spec summary)
-CATEGORY_ORDER = [
-    "recon",
-    "gen",
-    "gen_rmsd",
-    "recon_rmsd",
-    "latent",
-    "gen_q",
-    "recon_q",
-    "clustering",
+# Canonical order for component scores (recon 8, gen 4, gen_rmsd 2, recon_rmsd 2, latent 2, gen_q 2, recon_q 2; clustering appended in sorted order)
+COMPONENT_ORDER = [
+    "recon_scaling_train", "recon_scaling_test", "recon_rg_train", "recon_rg_test",
+    "recon_pairwise_train", "recon_pairwise_test", "recon_avgmap_train", "recon_avgmap_test",
+    "gen_rg", "gen_scaling", "gen_pairwise", "gen_avgmap",
+    "gen_rmsd_train_vs_tt", "gen_rmsd_test_vs_tt",
+    "recon_rmsd_train", "recon_rmsd_test",
+    "latent_means", "latent_stds",
+    "gen_q_train_vs_tt", "gen_q_test_vs_tt",
+    "recon_q_train", "recon_q_test",
 ]
+
+# Dedicated scoring output directory under each Euclideanizer run (like plots/, analysis/)
+SCORING_DIR = "scoring"
+SCORES_SPIDER_FILENAME = "scores_spider.png"
 
 # Clustering mixing key to component id (coord vs distmap, gen vs recon)
 CLUSTERING_KEY_TO_COMPONENT = {
@@ -299,7 +303,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
     """
     Compute all component scores from a data dict (arrays and scalars).
     data keys are the same as the keyword args expected by _recon_components, _gen_components, etc.
-    Returns dict with: overall_score, category_scores, component_scores, present, missing.
+    Returns dict with: overall_score, component_scores, present, missing.
     """
     component_scores: dict[str, float] = {}
     # Recon (8)
@@ -393,37 +397,168 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             component_scores[comp_name] = exp_score(d)
 
     present = [k for k, v in component_scores.items() if np.isfinite(v) and 0 <= v <= 1]
-    scores_list = [component_scores[k] for k in present]
-    overall = geometric_mean(scores_list) if scores_list else float("nan")
-
-    category_scores: dict[str, float] = {}
-    _category_prefix = {
-        "recon": "recon_",
-        "gen": "gen_",
-        "gen_rmsd": "gen_rmsd_",
-        "recon_rmsd": "recon_rmsd_",
-        "latent": "latent_",
-        "gen_q": "gen_q_",
-        "recon_q": "recon_q_",
-        "clustering": "clustering_",
-    }
-    for cat in CATEGORY_ORDER:
-        prefix = _category_prefix.get(cat, cat + "_")
-        cat_components = [k for k in present if k.startswith(prefix)]
-        if not cat_components:
-            continue
-        cat_scores = [component_scores[k] for k in cat_components]
-        category_scores[cat] = geometric_mean(cat_scores)
-
     missing = [k for k in component_scores if k not in present]
+    # Overall score only when all components are present, so composite scores are comparable across runs.
+    scores_list = [component_scores[k] for k in present]
+    overall = (
+        geometric_mean(scores_list)
+        if (scores_list and not missing)
+        else float("nan")
+    )
 
     return {
         "overall_score": overall,
-        "category_scores": category_scores,
         "component_scores": component_scores,
         "present": present,
         "missing": missing,
     }
+
+
+def _component_order_for_spider(component_scores: dict[str, float]) -> list[str]:
+    """Return component ids in canonical order: COMPONENT_ORDER then any clustering_* keys sorted."""
+    order = [c for c in COMPONENT_ORDER if c in component_scores]
+    order += sorted(k for k in component_scores if k.startswith("clustering_"))
+    return order
+
+
+def render_scores_spider(
+    scores_data: dict[str, Any],
+    output_dir: str,
+    *,
+    save_pdf: bool = False,
+) -> str | None:
+    """
+    Draw a clean radar/spider chart of all component scores.
+    Saves PNG (and optional PDF) under output_dir. Returns path to PNG or None on failure.
+    Uses plot_config colors; all points use COLOR_GEN. Red labels for missing components.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from .plot_config import (
+        COLOR_GEN,
+        COLOR_GRAY_LIGHT,
+        COLOR_GRAY_TEXT,
+        PLOT_DPI,
+        FONT_SIZE_TICK,
+        FONT_SIZE_SMALL,
+    )
+
+    component_scores = scores_data.get("component_scores") or {}
+    components = _component_order_for_spider(component_scores)
+    if not components:
+        return None
+
+    missing_set = set(scores_data.get("missing") or [])
+    values = [float(component_scores.get(c, 0.0)) for c in components]
+    n = len(components)
+
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
+    angles_closed = angles + angles[:1]
+    values_closed = values + values[:1]
+
+    # Figure setup
+    fig = plt.figure(figsize=(8, 8), facecolor="white")
+    ax = fig.add_subplot(111, projection="polar", facecolor="white")
+
+    # Grid rings
+    ring_levels = [0.25, 0.5, 0.75, 1.0]
+    for level in ring_levels:
+        ring_vals = [level] * (n + 1)
+        ax.plot(
+            angles_closed, ring_vals,
+            color=COLOR_GRAY_LIGHT, linewidth=0.6, linestyle="-", zorder=1,
+        )
+
+    # Spoke lines
+    for angle in angles:
+        ax.plot(
+            [angle, angle], [0, 1],
+            color=COLOR_GRAY_LIGHT, linewidth=0.5, linestyle="-", zorder=1,
+        )
+
+    # Filled area and line (COLOR_GEN)
+    ax.fill(angles_closed, values_closed, alpha=0.12, color=COLOR_GEN, zorder=2)
+    ax.plot(
+        angles_closed, values_closed,
+        color=COLOR_GEN, linewidth=1.5, zorder=3,
+    )
+
+    # Data points: all COLOR_GEN
+    for angle, value in zip(angles, values):
+        ax.scatter(
+            [angle], [value],
+            s=40, color=COLOR_GEN, edgecolors=COLOR_GEN, linewidths=0.8,
+            zorder=4,
+        )
+
+    # Axis appearance
+    ax.set_ylim(0, 1)
+    ax.set_yticks(ring_levels)
+    ax.set_yticklabels(
+        [f"{v:.2f}" for v in ring_levels],
+        fontsize=FONT_SIZE_TICK, color=COLOR_GRAY_TEXT,
+    )
+    ax.yaxis.set_tick_params(pad=2)
+
+    ax.set_xticks(angles)
+    ax.set_xticklabels([])
+    ax.grid(False)
+    ax.spines["polar"].set_visible(False)
+
+    # Custom tick labels (red for missing, gray for present)
+    label_padding = 1.13
+    for angle, comp in zip(angles, components):
+        is_missing = comp in missing_set
+        color = "#C44444" if is_missing else COLOR_GRAY_TEXT
+
+        short = comp.replace("_", " ")
+
+        ha = "left"
+        va = "center"
+        x_deg = np.degrees(angle) % 360
+        if 10 < x_deg < 170:
+            va = "bottom"
+        elif 190 < x_deg < 350:
+            va = "top"
+        if 90 < x_deg < 270:
+            ha = "right"
+
+        ax.text(
+            angle, label_padding, short,
+            ha=ha, va=va,
+            fontsize=FONT_SIZE_SMALL,
+            color=color,
+            fontweight="500" if is_missing else "normal",
+            transform=ax.get_xaxis_transform(),
+        )
+
+    ax.set_rlabel_position(90)
+
+    # Overall score badge
+    present_scores = [v for v, c in zip(values, components) if c not in missing_set]
+    if present_scores and not missing_set:
+        overall = float(np.exp(np.mean(np.log([s for s in present_scores if s > 0]))))
+        fig.text(
+            0.5, 0.02,
+            f"overall  {overall:.3f}",
+            ha="center", va="bottom",
+            fontsize=FONT_SIZE_SMALL, color=COLOR_GRAY_TEXT,
+        )
+
+    # Save
+    plt.tight_layout(pad=1.5)
+    os.makedirs(output_dir, exist_ok=True)
+    png_path = os.path.join(output_dir, SCORES_SPIDER_FILENAME)
+    try:
+        fig.savefig(png_path, dpi=PLOT_DPI, bbox_inches="tight", facecolor="white")
+        if save_pdf:
+            pdf_path = os.path.splitext(png_path)[0] + ".pdf"
+            fig.savefig(pdf_path, bbox_inches="tight", format="pdf", facecolor="white")
+    finally:
+        plt.close(fig)
+    return png_path
 
 
 def _load_npz_safe(path: str) -> dict[str, np.ndarray] | None:
@@ -560,10 +695,10 @@ def compute_and_save(
                 data["test_to_train_q"] = tt_q_npz[k]
                 break
 
-    # Latent
-    latent_npz = os.path.join(run_dir, "plots", "latent", "data", "latent_stats.npz")
+    # Latent (under analysis/latent/data/)
+    latent_npz = os.path.join(analysis_dir, "latent", "data", "latent_stats.npz")
     if not os.path.isfile(latent_npz):
-        latent_npz = os.path.join(analysis_dir, "latent", "data", "latent_stats.npz")
+        latent_npz = os.path.join(run_dir, "plots", "latent", "data", "latent_stats.npz")  # backward compat
     lat = _load_npz_safe(latent_npz)
     if lat:
         data["latent_mean_train"] = lat.get("mean_train")
@@ -600,13 +735,13 @@ def compute_and_save(
 
     result = compute_scores_from_data(data)
 
-    out_path = os.path.join(run_dir, scores_filename)
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    scoring_dir = os.path.join(run_dir, SCORING_DIR)
+    os.makedirs(scoring_dir, exist_ok=True)
+    out_path = os.path.join(scoring_dir, scores_filename)
     with open(out_path, "w") as f:
         json.dump(
             {
                 "overall_score": result["overall_score"],
-                "category_scores": result["category_scores"],
                 "component_scores": result["component_scores"],
                 "present": result["present"],
                 "missing": result["missing"],
@@ -614,4 +749,6 @@ def compute_and_save(
             f,
             indent=2,
         )
+    save_pdf = bool(cfg.get("scoring", {}).get("save_pdf_copy", False))
+    render_scores_spider(result, scoring_dir, save_pdf=save_pdf)
     return out_path

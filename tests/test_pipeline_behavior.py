@@ -708,7 +708,7 @@ def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missi
 
 
 def test_euclideanizer_analysis_all_present_true_when_q_recon_exists(tmp_path):
-    """When do_q_recon is True, recon figure must exist (no per-metric latent; use analysis.latent for plots/latent/)."""
+    """When do_q_recon is True, recon figure must exist (no per-metric latent; use analysis.latent for analysis/latent/)."""
     (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "q" / "recon").mkdir(parents=True)
@@ -775,10 +775,10 @@ def test_euclideanizer_analysis_all_present_true_when_recon_exists(tmp_path):
 
 
 def test_euclideanizer_analysis_all_present_true_when_latent_enabled_and_exists(tmp_path):
-    """When analysis.latent is enabled, plots/latent/latent_distribution.png and latent_correlation.png must exist."""
-    (tmp_path / "plots" / "latent").mkdir(parents=True)
-    (tmp_path / "plots" / "latent" / "latent_distribution.png").write_bytes(b"x")
-    (tmp_path / "plots" / "latent" / "latent_correlation.png").write_bytes(b"x")
+    """When analysis.latent is enabled, analysis/latent/latent_distribution.png and latent_correlation.png must exist."""
+    (tmp_path / "analysis" / "latent").mkdir(parents=True)
+    (tmp_path / "analysis" / "latent" / "latent_distribution.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "latent" / "latent_correlation.png").write_bytes(b"x")
     analysis_cfg = {
         "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
         "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
@@ -790,7 +790,7 @@ def test_euclideanizer_analysis_all_present_true_when_latent_enabled_and_exists(
 
 
 def test_euclideanizer_analysis_all_present_false_when_latent_enabled_but_missing(tmp_path):
-    """When analysis.latent is enabled but plots/latent/ figures are missing, analysis is not all present."""
+    """When analysis.latent is enabled but analysis/latent/ figures are missing, analysis is not all present."""
     analysis_cfg = {
         "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
         "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
@@ -949,7 +949,6 @@ def test_scoring_compute_scores_from_data_empty_reports_missing():
     """With no data, compute_scores_from_data returns structure with empty present and nan overall."""
     result = scoring_module.compute_scores_from_data({})
     assert "overall_score" in result
-    assert "category_scores" in result
     assert "component_scores" in result
     assert "present" in result
     assert "missing" in result
@@ -980,11 +979,11 @@ def test_scoring_compute_and_save_creates_scores_json(tmp_path):
     cfg = _load_test_config()
     out = scoring_module.compute_and_save(str(run_dir), str(seed_dir), cfg, scores_filename="scores.json")
     assert out is not None
-    assert os.path.isfile(os.path.join(run_dir, "scores.json"))
-    with open(os.path.join(run_dir, "scores.json"), encoding="utf-8") as f:
+    scores_path = os.path.join(run_dir, scoring_module.SCORING_DIR, "scores.json")
+    assert os.path.isfile(scores_path)
+    with open(scores_path, encoding="utf-8") as f:
         data = json.load(f)
     assert "overall_score" in data
-    assert "category_scores" in data
     assert "present" in data
     assert "missing" in data
 
@@ -1003,7 +1002,7 @@ def test_scoring_compute_and_save_no_overwrite_when_called_still_writes(tmp_path
     np.savez(run_dir / "plots" / "recon_statistics" / "data" / "recon_statistics_test_data.npz", recon_rg=arr, recon_scaling=arr, recon_avg_map=arr)
     cfg = _load_test_config()
     scoring_module.compute_and_save(str(run_dir), str(seed_dir), cfg)
-    path = os.path.join(run_dir, "scores.json")
+    path = os.path.join(run_dir, scoring_module.SCORING_DIR, "scores.json")
     assert os.path.isfile(path)
     first_mtime = os.path.getmtime(path)
     scoring_module.compute_and_save(str(run_dir), str(seed_dir), cfg)

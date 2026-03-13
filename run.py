@@ -330,6 +330,27 @@ def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) 
     elif component in ("distmap_clustering_gen", "distmap_clustering_recon"):
         subdir = "gen" if component == "distmap_clustering_gen" else "recon"
         target = os.path.join("analysis", "distmap_clustering", subdir)
+    elif component == "latent":
+        for target in (os.path.join("analysis", "latent"), os.path.join("plots", "latent")):
+            for seed in seeds:
+                seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+                if not os.path.isdir(seed_dir):
+                    continue
+                distmap_dir = os.path.join(seed_dir, "distmap")
+                if not os.path.isdir(distmap_dir):
+                    continue
+                for dm_name in os.listdir(distmap_dir):
+                    if not dm_name.isdigit():
+                        continue
+                    eu_dir = os.path.join(distmap_dir, dm_name, "euclideanizer")
+                    if not os.path.isdir(eu_dir):
+                        continue
+                    for eu_name in os.listdir(eu_dir):
+                        if not eu_name.isdigit():
+                            continue
+                        if os.path.isdir(os.path.join(eu_dir, eu_name, target)):
+                            return True
+        return False
     else:
         return False
     for seed in seeds:
@@ -351,6 +372,22 @@ def _has_any_analysis_output(base_output_dir: str, seeds: list, component: str) 
                 if os.path.isdir(os.path.join(eu_dir, eu_name, target)):
                     return True
     return False
+
+
+def _has_any_scoring_output(base_output_dir: str, seeds: list) -> bool:
+    """True if any Euclideanizer run has scoring/scores.json."""
+    for run_dir_eu, _ in _iter_euclideanizer_runs(base_output_dir):
+        if os.path.isfile(os.path.join(run_dir_eu, scoring_module.SCORING_DIR, "scores.json")):
+            return True
+    return False
+
+
+def _delete_scoring_outputs(base_output_dir: str) -> None:
+    """Remove scoring/ directory under each Euclideanizer run."""
+    for run_dir_eu, _ in _iter_euclideanizer_runs(base_output_dir):
+        scoring_dir = os.path.join(run_dir_eu, scoring_module.SCORING_DIR)
+        if os.path.isdir(scoring_dir):
+            shutil.rmtree(scoring_dir, ignore_errors=True)
 
 
 def _iter_euclideanizer_runs(base_output_dir: str):
@@ -456,7 +493,7 @@ def _delete_reference_size_caches(base_output_dir: str, seeds: list, components:
 def _confirm_reference_size_cache_purge(components: set) -> None:
     """Prompt user to confirm removal of cached data when reference-size config changed. Else abort."""
     labels = sorted(components)
-    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "coord_clustering": "Coord clustering (train/test feats)", "distmap_clustering": "Distmap clustering (train/test feats)", "latent": "Latent (plots/latent/; no seed cache)"}
+    names = {"plotting": "Plotting (train/test stats)", "rmsd": "RMSD (test→train)", "q": "Q (test→train)", "coord_clustering": "Coord clustering (train/test feats)", "distmap_clustering": "Distmap clustering (train/test feats)", "latent": "Latent (analysis/latent/; no seed cache)"}
     line = "=" * 70
     print()
     print(_red(line))
@@ -521,6 +558,29 @@ def _delete_analysis_outputs_for_component(base_output_dir: str, seeds: list, co
     elif component in ("distmap_clustering_gen", "distmap_clustering_recon"):
         subdir = "gen" if component == "distmap_clustering_gen" else "recon"
         target = os.path.join("analysis", "distmap_clustering", subdir)
+    elif component == "latent":
+        targets = [os.path.join("analysis", "latent"), os.path.join("plots", "latent")]
+        for seed in seeds:
+            seed_dir = os.path.join(base_output_dir, f"seed_{seed}")
+            if not os.path.isdir(seed_dir):
+                continue
+            distmap_dir = os.path.join(seed_dir, "distmap")
+            if not os.path.isdir(distmap_dir):
+                continue
+            for dm_name in os.listdir(distmap_dir):
+                if not dm_name.isdigit():
+                    continue
+                eu_dir = os.path.join(distmap_dir, dm_name, "euclideanizer")
+                if not os.path.isdir(eu_dir):
+                    continue
+                for eu_name in os.listdir(eu_dir):
+                    if not eu_name.isdigit():
+                        continue
+                    for target in targets:
+                        path = os.path.join(eu_dir, eu_name, target)
+                        if os.path.isdir(path):
+                            shutil.rmtree(path, ignore_errors=True)
+        return
     else:
         return
     for seed in seeds:
@@ -1196,7 +1256,7 @@ def _euclideanizer_analysis_all_present(
                             return False
     latent_cfg = analysis_cfg["latent"]
     if latent_cfg["enabled"]:
-        latent_dir = os.path.join(run_dir_eu, "plots", "latent")
+        latent_dir = os.path.join(run_dir_eu, "analysis", "latent")
         if not os.path.isfile(os.path.join(latent_dir, "latent_distribution.png")) or not os.path.isfile(os.path.join(latent_dir, "latent_correlation.png")):
             return False
     return True
@@ -1583,6 +1643,28 @@ def _get_latent_vectors_euclideanizer(frozen_vae, device, coords, training_split
     if max_test is not None and test_mu.shape[0] > max_test:
         test_mu = test_mu[:max_test]
     return train_mu, test_mu
+
+
+def _run_scoring_for_run(
+    run_dir_eu: str,
+    seed_dir: str,
+    cfg: dict,
+    base_output_dir: str,
+    pipeline_start: float,
+) -> None:
+    """Run scoring for one Euclideanizer run (after a plotting/analysis block). Always overwrites scores with current data."""
+    if not cfg.get("scoring", {}).get("enabled", False):
+        return
+    try:
+        out_path = scoring_module.compute_and_save(run_dir_eu, seed_dir, cfg, scores_filename="scores.json")
+        if out_path:
+            _log(
+                f"Scoring: {utils.display_path(out_path, base_output_dir)}",
+                since_start=time.time() - pipeline_start,
+                style="success",
+            )
+    except Exception as e:
+        _log(f"Scoring failed for {run_dir_eu}: {e}", since_start=time.time() - pipeline_start, style="error")
 
 
 def _force_gpu_cleanup(device: torch.device) -> None:
@@ -2017,8 +2099,9 @@ def _run_one_distmap_group(
                                 elif resume:
                                     _log("  [skip] bond_length_by_genomic_distance", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+                            _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
     
-                        # Single analysis loop over registered metrics (order: rmsd, then q).
+                        # Analysis: latent first (as one analysis block), then registered metrics (rmsd, q, coord_clustering, distmap_clustering). Score after each block.
                         any_analysis = any(
                             analysis_cfg[spec.gen_key]["enabled"] or analysis_cfg[spec.recon_key]["enabled"]
                             for spec in ANALYSIS_METRICS
@@ -2028,7 +2111,42 @@ def _run_one_distmap_group(
                                 seed_test_to_train_holder[0] = {}
                             _cache = seed_test_to_train_holder[0]
                             analysis_phase_start = time.time()
-                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (min-RMSD + Q)...", since_start=time.time() - pipeline_start, style="info")
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (latent + metrics)...", since_start=time.time() - pipeline_start, style="info")
+                            # Latent block first (analysis block)
+                            latent_cfg = analysis_cfg["latent"]
+                            do_latent = latent_cfg["enabled"] and coords is not None
+                            if do_latent:
+                                latent_dir = os.path.join(run_dir_eu, "analysis", "latent")
+                                latent_fig = os.path.join(latent_dir, "latent_distribution.png")
+                                latent_corr_fig = os.path.join(latent_dir, "latent_correlation.png")
+                                latent_data_dir = os.path.join(latent_dir, "data")
+                                latent_stats_npz = os.path.join(latent_data_dir, "latent_stats.npz")
+                                if not (resume and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig)):
+                                    train_mu_lat, test_mu_lat = _get_latent_vectors_euclideanizer(
+                                        frozen_vae, device, coords, training_split, split_seed, utils,
+                                        max_train=analysis_cfg.get("latent_max_train"),
+                                        max_test=analysis_cfg.get("latent_max_test"),
+                                    )
+                                    os.makedirs(latent_dir, exist_ok=True)
+                                    plot_latent_distribution(
+                                        train_mu_lat, test_mu_lat, latent_fig,
+                                        plot_dpi=plot_dpi, display_root=base_output_dir,
+                                        save_pdf_copy=latent_cfg["save_pdf_copy"],
+                                    )
+                                    plot_latent_correlation(
+                                        train_mu_lat, test_mu_lat, latent_corr_fig,
+                                        plot_dpi=plot_dpi, display_root=base_output_dir,
+                                        save_pdf_copy=latent_cfg["save_pdf_copy"],
+                                    )
+                                    effective_latent_save = latent_cfg["save_data"] or cfg["scoring"]["enabled"]
+                                    if effective_latent_save:
+                                        save_latent_stats_npz(
+                                            train_mu_lat, test_mu_lat, latent_stats_npz,
+                                            display_root=base_output_dir,
+                                        )
+                                elif resume:
+                                    _log("  [skip] latent (all present)", since_start=time.time() - pipeline_start, style="skip")
+                            _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
                             for spec in ANALYSIS_METRICS:
                                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
@@ -2151,42 +2269,8 @@ def _run_one_distmap_group(
                                                 )
                                             elif resume and n_recon == 1:
                                                 _log(f"  [skip] {spec.id} recon", since_start=time.time() - pipeline_start, style="skip")
+                                _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-    
-                        # Latent block: one plot per run (analysis.latent), own max_train/max_test
-                        latent_cfg = analysis_cfg["latent"]
-                        do_latent = latent_cfg["enabled"] and coords is not None
-                        if do_latent:
-                            latent_dir = os.path.join(run_dir_eu, "plots", "latent")
-                            latent_fig = os.path.join(latent_dir, "latent_distribution.png")
-                            latent_corr_fig = os.path.join(latent_dir, "latent_correlation.png")
-                            latent_data_dir = os.path.join(latent_dir, "data")
-                            latent_stats_npz = os.path.join(latent_data_dir, "latent_stats.npz")
-                            if not (resume and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig)):
-                                train_mu_lat, test_mu_lat = _get_latent_vectors_euclideanizer(
-                                    frozen_vae, device, coords, training_split, split_seed, utils,
-                                    max_train=analysis_cfg.get("latent_max_train"),
-                                    max_test=analysis_cfg.get("latent_max_test"),
-                                )
-                                os.makedirs(latent_dir, exist_ok=True)
-                                plot_latent_distribution(
-                                    train_mu_lat, test_mu_lat, latent_fig,
-                                    plot_dpi=plot_dpi, display_root=base_output_dir,
-                                    save_pdf_copy=latent_cfg["save_pdf_copy"],
-                                )
-                                plot_latent_correlation(
-                                    train_mu_lat, test_mu_lat, latent_corr_fig,
-                                    plot_dpi=plot_dpi, display_root=base_output_dir,
-                                    save_pdf_copy=latent_cfg["save_pdf_copy"],
-                                )
-                                effective_latent_save = latent_cfg["save_data"] or cfg["scoring"]["enabled"]
-                                if effective_latent_save:
-                                    save_latent_stats_npz(
-                                        train_mu_lat, test_mu_lat, latent_stats_npz,
-                                        display_root=base_output_dir,
-                                    )
-                            elif resume:
-                                _log("  [skip] latent (all present)", since_start=time.time() - pipeline_start, style="skip")
     
                         del embed, frozen_vae
                         torch.cuda.empty_cache()
@@ -2823,6 +2907,8 @@ def main():
         ("coord_clustering_recon", do_coord_clustering_recon_cfg, analysis_cfg["coord_clustering_recon"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, seeds, "coord_clustering_recon")),
         ("distmap_clustering_gen", do_distmap_clustering_gen, analysis_cfg["distmap_clustering_gen"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, seeds, "distmap_clustering_gen")),
         ("distmap_clustering_recon", do_distmap_clustering_recon_cfg, analysis_cfg["distmap_clustering_recon"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, seeds, "distmap_clustering_recon")),
+        ("latent", analysis_cfg["latent"]["enabled"], analysis_cfg["latent"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, seeds, "latent")),
+        ("scoring", scoring_enabled, cfg["scoring"]["overwrite_existing"], lambda: _has_any_scoring_output(base_output_dir, seeds)),
     ]
     to_overwrite = [label for (label, en, ov, has_out) in _overwrite_descriptors if en and ov and has_out()]
     if to_overwrite:
@@ -2833,6 +2919,8 @@ def main():
         for label in to_overwrite:
             if label == "plotting":
                 _delete_plotting_outputs_only(base_output_dir, seeds)
+            elif label == "scoring":
+                _delete_scoring_outputs(base_output_dir)
             else:
                 _delete_analysis_outputs_for_component(base_output_dir, seeds, label)
         _log("Done removing; will re-run these components.", since_start=time.time() - pipeline_start, style="success")
@@ -2900,6 +2988,8 @@ def main():
                     chunks_to_update.add("distmap_clustering_gen")
                 if s_analysis.get("distmap_clustering_recon") != e_analysis.get("distmap_clustering_recon"):
                     chunks_to_update.add("distmap_clustering_recon")
+                if s_analysis.get("latent") != e_analysis.get("latent"):
+                    chunks_to_update.add("latent")
         chunks_to_update = sorted(chunks_to_update)  # stable order: rmsd_gen, rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
             chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
@@ -2932,7 +3022,7 @@ def main():
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
         # Only prompt and delete for chunks that actually have existing outputs
-        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)"}
+        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)", "latent": "Latent"}
         chunks_with_outputs = [
             c for c in chunks_still_to_delete
             if (c == "plotting" and _has_any_plotting_output(base_output_dir, seeds))
@@ -3022,10 +3112,12 @@ def main():
             distmap_clustering_variance_list=distmap_clustering_variance_list, distmap_clustering_num_samples_list=distmap_clustering_num_samples_list,
             distmap_clustering_max_recon_train_list=distmap_clustering_max_recon_train_list, distmap_clustering_max_recon_test_list=distmap_clustering_max_recon_test_list,
         )
-    need_any = needs.need_any() and data_path
+    # Run pipeline when any output is missing (same as plotting/analysis: overwrite is handled by upfront delete, then need = output missing)
+    scoring_needs_run = scoring_enabled and not _has_any_scoring_output(base_output_dir, seeds)
+    need_any = (needs.need_any() or scoring_needs_run) and data_path
 
-    # Remove dashboard only when this run will actually execute at least one plotting or analysis step (so we don't delete when everything is already present and we skip)
-    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg):
+    # Remove dashboard when we will run any block (plotting, analysis, or scoring) so it gets rebuilt with current outputs
+    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg or scoring_needs_run):
         _delete_dashboard(base_output_dir)
 
     stats_only_ok = False
@@ -3321,32 +3413,8 @@ def main():
             assemble_video_fn=assemble_video_fn,
         )
 
-    # Scoring: per-run scores from NPZ; then delete NPZ for blocks with save_data false
+    # Post-scoring cleanup: remove NPZ for blocks where save_data is false (scoring runs after each block inside the pipeline)
     if scoring_enabled:
-        overwrite_scoring = cfg["scoring"]["overwrite_existing"]
-        scores_filename = "scores.json"
-        for run_dir_eu, seed_dir in _iter_euclideanizer_runs(base_output_dir):
-            scores_path = os.path.join(run_dir_eu, scores_filename)
-            if os.path.isfile(scores_path) and not overwrite_scoring:
-                continue
-            try:
-                out_path = scoring_module.compute_and_save(run_dir_eu, seed_dir, cfg, scores_filename=scores_filename)
-                if out_path:
-                    _log(f"Scoring: {utils.display_path(out_path, base_output_dir)}", since_start=time.time() - pipeline_start, style="success")
-                    with open(out_path, encoding="utf-8") as _f:
-                        _scores = json.load(_f)
-                    _missing = _scores.get("missing") or []
-                    if _missing:
-                        _log(
-                            f"Scoring: some data is missing for {utils.display_path(run_dir_eu, base_output_dir)}. "
-                            f"Missing components: {', '.join(_missing)}. "
-                            "Re-run the pipeline with the relevant plotting/analysis blocks enabled (or with scoring enabled after running those blocks) to generate these scores.",
-                            since_start=time.time() - pipeline_start,
-                            style="error",
-                        )
-            except Exception as e:
-                _log(f"Scoring failed for {run_dir_eu}: {e}", since_start=time.time() - pipeline_start, style="error")
-        # Post-scoring cleanup: remove NPZ for blocks where save_data is false
         plot_cfg = cfg["plotting"]
         ana = cfg["analysis"]
         for run_dir_eu, _ in _iter_euclideanizer_runs(base_output_dir):
@@ -3359,8 +3427,8 @@ def main():
                     dd = os.path.join(var_dir, "data")
                     if os.path.isdir(dd):
                         shutil.rmtree(dd, ignore_errors=True)
-            if ana["latent"] and not ana["latent"]["save_data"]:
-                latent_data = os.path.join(run_dir_eu, "plots", "latent", "data")
+            if ana.get("latent") and not ana.get("latent", {}).get("save_data", True):
+                latent_data = os.path.join(run_dir_eu, "analysis", "latent", "data")
                 if os.path.isdir(latent_data):
                     shutil.rmtree(latent_data, ignore_errors=True)
             for spec in ANALYSIS_METRICS:
