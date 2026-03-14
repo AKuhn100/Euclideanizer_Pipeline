@@ -1401,6 +1401,7 @@ def _pipeline_data_needs(
     distmap_clustering_num_samples_list: list | None = None,
     distmap_clustering_max_recon_train_list: list | None = None,
     distmap_clustering_max_recon_test_list: list | None = None,
+    do_latent: bool = False,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
@@ -1436,6 +1437,7 @@ def _pipeline_data_needs(
         "distmap_clustering_num_samples_list": distmap_clustering_num_samples_list or [],
         "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
         "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
+        "do_latent": do_latent,
     })
     for seed in seeds:
         output_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -2280,7 +2282,8 @@ def _run_one_distmap_group(
     dm_max_epoch = max(ev for _, ev in checkpoints)
     prev_dm_path = None
     prev_dm_ev = None
-    
+    dm_stopped_early = False
+
     for seg_idx, (ri, ev) in enumerate(checkpoints):
         run_dir_dm = checkpoint_dirs[seg_idx]
         dm_path = _dm_path(run_dir_dm)
@@ -2455,6 +2458,7 @@ def _run_one_distmap_group(
             eu_max_epoch = max(ev for _, ev in eu_checkpoints)
             prev_eu_path = None
             prev_eu_ev = None
+            eu_stopped_early = False
             for eu_seg_idx, (euri, eu_ev) in enumerate(eu_checkpoints):
                 eu_run_dir = eu_checkpoint_dirs[eu_seg_idx]
                 eu_path_seg = _eu_path(eu_run_dir)
@@ -3653,6 +3657,7 @@ def main():
             do_distmap_clustering_gen=do_distmap_clustering_gen, do_distmap_clustering_recon=do_distmap_clustering_recon_cfg,
             distmap_clustering_variance_list=distmap_clustering_variance_list, distmap_clustering_num_samples_list=distmap_clustering_num_samples_list,
             distmap_clustering_max_recon_train_list=distmap_clustering_max_recon_train_list, distmap_clustering_max_recon_test_list=distmap_clustering_max_recon_test_list,
+            do_latent=analysis_cfg["latent"]["enabled"],
         )
     # Run pipeline when any output is missing (same as plotting/analysis: overwrite is handled by upfront delete, then need = output missing)
     scoring_needs_run = scoring_enabled and not _has_any_scoring_output(base_output_dir, seeds)
