@@ -33,7 +33,7 @@ search_space:
 # Optuna study; stored at output_dir/hpo_study.db by default (path identifies the run; no study_name config).
 optuna:
   n_trials: 20   # number of trials to run (or use --n-trials-add when resuming)
-  show_progress_bar: true   # if false, no tqdm bar; stdout is a clean stream of pipeline _log() and training output (best when n_jobs=1)
+  show_progress_bar: true   # if false, no tqdm bar; stdout is a clean stream of pipeline _log() and training output
   # Sampler (optimization algorithm). Top-level seed is injected into sampler_kwargs if not set.
   # Options: TPESampler (default), RandomSampler, CmaEsSampler (no categoricals), NSGAIISampler, QMCSampler, GridSampler, BruteForceSampler (see optuna.samplers).
   sampler: "TPESampler"
@@ -45,5 +45,4 @@ optuna:
   pruner_patient: true   # if true, wrap the pruner in PatientPruner (don't prune until val loss hasn't improved for pruner_patience steps)
   pruner_patience: 5   # number of consecutive steps without improvement before allowing prune (used when pruner_patient is true)
 
-n_gpus: null   # number of GPUs; null = use all available. Trial N uses GPU (N % n_gpus). Parallel trials: n_jobs = min(n_trials, n_gpus) by default so all GPUs are used (e.g. 8 H200s → 8 trials at once). Pruning works with n_jobs > 1 when using file-based SQLite storage.
-n_jobs: null   # parallel trials; null = min(n_trials, n_gpus). Set to 1 to force one trial at a time (e.g. to debug pruning).
+n_gpus: null   # number of GPUs; null = use all available. run_hpo.py auto-spawns one worker per GPU when n_gpus > 1.

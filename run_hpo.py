@@ -5,19 +5,17 @@ Optuna-based HPO for DistMap + Euclideanizer. Joint optimization; objective = ov
   python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.gro]
   python run_hpo.py --config samples/hpo_config.yaml --resume --n-trials-add 50
 
-Logging: Each trial writes a full pipeline-style log to output_dir/trial_N/pipeline.log (same
-format as run.py). An HPO-level summary is in output_dir/hpo.log (trial completed/pruned/failed).
-With n_jobs=1 and a TTY, stdout is wrapped so you see the same styled, verbose pipeline output
-as run.py; set optuna.show_progress_bar: false to get a clean stream without the tqdm bar. With
-n_jobs>1, follow hpo.log or tail trial_N/pipeline.log for progress.
+Multi-GPU: When multiple GPUs are available, run_hpo.py automatically spawns one worker per GPU
+(shared SQLite study DB). Set n_gpus in config to limit (e.g. n_gpus: 2); omit or null to use all.
 
-Multi-GPU: By default n_jobs = min(n_trials, n_gpus), so e.g. 8 H200s run 8 trials in
-parallel. Trial N uses GPU (N % n_gpus). Pruning works with n_jobs > 1 when using
-file-based SQLite storage (default). Set n_jobs: 1 in HPO config to force one trial at a time.
+Logging: Each trial writes output_dir/trial_N/pipeline.log; HPO summary in output_dir/hpo.log.
+With a TTY, stdout is wrapped for styled pipeline output; set optuna.show_progress_bar: false
+for a clean stream.
 """
 from __future__ import annotations
 
 import argparse
+import subprocess
 from typing import Any
 import copy
 import json
@@ -98,7 +96,7 @@ def _hpo_configs_match_for_resume(current: dict, saved: dict, data_path_resolved
     """Compare current vs saved HPO config. Only n_trials and show_progress_bar may differ. Return (match, list of diff messages)."""
     diffs = []
     # Compare top-level (output_dir, seed, epoch_cap, search_space, etc.)
-    for key in ("output_dir", "data_path", "seed", "epoch_cap", "pipeline_config", "search_space", "n_gpus", "n_jobs"):
+    for key in ("output_dir", "data_path", "seed", "epoch_cap", "pipeline_config", "search_space", "n_gpus"):
         if key not in saved and key not in current:
             continue
         c = current.get(key)
@@ -338,6 +336,11 @@ def main() -> int:
         metavar="N",
         help="With --resume: number of additional trials to run",
     )
+    parser.add_argument(
+        "--worker",
+        action="store_true",
+        help="Worker mode: one GPU (CUDA_VISIBLE_DEVICES set by launcher); use MaxTrialsCallback to stop at n_trials total.",
+    )
     args = parser.parse_args()
 
     if optuna is None:
@@ -357,6 +360,32 @@ def main() -> int:
         return 1
     output_root = str(Path(hpo_cfg["output_dir"]).resolve())
     Path(output_root).mkdir(parents=True, exist_ok=True)  # create before Optuna opens SQLite DB in output_root
+    n_gpus = _get_n_gpus(hpo_cfg)
+
+    # Multi-GPU: spawn one worker per GPU (shared study DB); workers stop at n_trials total via MaxTrialsCallback.
+    if not args.worker and n_gpus > 1:
+        run_hpo_path = str(_SCRIPT_DIR / "run_hpo.py")
+        cmd = [sys.executable, run_hpo_path, "--config", args.config, "--worker"]
+        if args.data is not None:
+            cmd.extend(["--data", args.data])
+        if args.resume:
+            cmd.append("--resume")
+        if args.n_trials_add is not None:
+            cmd.extend(["--n-trials-add", str(args.n_trials_add)])
+        procs = []
+        for i in range(n_gpus):
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = str(i)
+            p = subprocess.Popen(cmd, env=env, cwd=str(_SCRIPT_DIR))
+            procs.append((i, p))
+        exit_codes = []
+        for i, p in procs:
+            code = p.wait()
+            exit_codes.append((i, code))
+            if code != 0:
+                print(f"Worker GPU {i} exited with {code}", file=sys.stderr)
+        return 0 if all(c == 0 for _, c in exit_codes) else 1
+
     data_path = _resolve_data_path(hpo_cfg, args.data)
     seed = int(hpo_cfg.get("seed", 10))
     pipeline_config_path = hpo_cfg["pipeline_config"]
@@ -375,7 +404,6 @@ def main() -> int:
     n_trials = int(optuna_cfg.get("n_trials", 100))
     pruner_name = optuna_cfg.get("pruner", "MedianPruner")
     pruner_kwargs = optuna_cfg.get("pruner_kwargs") or {}
-    n_gpus = _get_n_gpus(hpo_cfg)
 
     # Study storage: default is output_dir/hpo_study.db so the path identifies the run. No study_name config.
     storage_cfg = optuna_cfg.get("storage")
@@ -448,10 +476,14 @@ def main() -> int:
     failed_log_path = Path(output_root) / FAILED_TRIALS_LOG
 
     def objective(trial: optuna.Trial) -> float:
-        # Round-robin GPU assignment: trial N uses GPU (N % n_gpus). CUDA_VISIBLE_DEVICES set so only that device is visible.
-        gpu_id = trial.number % n_gpus
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # Worker mode: launcher set CUDA_VISIBLE_DEVICES so only one GPU is visible; use cuda:0.
+        # Non-worker: round-robin trial N → GPU (N % n_gpus) via CUDA_VISIBLE_DEVICES.
+        if args.worker:
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        else:
+            gpu_id = trial.number % n_gpus
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         trial_params = _suggest_params(trial, search_space)
         trial_dir = str((Path(output_root) / f"trial_{trial.number}").resolve())
@@ -473,24 +505,19 @@ def main() -> int:
             )
         except optuna.TrialPruned:
             raise
-        except optuna.TrialFailedException:
-            raise
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"
             _append_failure_log(str(failed_log_path), trial.number, trial_params, reason)
-            raise optuna.TrialFailedException(reason) from e
+            raise RuntimeError(reason) from e
 
         if score != score or score < 0 or score > 1:
             reason = "overall_score out of [0, 1] or NaN"
             _append_failure_log(str(failed_log_path), trial.number, trial_params, reason)
-            raise optuna.TrialFailedException(reason)
+            raise RuntimeError(reason)
         return float(score)
 
-    # Use up to n_gpus workers so each parallel trial gets its own GPU. With file-based SQLite storage,
-    # Optuna shares intermediate values (trial.report) across processes so pruning still works. Set n_jobs: 1 in HPO config to force single-GPU (e.g. if pruning behaves oddly).
-    n_jobs_cfg = hpo_cfg.get("n_jobs")
-    n_jobs = int(n_jobs_cfg) if n_jobs_cfg is not None else min(n_trials, n_gpus)
-    n_jobs = max(1, min(n_jobs, n_trials))
+    # Parallelism is one trial at a time per process. Multi-GPU is via the launcher (one process per GPU).
+    n_jobs = 1
     show_progress_bar = optuna_cfg.get("show_progress_bar", True)
 
     # When single-GPU, we will wrap stdout/stderr for run.py-style styled output; remember so we can restore in finally.
@@ -500,7 +527,7 @@ def main() -> int:
     hpo_log_path = Path(output_root) / "hpo.log"
     hpo_log_file = open(hpo_log_path, "a", encoding="utf-8")
     hpo_log_file.write("\n" + "=" * 60 + "\n")
-    hpo_log_file.write(f"HPO started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  n_trials={n_trials}  n_jobs={n_jobs}\n")
+    hpo_log_file.write(f"HPO started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  n_trials={n_trials}  worker={args.worker}\n")
     hpo_log_file.write("=" * 60 + "\n")
     hpo_log_file.flush()
 
@@ -521,13 +548,20 @@ def main() -> int:
         sys.stderr = run_module._StyledStderr(run_module._pipeline_real_stderr)
         _hpo_wrapped_stdout = True
 
+    # In worker mode, run until MaxTrialsCallback stops us (total trials across all workers >= n_trials).
+    callbacks = [_hpo_log_callback]
+    if args.worker:
+        from optuna.study import MaxTrialsCallback
+        callbacks.append(MaxTrialsCallback(n_trials, states=None))
+    optimize_n_trials = n_trials if not args.worker else max(n_trials, 1) + 10000
+
     try:
         study.optimize(
             objective,
-            n_trials=n_trials,
+            n_trials=optimize_n_trials,
             n_jobs=n_jobs,
             show_progress_bar=show_progress_bar,
-            callbacks=[_hpo_log_callback],
+            callbacks=callbacks,
         )
     except Exception as e:
         traceback.print_exc()
@@ -557,7 +591,7 @@ def main() -> int:
             for t in study.trials
         ],
         "best_trial_number": best.number if best else None,
-        "n_gpus": n_gpus,
+        "n_gpus": _get_n_gpus(hpo_cfg),
     }
     with open(dashboard_dir / "manifest.json", "w") as f:
         json.dump(manifest, f, indent=2)

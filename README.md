@@ -83,13 +83,15 @@ A separate entry point **`run_hpo.py`** runs Optuna-based joint optimization of 
 python run_hpo.py --config samples/hpo_config.yaml --data /path/to/coordinates.gro
 ```
 
-Trials run **in-process** (or in parallel workers when `n_jobs` > 1) with **round-robin GPU assignment** (trial N → GPU `N % n_gpus`). Each trial runs the full pipeline (train DistMap → train Euclideanizer → plotting → analysis → scoring); validation loss is reported every epoch for pruning, and the objective is the pipeline **overall score** from `scores.json`. To **resume** and run more trials after a previous run:
+Each trial runs the full pipeline (train DistMap → train Euclideanizer → plotting → analysis → scoring); validation loss is reported every epoch for pruning. To **resume** and run more trials:
 
 ```bash
 python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.gro --resume --n-trials-add 50
 ```
 
-HPO config defines: `output_dir` (required; trials and study DB live here), `data_path`, `seed` (train/test split and Optuna sampler), `epoch_cap` (max epochs per trial; overrides pipeline epochs when set), `pipeline_config` (YAML path; use `samples/config_sample_hpo.yaml` as the pipeline template for trials), `search_space` (tuned params only), `optuna` (n_trials, sampler/sampler_kwargs, pruner/pruner_kwargs, pruner_patient/pruner_patience, show_progress_bar), `n_gpus`, and `n_jobs` (parallel trials; default `min(n_trials, n_gpus)`). Study is stored at `output_dir/hpo_study.db`. The HPO config is saved to `output_dir/hpo_config.yaml` (with resolved paths) when the study is first run; when adding trials to an existing study, the current config must match that saved config except for `n_trials` and `show_progress_bar`. **Logging:** each trial writes `output_dir/trial_N/pipeline.log`; HPO-level summary (completed/pruned/failed) goes to `output_dir/hpo.log`. With `n_jobs=1` and a TTY, pipeline log output is mirrored to stdout with the same styling as `run.py`. **Resume:** same config + `--resume --n-trials-add N`; trial numbers continue. See `Pipeline/HPO_SPEC.md` for the full design.
+**Multi-GPU:** The same command auto-uses all available GPUs. When more than one GPU is detected (or `n_gpus` in config is > 1), `run_hpo.py` spawns one worker per GPU sharing the same SQLite study DB; workers stop when total trials reach `n_trials`. Set `n_gpus` in config to limit (e.g. `n_gpus: 2`); omit or null to use all.
+
+HPO config: `output_dir` (required), `data_path`, `seed`, `epoch_cap`, `pipeline_config`, `search_space`, `optuna` (n_trials, sampler, pruner, show_progress_bar), `n_gpus` (optional; null = use all GPUs). Study at `output_dir/hpo_study.db`; config saved to `output_dir/hpo_config.yaml` on first run; when adding trials, config must match except `n_trials` and `show_progress_bar`. **Logging:** `output_dir/trial_N/pipeline.log` per trial; `output_dir/hpo.log` for HPO summary. See `Pipeline/HPO_SPEC.md` for the full design.
 
 
 ### Running on a cluster (SLURM)

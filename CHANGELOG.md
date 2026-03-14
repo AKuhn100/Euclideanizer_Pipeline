@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-03-14 (Single HPO entry point; auto multi-GPU)
+
+- **One entry point:** `run_hpo.py` is the only HPO entry point. When more than one GPU is detected (or `n_gpus` in config is > 1), it automatically spawns one worker per GPU (shared SQLite study DB) and waits for them. Otherwise it runs in-process. Removed `run_hpo_launch.py`; use `run_hpo.py` only.
+- **n_gpus:** Omit or set to null in config to use all available GPUs; set e.g. `n_gpus: 2` to limit. Updated README and HPO_SPEC.
+
+## 2026-03-14 (Multi-GPU HPO launcher; n_jobs removed)
+
+- **Multi-GPU HPO:** Added `run_hpo_launch.py`: reads `n_gpus` from HPO config (or all visible GPUs), spawns one `run_hpo.py --worker` per GPU with `CUDA_VISIBLE_DEVICES=i`. All workers share the same SQLite study DB; Optuna coordinates trials; workers stop when total trials reach `n_trials` (MaxTrialsCallback). Killing the launcher stops all workers; study is resumable.
+- **run_hpo.py --worker:** Uses single GPU (cuda:0); adds MaxTrialsCallback(n_trials, states=None); optimize(n_trials=n_trials+10000) so callback stops first. Objective does not set CUDA_VISIBLE_DEVICES in worker mode (launcher sets it).
+- **n_jobs removed:** HPO always runs one trial at a time per process (n_jobs=1). Removed `n_jobs` from config, config-match keys, and sample `hpo_config.yaml`. Parallelism only via launcher. Updated README, HPO_SPEC.md, specs/HPO_SPEC.md.
+
+## 2026-03-14 (HPO n_jobs and GPU OOM)
+
+- **Optuna uses threads for n_jobs>1**, not separate processes, so all parallel trials run in one process and share the same GPU(s). With n_jobs=8 that puts 8× (coords, model, batch) on one GPU → OOM even with 651 atoms and latent_dim=512. Default when GPUs are present is now **n_jobs=1**; added a warning when n_jobs>1 with GPU. README and sample hpo_config updated. Use n_jobs: 1 for GPU runs; to use multiple GPUs run multiple separate processes sharing the same output_dir.
+
+## 2026-03-14 (HPO TrialFailedException compatibility)
+
+- **Optuna 4.7 compatibility.** Optuna 4.7 does not provide `TrialFailedException`; any exception from the objective marks the trial as FAIL. Replaced `optuna.TrialFailedException` with `RuntimeError` when signalling trial failure so HPO runs on Optuna 4.7+.
+
 ## 2026-03-14 (HPO config saved and enforced on resume)
 
 - **Saved HPO config.** When the first trials are run for a study, the HPO config is saved to `output_dir/hpo_config.yaml` (with data_path and pipeline_config resolved) so the run is documented and reproducible.
