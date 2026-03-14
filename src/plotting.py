@@ -232,13 +232,29 @@ def plot_recon_statistics(
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
     if save_plot_data:
         recon_avg_map = np.mean(recon_dm, axis=0)
-        _save_plot_data_npz(
-            output_path,
-            display_root=display_root,
+        save_dict = dict(
             exp_bonds=true_bonds, exp_rg=true_rg, genomic_distances=s, exp_scaling=true_sc,
             recon_bonds=recon_bonds, recon_rg=recon_rg, recon_scaling=recon_sc,
             recon_avg_map=recon_avg_map,
         )
+        # Raw pairwise d(i,i+s) per lag for scoring: use all genomic lags (scoring computes mean Wasserstein)
+        exp_dm = exp_stats.get("exp_distmaps")
+        if exp_dm is not None:
+            N = recon_dm.shape[1]
+            k_values = _k_values_all_lags(N)
+            if len(k_values) > 0:
+                pairwise_exp_d = np.array(
+                    [distmap_distances_at_lag(exp_dm, int(k)) for k in k_values],
+                    dtype=object,
+                )
+                pairwise_recon_d = np.array(
+                    [distmap_distances_at_lag(recon_dm, int(k)) for k in k_values],
+                    dtype=object,
+                )
+                save_dict["pairwise_k_values"] = np.array(k_values)
+                save_dict["pairwise_exp_d"] = pairwise_exp_d
+                save_dict["pairwise_recon_d"] = pairwise_recon_d
+        _save_plot_data_npz(output_path, display_root=display_root, **save_dict)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
 
@@ -332,9 +348,7 @@ def plot_gen_analysis(
     plt.savefig(output_path, dpi=dpi)
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
     if save_plot_data:
-        _save_plot_data_npz(
-            output_path,
-            display_root=display_root,
+        save_dict = dict(
             sample_variance=np.array(sample_variance),
             train_bonds=train_b, train_rg=train_rg, train_scaling=train_sc,
             test_bonds=test_b, test_rg=test_rg, test_scaling=test_sc,
@@ -342,13 +356,44 @@ def plot_gen_analysis(
             avg_train_map=avg_train, avg_test_map=avg_test, avg_gen_map=avg_gen,
             diff_test_train=diff_tt, diff_train_gen=diff_tg, diff_test_gen=diff_test_gen,
         )
+        # Raw pairwise d(i,i+s) per lag for scoring: use all genomic lags (scoring computes mean Wasserstein)
+        train_dm = train_stats.get("exp_distmaps")
+        test_dm = test_stats.get("exp_distmaps")
+        if train_dm is not None and test_dm is not None:
+            N = gen_distmaps.shape[1]
+            k_values = _k_values_all_lags(N)
+            if len(k_values) > 0:
+                pairwise_gen_d = np.array(
+                    [distmap_distances_at_lag(gen_distmaps, int(k)) for k in k_values],
+                    dtype=object,
+                )
+                pairwise_exp_composite_d = np.array(
+                    [
+                        np.concatenate([
+                            distmap_distances_at_lag(train_dm, int(k)),
+                            distmap_distances_at_lag(test_dm, int(k)),
+                        ])
+                        for k in k_values
+                    ],
+                    dtype=object,
+                )
+                save_dict["pairwise_k_values"] = np.array(k_values)
+                save_dict["pairwise_gen_d"] = pairwise_gen_d
+                save_dict["pairwise_exp_composite_d"] = pairwise_exp_composite_d
+        _save_plot_data_npz(output_path, display_root=display_root, **save_dict)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
 
 
 # -------- Bond length by genomic distance (train / test / gen) --------
-NUM_K_DEFAULT = 20
+NUM_K_DEFAULT = 20  # max lags shown in the 5×4 grid plot
 GRID_SHAPE = (5, 4)  # 5x4 subplots
+
+
+def _k_values_all_lags(N: int) -> np.ndarray:
+    """All genomic lags k in [1, N-1]. Used for scoring (pairwise Wasserstein mean over lags)."""
+    max_sep = max(1, N - 1)
+    return np.arange(1, max_sep + 1, dtype=np.int64)
 
 
 def _k_values_evenly_spaced(N: int, num_k: int = NUM_K_DEFAULT) -> np.ndarray:

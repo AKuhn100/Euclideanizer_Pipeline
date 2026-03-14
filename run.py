@@ -1229,9 +1229,10 @@ def _euclideanizer_analysis_all_present(
         num_samples_list_s = _ensure_list(gen_cfg["num_samples"])
         if do_gen:
             for var in variance_list_s:
-                variance_suffix = f"_var{var}" if len(variance_list_s) > 1 else ""
+                # Always include variance in run_name so scoring can require sample_variance=1 only
+                variance_suffix = f"_var{var}"
                 for n in num_samples_list_s:
-                    run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(num_samples_list_s) > 1 else "default")
+                    run_name = (str(n) if len(num_samples_list_s) > 1 else "default") + variance_suffix
                     fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
                     if not os.path.isfile(fig_path):
                         return False
@@ -2200,10 +2201,11 @@ def _run_one_distmap_group(
                                     pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                                     extra_kw = spec.gen_extra_kwargs(analysis_cfg)
                                     for var in _variance_list:
-                                        variance_suffix = f"_var{var}" if len(_variance_list) > 1 else ""
+                                        # Always include variance in run_name so scoring uses only variance=1 data
+                                        variance_suffix = f"_var{var}"
                                         any_missing = False
                                         for n in _num_samples_list:
-                                            run_name = (str(n) + variance_suffix) if variance_suffix else (str(n) if len(_num_samples_list) > 1 else "default")
+                                            run_name = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
                                             fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
                                             if not (resume and os.path.isfile(fig_path)):
                                                 any_missing = True
@@ -2223,8 +2225,8 @@ def _run_one_distmap_group(
                                                 )
                                             else:
                                                 n = _num_samples_list[0]
-                                                run_name_single = (str(n) + variance_suffix) if (variance_suffix or len(_num_samples_list) > 1) else "default"
-                                                output_suffix = ("_" + run_name_single) if run_name_single != "default" else ""
+                                                run_name_single = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
+                                                output_suffix = "_" + run_name_single
                                                 spec.run_gen_analysis(
                                                     coords_np, coords, training_split, split_seed,
                                                     frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,

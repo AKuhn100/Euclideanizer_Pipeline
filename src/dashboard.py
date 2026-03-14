@@ -58,21 +58,19 @@ def _run_config_dir(run_root: str) -> str:
 
 
 def _label_from_distmap_config(cfg: Optional[dict], seed: int, dm_index: int) -> tuple[str, str]:
+    short = f"Seed {seed} · DM {dm_index}"
     if not cfg or "distmap" not in cfg:
-        return f"Seed {seed} · DistMap {dm_index}", f"seed_{seed} distmap {dm_index}"
+        return short, f"seed_{seed}_dm_{dm_index}"
     d = cfg["distmap"]
-    parts = [f"β_kl={d.get('beta_kl')}", f"epochs={d.get('epochs')}", f"latent_dim={d.get('latent_dim')}"]
-    short = f"Seed {seed} · DM {dm_index} " + ", ".join(str(p) for p in parts if p.split("=")[-1] not in (None, ""))
     long_parts = [f"seed={seed}", f"distmap_index={dm_index}"] + [f"distmap.{k}={v}" for k, v in (d or {}).items()]
     return short, " ".join(long_parts)
 
 
 def _label_from_euclideanizer_config(cfg: Optional[dict], seed: int, dm_index: int, eu_index: int) -> tuple[str, str]:
+    short = f"Seed {seed} · DM {dm_index} · Eu {eu_index}"
     if not cfg or "euclideanizer" not in cfg:
-        return f"Seed {seed} · DM {dm_index} · Eu {eu_index}", f"seed_{seed}_dm_{dm_index}_eu_{eu_index}"
+        return short, f"seed_{seed}_dm_{dm_index}_eu_{eu_index}"
     e = cfg["euclideanizer"]
-    parts = [f"epochs={e.get('epochs')}", f"num_diags={e.get('num_diags')}"]
-    short = f"Seed {seed} · DM {dm_index} · Eu {eu_index} " + ", ".join(str(p) for p in parts if p.split("=")[-1] not in (None, ""))
     long_parts = [f"seed={seed}", f"dm={dm_index}", f"eu={eu_index}"] + [f"euclideanizer.{k}={v}" for k, v in (e or {}).items()]
     return short, " ".join(long_parts)
 
@@ -153,6 +151,7 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, Any]]:
                 "scores_data": {
                     "overall_score": data.get("overall_score"),
                     "component_scores": data.get("component_scores") or {},
+                    "missing": data.get("missing") or [],
                 },
             })
         except (json.JSONDecodeError, OSError):
@@ -914,9 +913,13 @@ def _html_content(manifest: dict) -> str:
           const sd = b.scores_data || {};
           const overall = sd.overall_score;
           const comps = sd.component_scores || {};
+          const missing = sd.missing || [];
           let scoreHtml = '';
           if (typeof overall === 'number' && !Number.isNaN(overall)) {
             scoreHtml += '<div class="scores-overall">Overall: <strong>' + escapeHtml(String(Number(overall).toFixed(4))) + '</strong></div>';
+          } else {
+            const missingTip = missing.length ? ('Missing: ' + missing.join(', ')) : 'Not all 30 components present';
+            scoreHtml += '<div class="scores-overall" title="' + escapeHtml(missingTip) + '">Overall: <strong>Missing data</strong></div>';
           }
           if (b.path) {
             scoreHtml += '<img loading="lazy" src="' + b.path + '" alt="Scores spider">';
@@ -1215,8 +1218,12 @@ def _html_content(manifest: dict) -> str:
       }
       let html = '<div class="radar-grid">';
       list.forEach(({ run, overallScore, scoresBlock }) => {
-        const scoreLabel = overallScore != null ? Number(overallScore).toFixed(4) : '—';
-        const tooltipHtml = paramTooltipHtml(run);
+        const scoreLabel = overallScore != null ? Number(overallScore).toFixed(4) : 'Missing data';
+        let tooltipHtml = paramTooltipHtml(run);
+        const missing = (scoresBlock.scores_data && scoresBlock.scores_data.missing) || [];
+        if (missing.length) {
+          tooltipHtml += '<tr class="section-row"><th colspan="2">Missing components</th></tr><tr><td colspan="2" style="font-size:0.85em">' + escapeHtml(missing.join(', ')) + '</td></tr>';
+        }
         html += '<div class="radar-grid-cell" data-run-id="' + escapeHtml(run.id) + '" role="button" tabindex="0" aria-label="View run details">';
         html += '<img loading="lazy" src="' + escapeHtml(scoresBlock.path) + '" alt="Scores">';
         html += '<div class="radar-grid-score">' + escapeHtml(scoreLabel) + '</div>';

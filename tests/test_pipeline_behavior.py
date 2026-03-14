@@ -685,7 +685,7 @@ def test_euclideanizer_analysis_all_present_true_when_no_q(tmp_path):
 
 def test_euclideanizer_analysis_all_present_true_when_q_gen_outputs_exist(tmp_path):
     """When do_q is True and gen outputs exist at analysis/q/gen/<run_name>/q_distributions.png, Q gen is present."""
-    run_dir = tmp_path / "analysis" / "q" / "gen" / "default"
+    run_dir = tmp_path / "analysis" / "q" / "gen" / "default_var1.0"
     run_dir.mkdir(parents=True)
     (run_dir / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -697,8 +697,8 @@ def test_euclideanizer_analysis_all_present_true_when_q_gen_outputs_exist(tmp_pa
 
 def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missing(tmp_path):
     """When do_q_recon is True and recon figure is missing, analysis is not all present."""
-    (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "q" / "gen" / "default_var1.0").mkdir(parents=True)
+    (tmp_path / "analysis" / "q" / "gen" / "default_var1.0" / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=True, do_q_recon=True,
@@ -709,8 +709,8 @@ def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missi
 
 def test_euclideanizer_analysis_all_present_true_when_q_recon_exists(tmp_path):
     """When do_q_recon is True, recon figure must exist (no per-metric latent; use analysis.latent for analysis/latent/)."""
-    (tmp_path / "analysis" / "q" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "q" / "gen" / "default" / "q_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "q" / "gen" / "default_var1.0").mkdir(parents=True)
+    (tmp_path / "analysis" / "q" / "gen" / "default_var1.0" / "q_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "q" / "recon").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "recon" / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -739,8 +739,8 @@ def test_pipeline_data_needs_need_coords_true_when_q_enabled_and_outputs_missing
 
 def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path):
     """When do_rmsd is True and gen outputs exist at analysis/rmsd/gen/<run_name>/, analysis is all present."""
-    # Single variance and single num_samples -> run_name is "default"
-    run_dir = tmp_path / "analysis" / "rmsd" / "gen" / "default"
+    # Single variance and single num_samples -> run_name is "default_var1.0" (variance always in path)
+    run_dir = tmp_path / "analysis" / "rmsd" / "gen" / "default_var1.0"
     run_dir.mkdir(parents=True)
     (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -751,7 +751,7 @@ def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path
 
 def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing(tmp_path):
     """When do_rmsd_recon is True and recon figure is missing, analysis is not all present."""
-    run_dir = tmp_path / "analysis" / "rmsd" / "gen" / "default"
+    run_dir = tmp_path / "analysis" / "rmsd" / "gen" / "default_var1.0"
     run_dir.mkdir(parents=True)
     (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -763,8 +763,8 @@ def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing
 
 def test_euclideanizer_analysis_all_present_true_when_recon_exists(tmp_path):
     """When do_rmsd_recon is True, recon figure must exist (no per-metric latent)."""
-    (tmp_path / "analysis" / "rmsd" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "rmsd" / "gen" / "default" / "rmsd_distributions.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "rmsd" / "gen" / "default_var1.0").mkdir(parents=True)
+    (tmp_path / "analysis" / "rmsd" / "gen" / "default_var1.0" / "rmsd_distributions.png").write_bytes(b"x")
     (tmp_path / "analysis" / "rmsd" / "recon").mkdir(parents=True)
     (tmp_path / "analysis" / "rmsd" / "recon" / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -803,7 +803,7 @@ def test_euclideanizer_analysis_all_present_false_when_latent_enabled_but_missin
 
 def test_euclideanizer_analysis_all_present_true_when_coord_clustering_gen_exists(tmp_path):
     """When do_coord_clustering_gen is True and primary figure exists at analysis/coord_clustering/gen/.../mixed_dendrograms.png, coord clustering gen is present."""
-    run_dir = tmp_path / "analysis" / "coord_clustering" / "gen" / "default"
+    run_dir = tmp_path / "analysis" / "coord_clustering" / "gen" / "default_var1.0"
     run_dir.mkdir(parents=True)
     (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -816,7 +816,7 @@ def test_euclideanizer_analysis_all_present_true_when_coord_clustering_gen_exist
 
 def test_euclideanizer_analysis_all_present_true_when_distmap_clustering_gen_exists(tmp_path):
     """When do_distmap_clustering_gen is True and primary figure exists at analysis/distmap_clustering/gen/.../mixed_dendrograms.png, distmap clustering gen is present."""
-    run_dir = tmp_path / "analysis" / "distmap_clustering" / "gen" / "default"
+    run_dir = tmp_path / "analysis" / "distmap_clustering" / "gen" / "default_var1.0"
     run_dir.mkdir(parents=True)
     (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
@@ -829,8 +829,8 @@ def test_euclideanizer_analysis_all_present_true_when_distmap_clustering_gen_exi
 
 def test_euclideanizer_analysis_all_present_false_when_coord_clustering_recon_enabled_but_missing(tmp_path):
     """When do_coord_clustering_recon is True and recon figure is missing, analysis is not all present."""
-    (tmp_path / "analysis" / "coord_clustering" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "coord_clustering" / "gen" / "default" / "mixed_dendrograms.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "coord_clustering" / "gen" / "default_var1.0").mkdir(parents=True)
+    (tmp_path / "analysis" / "coord_clustering" / "gen" / "default_var1.0" / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=False, do_q_recon=False,
@@ -842,8 +842,8 @@ def test_euclideanizer_analysis_all_present_false_when_coord_clustering_recon_en
 
 def test_euclideanizer_analysis_all_present_false_when_distmap_clustering_recon_enabled_but_missing(tmp_path):
     """When do_distmap_clustering_recon is True and recon figure is missing, analysis is not all present."""
-    (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default").mkdir(parents=True)
-    (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default" / "mixed_dendrograms.png").write_bytes(b"x")
+    (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default_var1.0").mkdir(parents=True)
+    (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default_var1.0" / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
         str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
         do_q=False, do_q_recon=False,
@@ -954,10 +954,10 @@ def test_scoring_compute_scores_from_data_empty_reports_missing():
     assert "missing" in result
     assert isinstance(result["missing"], list)
     assert isinstance(result["present"], list)
-    # Component builders omit entries when data is missing, so empty data -> no components
+    # All 30 expected components are filled (nan when no data); missing = expected - present
     assert len(result["present"]) == 0
-    assert len(result["component_scores"]) == 0
-    assert result["missing"] == []
+    assert len(result["component_scores"]) == len(scoring_module.EXPECTED_COMPONENTS)
+    assert len(result["missing"]) == len(scoring_module.EXPECTED_COMPONENTS)
     assert math.isnan(result["overall_score"])
 
 
