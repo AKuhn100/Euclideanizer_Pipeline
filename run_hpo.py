@@ -362,12 +362,60 @@ def main() -> int:
     Path(output_root).mkdir(parents=True, exist_ok=True)  # create before Optuna opens SQLite DB in output_root
     n_gpus = _get_n_gpus(hpo_cfg)
 
+    # Create or load the study once so the DB is initialized by a single process (avoids race when spawning workers).
+    seed = int(hpo_cfg.get("seed", 10))
+    optuna_cfg = hpo_cfg["optuna"]
+    storage_cfg = optuna_cfg.get("storage")
+    if storage_cfg:
+        storage = storage_cfg
+        if storage.startswith("sqlite:///") and not os.path.isabs(storage.replace("sqlite:///", "")):
+            storage = f"sqlite:///{Path(output_root) / storage.replace('sqlite:///', '')}"
+    else:
+        storage = f"sqlite:///{Path(output_root) / 'hpo_study.db'}"
+    study_name = "hpo"
+    sampler = _build_sampler(optuna_cfg, seed)
+    if args.resume:
+        try:
+            study = optuna.load_study(
+                study_name=study_name,
+                storage=storage,
+                sampler=sampler,
+            )
+        except KeyError:
+            print("Resume requested but no study found at storage. Run without --resume first.", file=sys.stderr)
+            return 1
+        n_trials = args.n_trials_add or 20
+    else:
+        pruner_name = optuna_cfg.get("pruner", "MedianPruner")
+        pruner_kwargs = optuna_cfg.get("pruner_kwargs") or {}
+        pruner_cls = getattr(optuna.pruners, pruner_name, None)
+        if pruner_cls is None:
+            pruner = optuna.pruners.MedianPruner(**pruner_kwargs)
+        else:
+            pruner = pruner_cls(**pruner_kwargs)
+        if optuna_cfg.get("pruner_patient"):
+            pruner_patience = int(optuna_cfg.get("pruner_patience", 5))
+            pruner = optuna.pruners.PatientPruner(pruner, patience=pruner_patience)
+        study = optuna.create_study(
+            study_name=study_name,
+            storage=storage,
+            load_if_exists=True,
+            direction="maximize",
+            sampler=sampler,
+            pruner=pruner,
+        )
+        n_trials = int(optuna_cfg.get("n_trials", 100))
+        if args.n_trials_add is not None:
+            n_trials = args.n_trials_add
+
     # Multi-GPU: spawn one worker per GPU (shared study DB); workers stop at n_trials total via MaxTrialsCallback.
+    # Use absolute paths for --config and --data so workers find files when cwd is Pipeline.
     if not args.worker and n_gpus > 1:
         run_hpo_path = str(_SCRIPT_DIR / "run_hpo.py")
-        cmd = [sys.executable, run_hpo_path, "--config", args.config, "--worker"]
+        config_abs = str(Path(args.config).resolve())
+        cmd = [sys.executable, run_hpo_path, "--config", config_abs, "--worker"]
         if args.data is not None:
-            cmd.extend(["--data", args.data])
+            cmd.extend(["--data", str(Path(args.data).resolve())])
         if args.resume:
             cmd.append("--resume")
         if args.n_trials_add is not None:
@@ -387,7 +435,6 @@ def main() -> int:
         return 0 if all(c == 0 for _, c in exit_codes) else 1
 
     data_path = _resolve_data_path(hpo_cfg, args.data)
-    seed = int(hpo_cfg.get("seed", 10))
     pipeline_config_path = hpo_cfg["pipeline_config"]
     base_config_path = (Path(args.config).resolve().parent / pipeline_config_path).resolve()
     if not base_config_path.is_file():
@@ -397,59 +444,9 @@ def main() -> int:
         return 1
     base_cfg = _load_yaml(str(base_config_path))
     search_space = hpo_cfg.get("search_space") or {}
-    optuna_cfg = hpo_cfg["optuna"]
     epoch_cap = hpo_cfg.get("epoch_cap")
     if epoch_cap is not None:
         epoch_cap = int(epoch_cap)
-    n_trials = int(optuna_cfg.get("n_trials", 100))
-    pruner_name = optuna_cfg.get("pruner", "MedianPruner")
-    pruner_kwargs = optuna_cfg.get("pruner_kwargs") or {}
-
-    # Study storage: default is output_dir/hpo_study.db so the path identifies the run. No study_name config.
-    storage_cfg = optuna_cfg.get("storage")
-    if storage_cfg:
-        storage = storage_cfg
-        if storage.startswith("sqlite:///") and not os.path.isabs(storage.replace("sqlite:///", "")):
-            storage = f"sqlite:///{Path(output_root) / storage.replace('sqlite:///', '')}"
-    else:
-        storage = f"sqlite:///{Path(output_root) / 'hpo_study.db'}"
-    study_name = "hpo"
-
-    sampler = _build_sampler(optuna_cfg, seed)
-
-    # Resume: load existing study from the same output_dir (same DB). Run --n-trials-add more trials; trial numbers continue.
-    if args.resume:
-        try:
-            study = optuna.load_study(
-                study_name=study_name,
-                storage=storage,
-                sampler=sampler,
-            )
-        except KeyError:
-            print("Resume requested but no study found at storage. Run without --resume first.", file=sys.stderr)
-            return 1
-        n_trials = args.n_trials_add or 20
-    else:
-        # Pruner: validation loss is reported each epoch; with file-based SQLite storage, pruning works across workers when n_jobs > 1.
-        pruner_cls = getattr(optuna.pruners, pruner_name, None)
-        if pruner_cls is None:
-            pruner = optuna.pruners.MedianPruner(**pruner_kwargs)
-        else:
-            pruner = pruner_cls(**pruner_kwargs)
-        # Optional: wrap with PatientPruner so we don't prune until validation hasn't improved for pruner_patience steps.
-        if optuna_cfg.get("pruner_patient"):
-            pruner_patience = int(optuna_cfg.get("pruner_patience", 5))
-            pruner = optuna.pruners.PatientPruner(pruner, patience=pruner_patience)
-        study = optuna.create_study(
-            study_name=study_name,
-            storage=storage,
-            load_if_exists=True,
-            direction="maximize",
-            sampler=sampler,
-            pruner=pruner,
-        )
-        if args.n_trials_add is not None and not args.resume:
-            n_trials = args.n_trials_add
 
     # Save HPO config in output root (like pipeline's saved config) and enforce same config when adding trials (only n_trials may differ).
     saved_config_path = Path(output_root) / HPO_CONFIG_FILENAME
@@ -548,12 +545,14 @@ def main() -> int:
         sys.stderr = run_module._StyledStderr(run_module._pipeline_real_stderr)
         _hpo_wrapped_stdout = True
 
-    # In worker mode, run until MaxTrialsCallback stops us (total trials across all workers >= n_trials).
+    # In worker mode, run until MaxTrialsCallback stops us (total trials across all workers >= target).
+    # When resuming, n_trials is the number to add; target total = current + n_trials. Otherwise target = n_trials.
+    target_total_trials = (len(study.trials) + n_trials) if args.resume else n_trials
     callbacks = [_hpo_log_callback]
     if args.worker:
         from optuna.study import MaxTrialsCallback
-        callbacks.append(MaxTrialsCallback(n_trials, states=None))
-    optimize_n_trials = n_trials if not args.worker else max(n_trials, 1) + 10000
+        callbacks.append(MaxTrialsCallback(target_total_trials, states=None))
+    optimize_n_trials = n_trials if not args.worker else max(target_total_trials, 1) + 10000
 
     try:
         study.optimize(
