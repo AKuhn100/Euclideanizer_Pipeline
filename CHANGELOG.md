@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-13 (Specs consolidated under specs/)
+
+- **Single HPO spec:** Merged `Pipeline/HPO_SPEC.md` into `Pipeline/specs/HPO_SPEC.md` (root version had extra pruning detail and wording). Removed root `HPO_SPEC.md`. All specs now live under `Pipeline/specs/`. Updated README and STYLE_GUIDE to reference `specs/HPO_SPEC.md`; added convention in STYLE_GUIDE that specs live under `specs/`.
+
 ## 2026-03-14 (HPO full runs + score-centric validation)
 
 - **HPO trials are full pipeline runs:** Each trial now runs with the same outputs as a normal run: training video (frames + mp4 when `training_visualization.enabled`), all plotting, analysis, and scoring. Training video hook is chained with the prune callback so frames are written each epoch; video is assembled after DistMap and after Euclideanizer training (pruned trials keep frames up to the prune epoch).

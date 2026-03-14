@@ -143,6 +143,9 @@ def _style(s: str, style: str | None) -> str:
     return f"{codes[style]}{s}\033[0m"
 
 
+# When HPO trial prefix is set, use this for the tag so it doesn't take the line's content color.
+_TRIAL_TAG_STYLE = "\033[2m"  # dim
+
 class _StyledStdout:
     """Wrap stdout so submodule print() output gets a default color (only when TTY). Pass-through if already contains ANSI."""
 
@@ -152,7 +155,13 @@ class _StyledStdout:
 
     def write(self, s: str) -> None:
         if _LOG_TRIAL_PREFIX:
-            s = _LOG_TRIAL_PREFIX + s.replace("\n", "\n" + _LOG_TRIAL_PREFIX)
+            # Only ever add trial tag at the start of a line; never after a newline (no tag at end of line).
+            if s == "\n":
+                s = "\n"
+            elif s.endswith("\n"):
+                s = _LOG_TRIAL_PREFIX + s[:-1].replace("\n", "\n" + _LOG_TRIAL_PREFIX) + "\n"
+            else:
+                s = _LOG_TRIAL_PREFIX + s.replace("\n", "\n" + _LOG_TRIAL_PREFIX)
         if not getattr(self._real, "isatty", lambda: False)():
             self._real.write(s)
             return
@@ -163,8 +172,14 @@ class _StyledStdout:
             if "\033[" in line:
                 self._real.write(line)
             else:
-                prefix = _style_code_for_line(line)
-                self._real.write(f"{prefix}{line}\033[0m")
+                # Style only the content so color matches the message; keep trial tag dim.
+                if _LOG_TRIAL_PREFIX and line.startswith(_LOG_TRIAL_PREFIX):
+                    tag, content = _LOG_TRIAL_PREFIX, line[len(_LOG_TRIAL_PREFIX):]
+                    code = _style_code_for_line(content)
+                    self._real.write(f"{_TRIAL_TAG_STYLE}{tag}\033[0m{code}{content}\033[0m")
+                else:
+                    prefix = _style_code_for_line(line)
+                    self._real.write(f"{prefix}{line}\033[0m")
 
     def flush(self) -> None:
         if self._buf:
@@ -185,7 +200,12 @@ class _StyledStderr:
 
     def write(self, s: str) -> None:
         if _LOG_TRIAL_PREFIX:
-            s = _LOG_TRIAL_PREFIX + s.replace("\n", "\n" + _LOG_TRIAL_PREFIX)
+            if s == "\n":
+                s = "\n"
+            elif s.endswith("\n"):
+                s = _LOG_TRIAL_PREFIX + s[:-1].replace("\n", "\n" + _LOG_TRIAL_PREFIX) + "\n"
+            else:
+                s = _LOG_TRIAL_PREFIX + s.replace("\n", "\n" + _LOG_TRIAL_PREFIX)
         if not getattr(self._real, "isatty", lambda: False)():
             self._real.write(s)
             return
@@ -196,8 +216,13 @@ class _StyledStderr:
             if "\033[" in line:
                 self._real.write(line)
             else:
-                prefix = _style_code_for_line(line)
-                self._real.write(f"{prefix}{line}\033[0m")
+                if _LOG_TRIAL_PREFIX and line.startswith(_LOG_TRIAL_PREFIX):
+                    tag, content = _LOG_TRIAL_PREFIX, line[len(_LOG_TRIAL_PREFIX):]
+                    code = _style_code_for_line(content)
+                    self._real.write(f"{_TRIAL_TAG_STYLE}{tag}\033[0m{code}{content}\033[0m")
+                else:
+                    prefix = _style_code_for_line(line)
+                    self._real.write(f"{prefix}{line}\033[0m")
 
     def flush(self) -> None:
         if self._buf:
@@ -636,21 +661,22 @@ def _confirm_overwrite_outputs(labels: list) -> None:
 
 
 def _log(msg: str, since_start: float | None = None, since_phase: float | None = None, style: str | None = None) -> None:
-    """Write a concise log line to stdout (styled when TTY) and to pipeline.log (plain). Flushes file after each write."""
+    """Write a concise log line to stdout (styled when TTY) and to pipeline.log (plain). Flushes file after each write.
+    Trial prefix is added only by the stdout wrapper (once); we add it to the log file here so the file is self-contained."""
     if since_start is not None:
         prefix = f"[+{since_start / 60:5.1f}m]"
         suffix = f"  (phase {since_phase / 60:.1f}m)" if since_phase is not None else ""
         line = f"{prefix} {msg}{suffix}"
     else:
         line = "        " + msg
-    if _LOG_TRIAL_PREFIX:
-        line = _LOG_TRIAL_PREFIX + line
+    # Stdout: do not add trial prefix here; _StyledStdout will add it once per line.
     print(_style(line, style))
     if _LOG_FILE is not None:
         if _LOG_LOCK is not None:
             _LOG_LOCK.acquire()
         try:
-            _LOG_FILE.write(line + "\n")
+            file_line = (_LOG_TRIAL_PREFIX + line) if _LOG_TRIAL_PREFIX else line
+            _LOG_FILE.write(file_line + "\n")
             _LOG_FILE.flush()
         finally:
             if _LOG_LOCK is not None:
@@ -658,15 +684,16 @@ def _log(msg: str, since_start: float | None = None, since_phase: float | None =
 
 
 def _log_raw(line: str, style: str | None = None) -> None:
-    """Write a raw line (e.g. separator) to stdout (styled when TTY) and log file (plain)."""
-    if _LOG_TRIAL_PREFIX:
-        line = _LOG_TRIAL_PREFIX + line
+    """Write a raw line (e.g. separator) to stdout (styled when TTY) and log file (plain).
+    Trial prefix is added only by the stdout wrapper; we add it to the log file here."""
+    # Stdout: do not add trial prefix here; _StyledStdout will add it once per line.
     print(_style(line, style))
     if _LOG_FILE is not None:
         if _LOG_LOCK is not None:
             _LOG_LOCK.acquire()
         try:
-            _LOG_FILE.write(line + "\n")
+            file_line = (_LOG_TRIAL_PREFIX + line) if _LOG_TRIAL_PREFIX else line
+            _LOG_FILE.write(file_line + "\n")
             _LOG_FILE.flush()
         finally:
             if _LOG_LOCK is not None:
@@ -1776,7 +1803,7 @@ def run_one_hpo_trial(
     _log(f"DistMap runs: 1  Euclideanizer: 1  resume=False  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     dm_epochs = int(dm_cfg["epochs"])
-    # Report with global step so pruner compares like-with-like: step 1..dm_epochs = DistMap, step dm_epochs+1..dm_epochs+eu_epochs = Euclideanizer (avoids mixing phases and the Eu "jump" at epoch 1).
+    # Report with step=epoch in each phase so the pruner compares like-with-like: DistMap epoch 50 vs DistMap epoch 50, Euclideanizer epoch 50 vs Euclideanizer epoch 50. Using a global step (dm_epochs+epoch for Eu) would misalign when dm_epochs varies (early stopping or different epoch_cap), so we use step=epoch for both phases and accept that the pruner only compares meaningfully within one phase at a time.
     def _report_and_prune_dm(epoch, model, train_hist, val_hist, run_dirs=None):
         val = float(val_hist[-1]) if val_hist else float("inf")
         optuna_trial.report(val, step=epoch)
@@ -1785,7 +1812,7 @@ def run_one_hpo_trial(
 
     def _report_and_prune_eu(epoch, embed, train_hist, val_hist, run_dirs=None):
         val = float(val_hist[-1]) if val_hist else float("inf")
-        optuna_trial.report(val, step=dm_epochs + epoch)
+        optuna_trial.report(val, step=epoch)
         if optuna_trial.should_prune():
             raise optuna.TrialPruned()
 
@@ -1900,6 +1927,7 @@ def run_one_hpo_trial(
         eu_path, _ = train_euclideanizer(
             eu_cfg, device, coords, dm_path, run_dir_eu,
             split_seed=seed, training_split=training_split,
+            frozen_latent_dim=int(dm_cfg["latent_dim"]),
             epoch_callback=eu_epoch_cb,
             plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
             memory_efficient=eu_cfg["memory_efficient"],
