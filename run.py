@@ -2103,50 +2103,50 @@ def run_one_hpo_trial(
                         )
                     return seed_test_to_train_cache[cache_key][key]
 
-                                if do_gen:
-                                    _mt_gen = _ref_mt if spec.requires_reference_bounds else None
-                                    _mc_gen = _ref_mc if spec.requires_reference_bounds else None
-                                    if spec.requires_reference_bounds and (_mt_gen is None or _mc_gen is None):
-                                        continue
-                                    _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
-                    plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
-                    pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
-                    extra_kw = spec.gen_extra_kwargs(analysis_cfg)
-                    for var in _variance_list:
-                        variance_suffix = f"_var{var}"
-                        any_missing = False
-                        for n in _num_samples_list:
-                            run_name = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
-                            fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
-                            if not os.path.isfile(fig_path):
-                                any_missing = True
-                                break
-                        if any_missing:
-                            if len(_num_samples_list) > 1:
-                                spec.run_gen_analysis_multi(
-                                    coords_np, coords, training_split, seed,
-                                    frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                    plot_cfg_gen,
-                                    num_samples_list=_num_samples_list,
-                                    sample_variance=var,
-                                    variance_suffix=variance_suffix,
-                                    display_root=base_output_dir,
-                                    **pre_kw,
-                                    **extra_kw,
-                                )
-                            else:
-                                n = _num_samples_list[0]
-                                run_name_single = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
-                                output_suffix = "_" + run_name_single
-                                spec.run_gen_analysis(
-                                    coords_np, coords, training_split, seed,
-                                    frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
-                                    plot_cfg_gen,
-                                    num_samples=n, sample_variance=var, output_suffix=output_suffix,
-                                    display_root=base_output_dir,
-                                    **pre_kw,
-                                    **extra_kw,
-                                )
+                if do_gen:
+                    _mt_gen = _ref_mt if spec.requires_reference_bounds else None
+                    _mc_gen = _ref_mc if spec.requires_reference_bounds else None
+                    if spec.requires_reference_bounds and (_mt_gen is None or _mc_gen is None):
+                        continue
+                    _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
+                plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
+                pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
+                extra_kw = spec.gen_extra_kwargs(analysis_cfg)
+                for var in _variance_list:
+                    variance_suffix = f"_var{var}"
+                    any_missing = False
+                    for n in _num_samples_list:
+                        run_name = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
+                        fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
+                        if not os.path.isfile(fig_path):
+                            any_missing = True
+                            break
+                    if any_missing:
+                        if len(_num_samples_list) > 1:
+                            spec.run_gen_analysis_multi(
+                                coords_np, coords, training_split, seed,
+                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                plot_cfg_gen,
+                                num_samples_list=_num_samples_list,
+                                sample_variance=var,
+                                variance_suffix=variance_suffix,
+                                display_root=base_output_dir,
+                                **pre_kw,
+                                **extra_kw,
+                            )
+                        else:
+                            n = _num_samples_list[0]
+                            run_name_single = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
+                            output_suffix = "_" + run_name_single
+                            spec.run_gen_analysis(
+                                coords_np, coords, training_split, seed,
+                                frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                plot_cfg_gen,
+                                num_samples=n, sample_variance=var, output_suffix=output_suffix,
+                                display_root=base_output_dir,
+                                **pre_kw,
+                                **extra_kw,
+                            )
 
                 if do_recon and _max_recon_train_list and _max_recon_test_list:
                     n_recon = len(_max_recon_train_list) * len(_max_recon_test_list)
