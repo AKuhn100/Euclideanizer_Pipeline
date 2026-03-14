@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import traceback
+import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -154,7 +155,14 @@ def _ensure_single_value(cfg: dict, section: str, key: str) -> None:
         return
     v = cfg[section][key]
     if isinstance(v, list):
-        cfg[section][key] = max(v) if key == "epochs" else v[0]
+        chosen = max(v) if key == "epochs" else v[0]
+        cfg[section][key] = chosen
+        warnings.warn(
+            f"HPO trial config: {section}.{key} was a list in the pipeline template (not in search_space); "
+            f"using {chosen!r}. Use single values in the template for non-search keys to avoid this.",
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _build_trial_config(

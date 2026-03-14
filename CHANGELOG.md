@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-14 (_ensure_single_value truncation warning)
+
+- **HPO template list truncation:** In `run_hpo.py`, `_ensure_single_value` now emits a `UserWarning` when a pipeline template key (e.g. `distmap.epochs`, `euclideanizer.latent_dim`) is a list but not in the search space, and the value is collapsed to a single value (first element, or max for epochs). This avoids silent truncation; use single values in the template for non-search keys to avoid the warning.
+
 ## 2026-03-13 (Specs consolidated under specs/)
 
 - **Single HPO spec:** Merged `Pipeline/HPO_SPEC.md` into `Pipeline/specs/HPO_SPEC.md` (root version had extra pruning detail and wording). Removed root `HPO_SPEC.md`. All specs now live under `Pipeline/specs/`. Updated README and STYLE_GUIDE to reference `specs/HPO_SPEC.md`; added convention in STYLE_GUIDE that specs live under `specs/`.
