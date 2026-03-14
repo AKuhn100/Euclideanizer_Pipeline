@@ -552,7 +552,8 @@ def main() -> int:
     if args.worker:
         from optuna.study import MaxTrialsCallback
         callbacks.append(MaxTrialsCallback(target_total_trials, states=None))
-    optimize_n_trials = n_trials if not args.worker else max(target_total_trials, 1) + 10000
+    # Worker: n_trials=None so optimize() runs until the callback stops; no fake large total in progress bar.
+    optimize_n_trials = n_trials if not args.worker else None
 
     try:
         study.optimize(
