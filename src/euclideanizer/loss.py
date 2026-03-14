@@ -55,12 +55,24 @@ def calc_positionwise_wasserstein(gts, generated):
     return torch.mean(torch.abs(gt_sorted - gen_sorted))
 
 
-def calc_diagonal_wasserstein(gts, generated, num_diags: int):
+def calc_diagonal_wasserstein(gts, generated, num_diags: int, per_sample: bool = False):
     """W1 loss computed per genomic separation (diagonal), then averaged.
 
-    For each separation k = 1..num_diags, we sort the k-th diagonal
-    values across the batch dimension and compute W1.  This directly
-    penalises deviations in the genomic scaling curve P(s).
+    For each separation k = 1..num_diags, compute W1 between the k-th
+    diagonal values of gts and generated.
+
+    When per_sample=False (generation mode): pool values across the whole
+    batch before sorting.  This matches the *distribution* of distances at
+    each genomic lag across all generated structures against the ground-truth
+    distribution — the intended behaviour for generative quality.
+
+    When per_sample=True (reconstruction mode): sort and compare within each
+    sample independently, then average across samples.  This ensures that
+    structure b's reconstruction is compared only against structure b's ground
+    truth, not against other structures in the batch.  Pooling across the
+    batch for reconstruction is incorrect because a good recon on sample A
+    can mask a bad recon on sample B when the values are ranked together.
+
     When num_diags is 0, returns 0.0 (no diagonal penalty).
     """
     B, N, _ = gts.shape
@@ -73,10 +85,20 @@ def calc_diagonal_wasserstein(gts, generated, num_diags: int):
         idx = torch.arange(N - k, device=gts.device)
         gt_diag  = gts[:, idx, idx + k]       # (B, N-k)
         gen_diag = generated[:, idx, idx + k]  # (B, N-k)
-        gt_s  = torch.sort(gt_diag.flatten()).values
-        gen_s = torch.sort(gen_diag.flatten()).values
-        n = min(gt_s.shape[0], gen_s.shape[0])
-        total_w = total_w + torch.mean(torch.abs(gt_s[:n] - gen_s[:n]))
+
+        if per_sample:
+            # Reconstruction: compare each sample to its own ground truth.
+            # Sort along the diagonal axis (dim=1) so sample b's values are
+            # only ranked against sample b's ground-truth values.
+            gt_s  = torch.sort(gt_diag,  dim=1).values  # (B, N-k)
+            gen_s = torch.sort(gen_diag, dim=1).values  # (B, N-k)
+            total_w = total_w + torch.mean(torch.abs(gt_s - gen_s))
+        else:
+            # Generation: match the marginal distribution across the batch.
+            gt_s  = torch.sort(gt_diag.flatten()).values
+            gen_s = torch.sort(gen_diag.flatten()).values
+            n = min(gt_s.shape[0], gen_s.shape[0])
+            total_w = total_w + torch.mean(torch.abs(gt_s[:n] - gen_s[:n]))
 
     return total_w / num_diags
 
@@ -99,8 +121,13 @@ def euclideanizer_loss(
     """Distributional loss for the Euclideanizer. All weights and num_diags from config.
 
     Components: MSE(recon, GT) + λ_w_recon * W1(recon, GT) + λ_w_gen * W1(gen, GT)
-    + λ_w_diag_recon * DiagW1(recon, GT) + λ_w_diag_gen * DiagW1(gen, GT)
+    + λ_w_diag_recon * DiagW1_per_sample(recon, GT) + λ_w_diag_gen * DiagW1_pooled(gen, GT)
     + λ_kabsch_mse * MSE(gt_coords, Kabsch_aligned(recon_coords)) when coords provided.
+
+    Diagonal Wasserstein for reconstruction uses per_sample=True (compare each
+    reconstructed structure only to its own ground truth). Diagonal Wasserstein for
+    generation uses per_sample=False (pool across the batch to match the distribution).
+
     num_diags: number of diagonals (genomic separations) used for diagonal Wasserstein.
     No KL (latent is frozen VAE). Returns (loss, mse, recon_w, gen_w, diag_recon_w, diag_gen_w, kabsch_mse).
     """
@@ -111,9 +138,11 @@ def euclideanizer_loss(
     diag_recon_w = torch.tensor(0.0, device=gts.device)
     diag_gen_w = torch.tensor(0.0, device=gts.device)
     if lambda_w_diag_recon != 0:
-        diag_recon_w = calc_diagonal_wasserstein(gts, D_euclid_recon, num_diags=num_diags)
+        # per_sample=True: each reconstruction is compared to its own ground truth only.
+        diag_recon_w = calc_diagonal_wasserstein(gts, D_euclid_recon, num_diags=num_diags, per_sample=True)
     if lambda_w_diag_gen != 0:
-        diag_gen_w = calc_diagonal_wasserstein(gts, D_euclid_gen, num_diags=num_diags)
+        # per_sample=False: pool across the batch to match the generative distribution.
+        diag_gen_w = calc_diagonal_wasserstein(gts, D_euclid_gen, num_diags=num_diags, per_sample=False)
 
     kabsch_mse = torch.tensor(0.0, device=gts.device)
     if lambda_kabsch_mse != 0 and gt_coords is not None and recon_coords is not None:

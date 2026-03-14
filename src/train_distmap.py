@@ -169,6 +169,11 @@ def train_distmap(
         last_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         torch.save(last_state, os.path.join(model_dir, "model_last.pt"))
     if not memory_efficient:
+        # Guard: if validation loss never improved (e.g. NaN/Inf from the start),
+        # best_state is None. Fall back to the current model state rather than
+        # crashing with a TypeError. This mirrors the same guard in train_euclideanizer.py.
+        if best_state is None:
+            best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
         model.load_state_dict(best_state)
     model_path = os.path.join(model_dir, "model.pt")
     if not memory_efficient:

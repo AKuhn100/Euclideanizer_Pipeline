@@ -324,6 +324,7 @@ class AnalysisMetricSpec:
     recon_key: str
     subdir: str
     figure_filename: str
+    requires_reference_bounds: bool  # if True, gen analysis needs non-None max_train/max_test (e.g. Q)
     get_or_compute_test_to_train: Callable[..., tuple[Any, Any, Any]]
     run_gen_analysis: Callable[..., str]
     run_gen_analysis_multi: Callable[..., list[str]]
@@ -345,6 +346,7 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         recon_key="rmsd_recon",
         subdir="rmsd",
         figure_filename="rmsd_distributions.png",
+        requires_reference_bounds=False,
         get_or_compute_test_to_train=_rmsd_get_or_compute,
         run_gen_analysis=rmsd.run_min_rmsd_analysis,
         run_gen_analysis_multi=rmsd.run_min_rmsd_analysis_multi,
@@ -363,6 +365,7 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         recon_key="q_recon",
         subdir="q",
         figure_filename="q_distributions.png",
+        requires_reference_bounds=True,
         get_or_compute_test_to_train=_q_get_or_compute,
         run_gen_analysis=q_analysis.run_q_analysis,
         run_gen_analysis_multi=q_analysis.run_q_analysis_multi,
@@ -381,6 +384,7 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         recon_key="coord_clustering_recon",
         subdir="coord_clustering",
         figure_filename="mixed_dendrograms.png",
+        requires_reference_bounds=False,
         get_or_compute_test_to_train=_coord_clustering_get_or_compute,
         run_gen_analysis=clustering.run_coord_clustering_gen_analysis,
         run_gen_analysis_multi=clustering.run_coord_clustering_gen_analysis_multi,
@@ -399,6 +403,7 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         recon_key="distmap_clustering_recon",
         subdir="distmap_clustering",
         figure_filename="mixed_dendrograms.png",
+        requires_reference_bounds=False,
         get_or_compute_test_to_train=_distmap_clustering_get_or_compute,
         run_gen_analysis=clustering.run_distmap_clustering_gen_analysis,
         run_gen_analysis_multi=clustering.run_distmap_clustering_gen_analysis_multi,

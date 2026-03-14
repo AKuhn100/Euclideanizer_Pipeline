@@ -1720,6 +1720,35 @@ def _run_scoring_for_run(
         _log(f"Scoring failed for {run_dir_eu}: {e}", since_start=time.time() - pipeline_start, style="error")
 
 
+def _post_scoring_npz_cleanup(run_dir_eu: str, cfg: dict) -> None:
+    """Remove NPZ data dirs for blocks where save_data is false (scoring has already read them). One run_dir_eu (one Euclideanizer run)."""
+    if not cfg.get("scoring", {}).get("enabled"):
+        return
+    plot_cfg = cfg["plotting"]
+    ana = cfg["analysis"]
+    if not plot_cfg["save_data"]:
+        for sub in ("recon_statistics", "gen_variance", "bond_length_by_genomic_distance"):
+            data_dir = os.path.join(run_dir_eu, "plots", sub, "data")
+            if os.path.isdir(data_dir):
+                shutil.rmtree(data_dir, ignore_errors=True)
+    if ana.get("latent") and not ana["latent"].get("save_data"):
+        latent_data = os.path.join(run_dir_eu, "analysis", "latent", "data")
+        if os.path.isdir(latent_data):
+            shutil.rmtree(latent_data, ignore_errors=True)
+    for spec in ANALYSIS_METRICS:
+        gen_save = ana[spec.gen_key]["save_data"]
+        recon_save = ana[spec.recon_key]["save_data"]
+        for sub, save_ok in [("gen", gen_save), ("recon", recon_save)]:
+            if save_ok:
+                continue
+            branch = os.path.join(run_dir_eu, "analysis", spec.subdir, sub)
+            if not os.path.isdir(branch):
+                continue
+            for root, dirs, _ in os.walk(branch, topdown=True):
+                if "data" in dirs:
+                    shutil.rmtree(os.path.join(root, "data"), ignore_errors=True)
+
+
 def run_one_hpo_trial(
     cfg: dict,
     trial_dir: str,
@@ -2074,12 +2103,12 @@ def run_one_hpo_trial(
                         )
                     return seed_test_to_train_cache[cache_key][key]
 
-                if do_gen:
-                    _mt_gen = _ref_mt if spec.id == "q" else None
-                    _mc_gen = _ref_mc if spec.id == "q" else None
-                    if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
-                        continue
-                    _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
+                                if do_gen:
+                                    _mt_gen = _ref_mt if spec.requires_reference_bounds else None
+                                    _mc_gen = _ref_mc if spec.requires_reference_bounds else None
+                                    if spec.requires_reference_bounds and (_mt_gen is None or _mc_gen is None):
+                                        continue
+                                    _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
                     plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
                     pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                     extra_kw = spec.gen_extra_kwargs(analysis_cfg)
@@ -2153,6 +2182,9 @@ def run_one_hpo_trial(
         torch.cuda.empty_cache()
     else:
         _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+
+    if scoring_enabled:
+        _post_scoring_npz_cleanup(run_dir_eu, cfg)
 
     _log("Pipeline complete.", since_start=time.time() - pipeline_start, style="success")
     scores_path = os.path.join(run_dir_eu, "scoring", "scores.json")
@@ -2630,8 +2662,8 @@ def _run_one_distmap_group(
                                 if not (resume and os.path.isfile(latent_fig) and os.path.isfile(latent_corr_fig)):
                                     train_mu_lat, test_mu_lat = _get_latent_vectors_euclideanizer(
                                         frozen_vae, device, coords, training_split, split_seed, utils,
-                                        max_train=analysis_cfg.get("latent_max_train"),
-                                        max_test=analysis_cfg.get("latent_max_test"),
+                                        max_train=analysis_cfg["latent_max_train"],
+                                        max_test=analysis_cfg["latent_max_test"],
                                     )
                                     os.makedirs(latent_dir, exist_ok=True)
                                     plot_latent_distribution(
@@ -2697,9 +2729,9 @@ def _run_one_distmap_group(
                                     return _cache[cache_key][key]
 
                                 if do_gen:
-                                    _mt_gen = _ref_mt if spec.id == "q" else None
-                                    _mc_gen = _ref_mc if spec.id == "q" else None
-                                    if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
+                                    _mt_gen = _ref_mt if spec.requires_reference_bounds else None
+                                    _mc_gen = _ref_mc if spec.requires_reference_bounds else None
+                                    if spec.requires_reference_bounds and (_mt_gen is None or _mc_gen is None):
                                         continue
                                     _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
                                     plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
@@ -3791,7 +3823,7 @@ def main():
                 continue
             _ref_mt = analysis_cfg[f"{spec.id}_max_train"]
             _ref_mc = analysis_cfg[f"{spec.id}_max_test"]
-            if spec.id == "q" and (_ref_mt is None or _ref_mc is None):
+            if spec.requires_reference_bounds and (_ref_mt is None or _ref_mc is None):
                 continue
             for seed in seeds:
                 output_dir = os.path.join(base_output_dir, f"seed_{seed}")
@@ -3935,34 +3967,8 @@ def main():
 
     # Post-scoring cleanup: remove NPZ for blocks where save_data is false (scoring runs after each block inside the pipeline)
     if scoring_enabled:
-        plot_cfg = cfg["plotting"]
-        ana = cfg["analysis"]
         for run_dir_eu, _ in _iter_euclideanizer_runs(base_output_dir):
-            if not plot_cfg["save_data"]:
-                for sub in ("recon_statistics", "gen_variance", "bond_length_by_genomic_distance"):
-                    data_dir = os.path.join(run_dir_eu, "plots", sub, "data")
-                    if os.path.isdir(data_dir):
-                        shutil.rmtree(data_dir, ignore_errors=True)
-                for var_dir in (os.path.join(run_dir_eu, "plots", "gen_variance", x) for x in os.listdir(os.path.join(run_dir_eu, "plots", "gen_variance")) if os.path.isdir(os.path.join(run_dir_eu, "plots", "gen_variance", x))):
-                    dd = os.path.join(var_dir, "data")
-                    if os.path.isdir(dd):
-                        shutil.rmtree(dd, ignore_errors=True)
-            if ana["latent"] and not ana["latent"]["save_data"]:
-                latent_data = os.path.join(run_dir_eu, "analysis", "latent", "data")
-                if os.path.isdir(latent_data):
-                    shutil.rmtree(latent_data, ignore_errors=True)
-            for spec in ANALYSIS_METRICS:
-                gen_save = ana[spec.gen_key]["save_data"]
-                recon_save = ana[spec.recon_key]["save_data"]
-                for sub, save_ok in [("gen", gen_save), ("recon", recon_save)]:
-                    if save_ok:
-                        continue
-                    branch = os.path.join(run_dir_eu, "analysis", spec.subdir, sub)
-                    if not os.path.isdir(branch):
-                        continue
-                    for root, dirs, _ in os.walk(branch, topdown=True):
-                        if "data" in dirs:
-                            shutil.rmtree(os.path.join(root, "data"), ignore_errors=True)
+            _post_scoring_npz_cleanup(run_dir_eu, cfg)
 
     if do_dashboard:
         from src.dashboard import build_dashboard
