@@ -1683,6 +1683,367 @@ def _run_scoring_for_run(
         _log(f"Scoring failed for {run_dir_eu}: {e}", since_start=time.time() - pipeline_start, style="error")
 
 
+def run_one_hpo_trial(
+    cfg: dict,
+    trial_dir: str,
+    optuna_trial,
+    device,
+    coords,
+    coords_np,
+    num_atoms: int,
+    num_structures: int,
+    exp_stats,
+    train_stats,
+    test_stats,
+    data_path: str,
+) -> float:
+    """Run one HPO trial in-process: train one DistMap, one Euclideanizer, plot, analyze, score.
+    Reports validation loss each epoch to optuna_trial and raises optuna.TrialPruned if the pruner says so.
+    Returns overall_score from scoring. Caller must load data and compute exp_stats/train_stats/test_stats.
+    """
+    import optuna
+
+    _init_log_file(trial_dir)
+    pipeline_start = time.time()
+    base_output_dir = trial_dir
+    seed = int(cfg["data"]["split_seed"])
+    training_split = float(cfg["data"]["training_split"])
+    seed_dir = os.path.join(trial_dir, f"seed_{seed}")
+    run_dir_dm = os.path.join(seed_dir, "distmap", "0")
+    run_dir_eu = os.path.join(run_dir_dm, "euclideanizer", "0")
+    os.makedirs(run_dir_dm, exist_ok=True)
+    os.makedirs(run_dir_eu, exist_ok=True)
+    save_pipeline_config(cfg, trial_dir)
+
+    if train_stats is not None and test_stats is not None and data_path:
+        plot_cfg = cfg.get("plotting") or {}
+        plot_mt = plot_cfg.get("max_train")
+        plot_mc = plot_cfg.get("max_test")
+        _save_exp_stats_split_cache(
+            seed_dir, data_path, num_structures, num_atoms,
+            seed, training_split, train_stats, test_stats,
+            max_train=plot_mt, max_test=plot_mc,
+        )
+
+    dm_cfg = dict(cfg.get("distmap", {}))
+    eu_cfg = dict(cfg.get("euclideanizer", {}))
+    plot_cfg = cfg.get("plotting") or {}
+    analysis_cfg = cfg.get("analysis") or {}
+    do_plot = plot_cfg.get("enabled", True)
+    plot_dpi = PLOT_DPI
+    save_pdf = plot_cfg.get("save_pdf_copy", False)
+    scoring_enabled = bool((cfg.get("scoring") or {}).get("enabled", True))
+    save_plot_data = plot_cfg.get("save_data") or scoring_enabled
+    num_recon_samples = plot_cfg.get("num_reconstruction_samples", 5)
+    do_recon_plot = plot_cfg.get("reconstruction", True)
+    do_bond_rg_scaling = plot_cfg.get("bond_rg_scaling", True)
+    do_avg_gen = plot_cfg.get("avg_gen_vs_exp", True)
+    do_bond_length_by_genomic_distance = plot_cfg.get("bond_length_by_genomic_distance", True)
+    sample_variances = get_sample_variances(cfg) if do_plot else []
+    gen_num_samples = plot_cfg.get("num_samples", 1000)
+    gen_decode_batch_size = plot_cfg.get("gen_decode_batch_size", 256)
+
+    def _report_and_prune(epoch, model, train_hist, val_hist, run_dirs=None):
+        val = float(val_hist[-1]) if val_hist else float("inf")
+        optuna_trial.report(val, step=epoch)
+        if optuna_trial.should_prune():
+            raise optuna.TrialPruned()
+
+    # --- DistMap: train ---
+    _log("HPO trial: training DistMap...", since_start=time.time() - pipeline_start, style="info")
+    dm_path, _ = train_distmap(
+        dm_cfg, device, coords, run_dir_dm,
+        split_seed=seed, training_split=training_split,
+        epoch_callback=_report_and_prune,
+        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+        memory_efficient=dm_cfg.get("memory_efficient", False),
+        is_last_segment=True,
+        display_root=base_output_dir,
+    )
+    _log("HPO trial: DistMap training done.", since_start=time.time() - pipeline_start, style="success")
+
+    # --- DistMap: plotting ---
+    if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
+        _force_gpu_cleanup(device)
+        model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=dm_cfg["latent_dim"]).to(device)
+        model.load_state_dict(torch.load(dm_path, map_location=device))
+        if do_recon_plot and coords is not None:
+            p = _plot_path(run_dir_dm, "reconstruction")
+            plot_distmap_reconstruction(
+                model, device, coords, utils, p,
+                training_split=training_split, split_seed=seed,
+                batch_size=dm_cfg["batch_size"], num_to_plot=num_recon_samples, dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                display_root=base_output_dir,
+            )
+        if do_bond_rg_scaling and train_stats is not None and test_stats is not None and coords is not None:
+            for subset_name, use_train, stats in [("test", False, test_stats), ("train", True, train_stats)]:
+                p = _plot_path(run_dir_dm, "recon_statistics", subset=subset_name)
+                recon_dm = _get_recon_dm_distmap(model, device, coords, dm_cfg, training_split, seed, utils, use_train=use_train)
+                plot_recon_statistics(
+                    recon_dm, stats, p,
+                    label_recon="Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    subset_label=subset_name,
+                    display_root=base_output_dir,
+                )
+        gen_dm_bond = None
+        if do_avg_gen and train_stats is not None and test_stats is not None:
+            for var in sample_variances:
+                p = _plot_path(run_dir_dm, "gen_variance", var=str(var))
+                gen_dm = _get_gen_dm_distmap(model, device, gen_num_samples, dm_cfg["latent_dim"], var, gen_decode_batch_size)
+                if gen_dm_bond is None:
+                    gen_dm_bond = gen_dm
+                plot_gen_analysis(
+                    exp_stats, train_stats, test_stats, gen_dm, p,
+                    sample_variance=var, label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    display_root=base_output_dir,
+                )
+        if do_bond_length_by_genomic_distance and train_stats is not None and test_stats is not None:
+            if gen_dm_bond is None:
+                gen_dm_bond = _get_gen_dm_distmap(model, device, gen_num_samples, dm_cfg["latent_dim"], sample_variances[0] if sample_variances else 1.0, gen_decode_batch_size)
+            p_bond = _plot_path(run_dir_dm, "bond_length_by_genomic_distance")
+            plot_bond_length_by_genomic_distance(
+                train_stats["exp_distmaps"], test_stats["exp_distmaps"], gen_dm_bond, p_bond,
+                label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                display_root=base_output_dir,
+            )
+        del model
+        torch.cuda.empty_cache()
+
+    # --- Euclideanizer: train ---
+    _log("HPO trial: training Euclideanizer...", since_start=time.time() - pipeline_start, style="info")
+    eu_path, _ = train_euclideanizer(
+        eu_cfg, device, coords, dm_path, run_dir_eu,
+        split_seed=seed, training_split=training_split,
+        epoch_callback=_report_and_prune,
+        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+        memory_efficient=eu_cfg.get("memory_efficient", False),
+        is_last_segment=True,
+        display_root=base_output_dir,
+    )
+    _log("HPO trial: Euclideanizer training done.", since_start=time.time() - pipeline_start, style="success")
+
+    # --- Euclideanizer: plotting and analysis ---
+    if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
+        _force_gpu_cleanup(device)
+        frozen_vae = load_frozen_vae(dm_path, num_atoms, dm_cfg["latent_dim"], device)
+        embed = Euclideanizer(num_atoms=num_atoms).to(device)
+        embed.load_state_dict(torch.load(eu_path, map_location=device))
+        if do_recon_plot and coords is not None:
+            p = _plot_path(run_dir_eu, "reconstruction")
+            plot_euclideanizer_reconstruction(
+                embed, frozen_vae, device, coords, utils, p,
+                training_split=training_split, split_seed=seed,
+                batch_size=eu_cfg["batch_size"], num_to_plot=num_recon_samples, dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                display_root=base_output_dir,
+            )
+        if do_bond_rg_scaling and train_stats is not None and test_stats is not None and coords is not None:
+            for subset_name, use_train, stats in [("test", False, test_stats), ("train", True, train_stats)]:
+                p = _plot_path(run_dir_eu, "recon_statistics", subset=subset_name)
+                recon_dm = _get_recon_dm_euclideanizer(embed, frozen_vae, device, coords, eu_cfg, training_split, seed, utils, use_train=use_train)
+                plot_recon_statistics(
+                    recon_dm, stats, p,
+                    label_recon="Recon", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    subset_label=subset_name,
+                    display_root=base_output_dir,
+                )
+        gen_dm_bond = None
+        if do_avg_gen and train_stats is not None and test_stats is not None:
+            for var in sample_variances:
+                p = _plot_path(run_dir_eu, "gen_variance", var=str(var))
+                gen_dm = _get_gen_dm_euclideanizer(
+                    embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], var, utils, gen_decode_batch_size
+                )
+                if gen_dm_bond is None:
+                    gen_dm_bond = gen_dm
+                plot_gen_analysis(
+                    exp_stats, train_stats, test_stats, gen_dm, p,
+                    sample_variance=var, label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                    display_root=base_output_dir,
+                )
+        if do_bond_length_by_genomic_distance and train_stats is not None and test_stats is not None:
+            if gen_dm_bond is None:
+                gen_dm_bond = _get_gen_dm_euclideanizer(
+                    embed, frozen_vae, device, gen_num_samples, dm_cfg["latent_dim"], sample_variances[0] if sample_variances else 1.0, utils, gen_decode_batch_size
+                )
+            p_bond = _plot_path(run_dir_eu, "bond_length_by_genomic_distance")
+            plot_bond_length_by_genomic_distance(
+                train_stats["exp_distmaps"], test_stats["exp_distmaps"], gen_dm_bond, p_bond,
+                label_gen="Gen", dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+                display_root=base_output_dir,
+            )
+        # Analysis: latent + registered metrics (same structure as _run_one_distmap_group)
+        any_analysis = any(
+            analysis_cfg.get(spec.gen_key, {}).get("enabled") or analysis_cfg.get(spec.recon_key, {}).get("enabled")
+            for spec in ANALYSIS_METRICS
+        )
+        seed_test_to_train_cache = {}
+        if any_analysis and coords is not None:
+            latent_cfg = analysis_cfg.get("latent") or {}
+            if latent_cfg.get("enabled") and coords is not None:
+                latent_dir = os.path.join(run_dir_eu, "analysis", "latent")
+                latent_fig = os.path.join(latent_dir, "latent_distribution.png")
+                latent_corr_fig = os.path.join(latent_dir, "latent_correlation.png")
+                latent_data_dir = os.path.join(latent_dir, "data")
+                latent_stats_npz = os.path.join(latent_data_dir, "latent_stats.npz")
+                train_mu_lat, test_mu_lat = _get_latent_vectors_euclideanizer(
+                    frozen_vae, device, coords, training_split, seed, utils,
+                    max_train=latent_cfg.get("latent_max_train"),
+                    max_test=latent_cfg.get("latent_max_test"),
+                )
+                os.makedirs(latent_dir, exist_ok=True)
+                plot_latent_distribution(
+                    train_mu_lat, test_mu_lat, latent_fig,
+                    plot_dpi=plot_dpi, display_root=base_output_dir,
+                    save_pdf_copy=latent_cfg.get("save_pdf_copy", False),
+                )
+                plot_latent_correlation(
+                    train_mu_lat, test_mu_lat, latent_corr_fig,
+                    plot_dpi=plot_dpi, display_root=base_output_dir,
+                    save_pdf_copy=latent_cfg.get("save_pdf_copy", False),
+                )
+                if latent_cfg.get("save_data") or scoring_enabled:
+                    save_latent_stats_npz(
+                        train_mu_lat, test_mu_lat, latent_stats_npz,
+                        display_root=base_output_dir,
+                    )
+            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+            for spec in ANALYSIS_METRICS:
+                do_gen = analysis_cfg.get(spec.gen_key, {}).get("enabled", False)
+                do_recon = analysis_cfg.get(spec.recon_key, {}).get("enabled", False)
+                if not (do_gen or do_recon):
+                    continue
+                gen_cfg = analysis_cfg.get(spec.gen_key) or {}
+                recon_cfg = analysis_cfg.get(spec.recon_key) or {}
+                _variance_list = gen_cfg.get("sample_variance")
+                if _variance_list is None:
+                    _variance_list = []
+                if not isinstance(_variance_list, list):
+                    _variance_list = [_variance_list]
+                _num_samples_list = gen_cfg.get("num_samples")
+                if _num_samples_list is None:
+                    _num_samples_list = []
+                if not isinstance(_num_samples_list, list):
+                    _num_samples_list = [_num_samples_list]
+                _max_recon_train_list = recon_cfg.get("max_recon_train")
+                if _max_recon_train_list is None:
+                    _max_recon_train_list = [None]
+                if not isinstance(_max_recon_train_list, list):
+                    _max_recon_train_list = [_max_recon_train_list]
+                _max_recon_test_list = recon_cfg.get("max_recon_test")
+                if _max_recon_test_list is None:
+                    _max_recon_test_list = [None]
+                if not isinstance(_max_recon_test_list, list):
+                    _max_recon_test_list = [_max_recon_test_list]
+                _ref_mt = analysis_cfg.get(f"{spec.id}_max_train")
+                _ref_mc = analysis_cfg.get(f"{spec.id}_max_test")
+
+                def _get_or_compute_cached(mt, mc):
+                    cache_key = spec.id
+                    if seed_test_to_train_cache.get(cache_key) is None:
+                        seed_test_to_train_cache[cache_key] = {}
+                    key = (mt, mc)
+                    if key not in seed_test_to_train_cache[cache_key]:
+                        _cache_path = os.path.join(seed_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                        seed_test_to_train_cache[cache_key][key] = spec.get_or_compute_test_to_train(
+                            _cache_path, coords_np, coords, training_split, seed, base_output_dir,
+                            **spec.kwargs_for_cache(analysis_cfg, mt, mc),
+                        )
+                    return seed_test_to_train_cache[cache_key][key]
+
+                if do_gen:
+                    _mt_gen = _ref_mt if spec.id == "q" else None
+                    _mc_gen = _ref_mc if spec.id == "q" else None
+                    if spec.id == "q" and (_mt_gen is None or _mc_gen is None):
+                        continue
+                    _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
+                    plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
+                    pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
+                    extra_kw = spec.gen_extra_kwargs(analysis_cfg)
+                    for var in _variance_list:
+                        variance_suffix = f"_var{var}"
+                        any_missing = False
+                        for n in _num_samples_list:
+                            run_name = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
+                            fig_path = _analysis_path(run_dir_eu, spec.subdir, f"gen/{run_name}/{spec.figure_filename}")
+                            if not os.path.isfile(fig_path):
+                                any_missing = True
+                                break
+                        if any_missing:
+                            if len(_num_samples_list) > 1:
+                                spec.run_gen_analysis_multi(
+                                    coords_np, coords, training_split, seed,
+                                    frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                    plot_cfg_gen,
+                                    num_samples_list=_num_samples_list,
+                                    sample_variance=var,
+                                    variance_suffix=variance_suffix,
+                                    display_root=base_output_dir,
+                                    **pre_kw,
+                                    **extra_kw,
+                                )
+                            else:
+                                n = _num_samples_list[0]
+                                run_name_single = (str(n) if len(_num_samples_list) > 1 else "default") + variance_suffix
+                                output_suffix = "_" + run_name_single
+                                spec.run_gen_analysis(
+                                    coords_np, coords, training_split, seed,
+                                    frozen_vae, embed, dm_cfg["latent_dim"], device, run_dir_eu,
+                                    plot_cfg_gen,
+                                    num_samples=n, sample_variance=var, output_suffix=output_suffix,
+                                    display_root=base_output_dir,
+                                    **pre_kw,
+                                    **extra_kw,
+                                )
+
+                if do_recon and _max_recon_train_list and _max_recon_test_list:
+                    n_recon = len(_max_recon_train_list) * len(_max_recon_test_list)
+                    plot_cfg_recon = spec.build_recon_plot_cfg(analysis_cfg)
+                    recon_extra = spec.recon_extra_kwargs(analysis_cfg)
+                    for max_recon_train in _max_recon_train_list:
+                        for max_recon_test in _max_recon_test_list:
+                            _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
+                            if n_recon == 1:
+                                recon_subdir = ""
+                                recon_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{spec.figure_filename}")
+                            else:
+                                recon_subdir = f"train{max_recon_train}_test{max_recon_test}"
+                                recon_fig = _analysis_path(run_dir_eu, spec.subdir, f"recon/{recon_subdir}/{spec.figure_filename}")
+                            train_recon_coords = _get_recon_coords_euclideanizer(
+                                embed, frozen_vae, device, coords, training_split, seed, utils,
+                                use_train=True, max_n=max_recon_train,
+                            )
+                            test_recon_coords = _get_recon_coords_euclideanizer(
+                                embed, frozen_vae, device, coords, training_split, seed, utils,
+                                use_train=False, max_n=max_recon_test,
+                            )
+                            spec.run_recon_analysis(
+                                _tt, _train_c, _test_c, train_recon_coords, test_recon_coords,
+                                run_dir_eu, plot_cfg_recon,
+                                display_root=base_output_dir, recon_subdir=recon_subdir,
+                                **recon_extra,
+                            )
+                _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+        else:
+            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+        del embed, frozen_vae
+        torch.cuda.empty_cache()
+    else:
+        _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+
+    scores_path = os.path.join(run_dir_eu, "scoring", "scores.json")
+    if not os.path.isfile(scores_path):
+        raise RuntimeError("HPO trial: scoring did not produce scores.json")
+    with open(scores_path) as f:
+        scores_data = json.load(f)
+    overall = scores_data.get("overall_score")
+    if overall is None:
+        raise RuntimeError("HPO trial: overall_score missing in scores.json")
+    try:
+        return float(overall)
+    except (TypeError, ValueError):
+        raise RuntimeError("HPO trial: overall_score is not a valid float")
+
+
 def _force_gpu_cleanup(device: torch.device) -> None:
     """Release unused GPU memory so the allocator and system see accurate free memory."""
     gc.collect()

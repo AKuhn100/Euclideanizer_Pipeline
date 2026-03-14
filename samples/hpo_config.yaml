@@ -1,0 +1,48 @@
+# HPO config: Optuna joint optimization of DistMap + Euclideanizer.
+# Run with: python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.gro]
+# Resume (more trials): same config + --resume --n-trials-add 50. Study is stored in output_dir/hpo_study.db.
+
+output_dir: "./hpo_out"   # root for trial_0/, trial_1/, ...; study DB (hpo_study.db) and HPO dashboard also live here
+
+data_path: null   # path to GRO-style coordinate file; required for training (set here or pass --data)
+seed: 10   # RNG seed for train/test split and for Optuna sampler (reproducibility; same value for both)
+
+# Max epochs for DistMap and Euclideanizer in every trial. If set, overrides epochs in the pipeline config; if null, use pipeline config (single value or max of list).
+epoch_cap: 500
+
+# Base pipeline YAML: template for each trial. Use config_sample_hpo.yaml for an HPO-ready template (nulls for Optuna-filled keys; everything enabled; variance 1; epoch_cap here sets max epochs).
+pipeline_config: "samples/config_sample_hpo.yaml"
+
+# Search space: only these keys are tuned; type = categorical | int | float | log_float; choices for categorical, low/high for numeric.
+search_space:
+  distmap:
+    latent_dim: {type: categorical, choices: [64, 128, 256, 512]}   # dimension of DistMap latent space
+    beta_kl: {type: log_float, low: 0.001, high: 0.1}   # weight for KL term in VAE loss (log-uniform)
+    lambda_mse: {type: float, low: 0.5, high: 10.0}   # weight for MSE reconstruction loss
+    lambda_w_recon: {type: float, low: 1.0, high: 10.0}   # weight for Wasserstein reconstruction term
+    lambda_w_gen: {type: float, low: 1.0, high: 10.0}   # weight for Wasserstein generation term
+  euclideanizer:
+    lambda_mse: {type: float, low: 1.0, high: 20.0}   # weight for MSE reconstruction loss
+    lambda_w_recon: {type: float, low: 1.0, high: 10.0}   # weight for Wasserstein reconstruction term
+    lambda_w_gen: {type: float, low: 1.0, high: 10.0}   # weight for Wasserstein generation term
+    lambda_w_diag_recon: {type: float, low: 0.5, high: 5.0}   # weight for diagonal Wasserstein on reconstruction
+    lambda_w_diag_gen: {type: float, low: 0.5, high: 5.0}   # weight for diagonal Wasserstein on generation
+    num_diags: {type: int, low: 20, high: 100}   # number of diagonals used for diagonal Wasserstein loss
+    lambda_kabsch_mse: {type: float, low: 0.0, high: 15.0}   # weight for MSE(gt_coords, Kabsch_aligned(recon)); 0 = off
+
+# Optuna study; stored at output_dir/hpo_study.db by default (path identifies the run; no study_name config).
+optuna:
+  n_trials: 20   # number of trials to run (or use --n-trials-add when resuming)
+  # Sampler (optimization algorithm). Top-level seed is injected into sampler_kwargs if not set.
+  # Options: TPESampler (default), RandomSampler, CmaEsSampler (no categoricals), NSGAIISampler, QMCSampler, GridSampler, BruteForceSampler (see optuna.samplers).
+  sampler: "TPESampler"
+  sampler_kwargs: {n_startup_trials: 10}   # e.g. n_startup_trials for TPE; seed added from top-level seed
+  # Pruner: validation loss is reported each epoch, so pruning is active.
+  # Options: MedianPruner, SuccessiveHalvingPruner, HyperbandPruner, NopPruner, PercentilePruner, ThresholdPruner, WilcoxonPruner (see optuna.pruners). PatientPruner is enabled via pruner_patient below.
+  pruner: "HyperbandPruner"
+  pruner_kwargs: {min_resource: 50, max_resource: 500, reduction_factor: 3}   # passed to base pruner constructor
+  pruner_patient: true   # if true, wrap the pruner in PatientPruner (don't prune until val loss hasn't improved for pruner_patience steps)
+  pruner_patience: 5   # number of consecutive steps without improvement before allowing prune (used when pruner_patient is true)
+
+n_gpus: null   # number of GPUs; null = use all available. Trial N uses GPU (N % n_gpus). Parallel trials: n_jobs = min(n_trials, n_gpus) by default so all GPUs are used (e.g. 8 H200s → 8 trials at once). Pruning works with n_jobs > 1 when using file-based SQLite storage.
+n_jobs: null   # parallel trials; null = min(n_trials, n_gpus). Set to 1 to force one trial at a time (e.g. to debug pruning).

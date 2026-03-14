@@ -75,6 +75,23 @@ Training requires a dataset path: set it with `--data` or in the config under `d
 | Limit GPUs used                                     | `--gpus N` (use at most N CUDA devices)                      |
 
 
+### Hyperparameter optimization (HPO)
+
+A separate entry point **`run_hpo.py`** runs Optuna-based joint optimization of DistMap and Euclideanizer parameters; the objective is the pipeline **overall score** (scoring module). Install Optuna (`pip install optuna`), then:
+
+```bash
+python run_hpo.py --config samples/hpo_config.yaml --data /path/to/coordinates.gro
+```
+
+Trials run in parallel with **round-robin GPU assignment** (trial N → GPU `N % n_gpus`). Each trial runs the full pipeline (train DistMap → train Euclideanizer → plotting → analysis → scoring) in a subprocess; `scores.json` is read for the objective. To **resume** and run more trials after a previous run:
+
+```bash
+python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.gro --resume --n-trials-add 50
+```
+
+HPO config defines: `output_dir` (trials and study DB live here), `data_path`, `seed` (used for pipeline train/test split and Optuna TPE sampler), `pipeline_config`, `search_space` (tuned params only; `memory_efficient` and `save_final_models_per_stretch` come from the base config), `optuna` (n_trials, pruner), and `n_gpus`. The Optuna study is stored at `output_dir/hpo_study.db` by default (path identifies the run; no separate study name). **Resume:** run with the same config and `--resume --n-trials-add N`; the script loads the study from that DB and runs N more trials (trial numbers continue). Failed trials are logged to `hpo_failed_trials.log`. See `Pipeline/HPO_SPEC.md` for the full design.
+
+
 ### Running on a cluster (SLURM)
 
 An example SLURM job script is provided as `samples/run.sh`. It is a template with no user-specific paths: it runs from the pipeline root and uses `samples/config_sample.yaml`; job logs go to `slurm_logs/`. Edit the script to activate your Python environment and load any required modules (e.g. ffmpeg for training videos). For overwriting an existing run, add `--no-resume --yes-overwrite` to the `python run.py` line.

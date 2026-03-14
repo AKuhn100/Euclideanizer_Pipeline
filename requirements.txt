@@ -16,5 +16,8 @@ tqdm>=4.65.0
 scipy>=1.10.0
 scikit-learn>=1.2.0
 
+# HPO (optional; required for run_hpo.py)
+optuna>=3.0.0
+
 # Tests (optional)
 pytest>=7.0.0
