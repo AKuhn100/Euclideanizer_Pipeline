@@ -408,6 +408,24 @@ def main() -> int:
         if args.n_trials_add is not None:
             n_trials = args.n_trials_add
 
+    # Load pipeline config (needed for validation and for single/worker path). Validate score-centric requirements.
+    pipeline_config_path = hpo_cfg["pipeline_config"]
+    base_config_path = (Path(args.config).resolve().parent / pipeline_config_path).resolve()
+    if not base_config_path.is_file():
+        base_config_path = (_SCRIPT_DIR / pipeline_config_path).resolve()
+    if not base_config_path.is_file():
+        print(f"Base pipeline config not found: {pipeline_config_path}", file=sys.stderr)
+        return 1
+    base_cfg = _load_yaml(str(base_config_path))
+    from src.scoring import validate_hpo_pipeline_config
+    valid, validation_errors = validate_hpo_pipeline_config(base_cfg)
+    if not valid:
+        print("HPO pipeline config must have scoring enabled and all score-centric analysis/plotting enabled with gen variance 1.", file=sys.stderr)
+        for msg in validation_errors:
+            print(f"  - {msg}", file=sys.stderr)
+        print(f"Pipeline config: {base_config_path}", file=sys.stderr)
+        return 1
+
     # Multi-GPU: spawn one worker per GPU (shared study DB); workers stop at n_trials total via MaxTrialsCallback.
     # Use absolute paths for --config and --data so workers find files when cwd is Pipeline.
     if not args.worker and n_gpus > 1:
@@ -435,14 +453,6 @@ def main() -> int:
         return 0 if all(c == 0 for _, c in exit_codes) else 1
 
     data_path = _resolve_data_path(hpo_cfg, args.data)
-    pipeline_config_path = hpo_cfg["pipeline_config"]
-    base_config_path = (Path(args.config).resolve().parent / pipeline_config_path).resolve()
-    if not base_config_path.is_file():
-        base_config_path = (_SCRIPT_DIR / pipeline_config_path).resolve()
-    if not base_config_path.is_file():
-        print(f"Base pipeline config not found: {pipeline_config_path}", file=sys.stderr)
-        return 1
-    base_cfg = _load_yaml(str(base_config_path))
     search_space = hpo_cfg.get("search_space") or {}
     epoch_cap = hpo_cfg.get("epoch_cap")
     if epoch_cap is not None:
@@ -506,6 +516,8 @@ def main() -> int:
             reason = f"{type(e).__name__}: {e}"
             _append_failure_log(str(failed_log_path), trial.number, trial_params, reason)
             raise RuntimeError(reason) from e
+        finally:
+            run_module._LOG_TRIAL_PREFIX = ""
 
         if score != score or score < 0 or score > 1:
             reason = "overall_score out of [0, 1] or NaN"

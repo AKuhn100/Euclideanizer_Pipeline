@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-03-14 (HPO full runs + score-centric validation)
+
+- **HPO trials are full pipeline runs:** Each trial now runs with the same outputs as a normal run: training video (frames + mp4 when `training_visualization.enabled`), all plotting, analysis, and scoring. Training video hook is chained with the prune callback so frames are written each epoch; video is assembled after DistMap and after Euclideanizer training (pruned trials keep frames up to the prune epoch).
+- **Score-centric config validation:** Before running HPO (or spawning workers), `run_hpo.py` validates the pipeline config: `scoring.enabled` and `plotting.enabled` must be true; `plotting.sample_variance` and each of `analysis.rmsd_gen`, `analysis.q_gen`, `analysis.coord_clustering_gen`, `analysis.distmap_clustering_gen` must have `enabled: true` and `sample_variance` including 1 (scoring uses gen variance 1 only). If validation fails, the script prints the errors and exits. Added `validate_hpo_pipeline_config()` in `src/scoring.py`; `config_sample_hpo.yaml` comment documents the requirement.
+
 ## 2026-03-14 (Single HPO entry point; auto multi-GPU)
 
 - **One entry point:** `run_hpo.py` is the only HPO entry point. When more than one GPU is detected (or `n_gpus` in config is > 1), it automatically spawns one worker per GPU (shared SQLite study DB) and waits for them. Otherwise it runs in-process. Removed `run_hpo_launch.py`; use `run_hpo.py` only.

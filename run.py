@@ -81,6 +81,8 @@ from src import scoring as scoring_module
 _LOG_FILE = None
 # Lock for serializing log writes in the main process; unused in spawned workers (each opens its own log handle).
 _LOG_LOCK = None
+# When set (e.g. in run_one_hpo_trial), _log and styled stdout/stderr prefix each line with this (e.g. "[trial 3] ").
+_LOG_TRIAL_PREFIX = ""
 # Stdout/stderr before wrapping; restored on exit.
 _pipeline_real_stdout = None
 _pipeline_real_stderr = None
@@ -149,6 +151,8 @@ class _StyledStdout:
         self._buf = ""
 
     def write(self, s: str) -> None:
+        if _LOG_TRIAL_PREFIX:
+            s = _LOG_TRIAL_PREFIX + s.replace("\n", "\n" + _LOG_TRIAL_PREFIX)
         if not getattr(self._real, "isatty", lambda: False)():
             self._real.write(s)
             return
@@ -180,6 +184,8 @@ class _StyledStderr:
         self._buf = ""
 
     def write(self, s: str) -> None:
+        if _LOG_TRIAL_PREFIX:
+            s = _LOG_TRIAL_PREFIX + s.replace("\n", "\n" + _LOG_TRIAL_PREFIX)
         if not getattr(self._real, "isatty", lambda: False)():
             self._real.write(s)
             return
@@ -637,6 +643,8 @@ def _log(msg: str, since_start: float | None = None, since_phase: float | None =
         line = f"{prefix} {msg}{suffix}"
     else:
         line = "        " + msg
+    if _LOG_TRIAL_PREFIX:
+        line = _LOG_TRIAL_PREFIX + line
     print(_style(line, style))
     if _LOG_FILE is not None:
         if _LOG_LOCK is not None:
@@ -651,6 +659,8 @@ def _log(msg: str, since_start: float | None = None, since_phase: float | None =
 
 def _log_raw(line: str, style: str | None = None) -> None:
     """Write a raw line (e.g. separator) to stdout (styled when TTY) and log file (plain)."""
+    if _LOG_TRIAL_PREFIX:
+        line = _LOG_TRIAL_PREFIX + line
     print(_style(line, style))
     if _LOG_FILE is not None:
         if _LOG_LOCK is not None:
@@ -1703,7 +1713,7 @@ def run_one_hpo_trial(
     """
     import optuna
 
-    global _LOG_FILE
+    global _LOG_FILE, _LOG_TRIAL_PREFIX
     if _LOG_FILE is not None:
         try:
             _LOG_FILE.close()
@@ -1711,6 +1721,8 @@ def run_one_hpo_trial(
             pass
         _LOG_FILE = None
     _init_log_file(trial_dir)
+    trial_num = getattr(optuna_trial, "number", -1)
+    _LOG_TRIAL_PREFIX = f"[trial {trial_num}] "
     pipeline_start = time.time()
     base_output_dir = trial_dir
     seed = int(cfg["data"]["split_seed"])
@@ -1763,26 +1775,63 @@ def run_one_hpo_trial(
     _log(f"config: (HPO trial)  output: {base_output_dir}  seeds: [{seed}]", since_start=time.time() - pipeline_start, style="info")
     _log(f"DistMap runs: 1  Euclideanizer: 1  resume=False  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
-    def _report_and_prune(epoch, model, train_hist, val_hist, run_dirs=None):
+    dm_epochs = int(dm_cfg["epochs"])
+    # Report with global step so pruner compares like-with-like: step 1..dm_epochs = DistMap, step dm_epochs+1..dm_epochs+eu_epochs = Euclideanizer (avoids mixing phases and the Eu "jump" at epoch 1).
+    def _report_and_prune_dm(epoch, model, train_hist, val_hist, run_dirs=None):
         val = float(val_hist[-1]) if val_hist else float("inf")
         optuna_trial.report(val, step=epoch)
         if optuna_trial.should_prune():
             raise optuna.TrialPruned()
 
+    def _report_and_prune_eu(epoch, embed, train_hist, val_hist, run_dirs=None):
+        val = float(val_hist[-1]) if val_hist else float("inf")
+        optuna_trial.report(val, step=dm_epochs + epoch)
+        if optuna_trial.should_prune():
+            raise optuna.TrialPruned()
+
+    vis_cfg = cfg.get("training_visualization") or {}
+    vis_enabled = bool(vis_cfg.get("enabled"))
+    dm_epoch_cb = _report_and_prune_dm
+    eu_epoch_cb = _report_and_prune_eu
+    if vis_enabled:
+        from src.training_visualization import (
+            make_distmap_epoch_hook,
+            make_euclideanizer_epoch_hook,
+            assemble_video,
+        )
+        dm_video_hook, _ = make_distmap_epoch_hook(
+            coords, dm_cfg, run_dir_dm, device, utils, vis_cfg,
+            split_seed=seed, training_split=training_split, total_epochs_display=int(dm_cfg["epochs"]),
+        )
+        def _dm_epoch_cb(epoch, model, train_hist, val_hist, run_dirs=None):
+            dm_video_hook(epoch, model, train_hist, val_hist, run_dirs)
+            _report_and_prune_dm(epoch, model, train_hist, val_hist, run_dirs)
+        dm_epoch_cb = _dm_epoch_cb
+
     # --- DistMap: train ---
-    dm_epochs = int(dm_cfg["epochs"])
     _log(f"DistMap run 0 (seed {seed}): training from scratch to {dm_epochs} epochs...", since_start=time.time() - pipeline_start, style="info")
     phase_start_dm = time.time()
-    dm_path, _ = train_distmap(
-        dm_cfg, device, coords, run_dir_dm,
-        split_seed=seed, training_split=training_split,
-        epoch_callback=_report_and_prune,
-        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-        memory_efficient=dm_cfg["memory_efficient"],
-        is_last_segment=True,
-        display_root=base_output_dir,
-    )
-    _log(f"DistMap 0: training done in {(time.time() - phase_start_dm) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    try:
+        dm_path, _ = train_distmap(
+            dm_cfg, device, coords, run_dir_dm,
+            split_seed=seed, training_split=training_split,
+            epoch_callback=dm_epoch_cb,
+            plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+            memory_efficient=dm_cfg["memory_efficient"],
+            is_last_segment=True,
+            display_root=base_output_dir,
+        )
+        _log(f"DistMap 0: training done in {(time.time() - phase_start_dm) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    finally:
+        # Assemble video from whatever frames exist (full run, early-stopped, or pruned).
+        if vis_enabled:
+            fd_dm = _video_frames_dir(run_dir_dm)
+            if os.path.isdir(fd_dm):
+                ok, fail_reason = assemble_video(fd_dm, _video_mp4_path(run_dir_dm), vis_cfg["fps"])
+                if ok and vis_cfg.get("delete_frames_after_video"):
+                    shutil.rmtree(fd_dm)
+                if not ok:
+                    _log(f"DistMap 0: video assembly failed — {fail_reason}. Frames kept in {fd_dm}.", since_start=time.time() - pipeline_start, style="error")
 
     # --- DistMap: plotting ---
     if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
@@ -1832,19 +1881,42 @@ def run_one_hpo_trial(
         torch.cuda.empty_cache()
 
     # --- Euclideanizer: train ---
+    if vis_enabled:
+        eu_video_hook, _ = make_euclideanizer_epoch_hook(
+            coords, eu_cfg, dm_path, dm_cfg["latent_dim"], run_dir_eu, device, utils, vis_cfg,
+            split_seed=seed, training_split=training_split, total_epochs_display=int(eu_cfg["epochs"]),
+        )
+        def _eu_epoch_cb(epoch, embed, train_hist, val_hist, run_dirs=None):
+            eu_video_hook(epoch, embed, train_hist, val_hist, run_dirs)
+            _report_and_prune_eu(epoch, embed, train_hist, val_hist, run_dirs)
+        eu_epoch_cb = _eu_epoch_cb
+    else:
+        eu_epoch_cb = _report_and_prune_eu
+
     eu_epochs = int(eu_cfg["epochs"])
     _log(f"Euclideanizer run 0 (DistMap 0): training from scratch to {eu_epochs} epochs...", since_start=time.time() - pipeline_start, style="info")
     phase_start_eu = time.time()
-    eu_path, _ = train_euclideanizer(
-        eu_cfg, device, coords, dm_path, run_dir_eu,
-        split_seed=seed, training_split=training_split,
-        epoch_callback=_report_and_prune,
-        plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-        memory_efficient=eu_cfg["memory_efficient"],
-        is_last_segment=True,
-        display_root=base_output_dir,
-    )
-    _log(f"Euclideanizer 0 (DistMap 0): training done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    try:
+        eu_path, _ = train_euclideanizer(
+            eu_cfg, device, coords, dm_path, run_dir_eu,
+            split_seed=seed, training_split=training_split,
+            epoch_callback=eu_epoch_cb,
+            plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
+            memory_efficient=eu_cfg["memory_efficient"],
+            is_last_segment=True,
+            display_root=base_output_dir,
+        )
+        _log(f"Euclideanizer 0 (DistMap 0): training done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
+    finally:
+        # Assemble video from whatever frames exist (full run, early-stopped, or pruned).
+        if vis_enabled:
+            fd_eu = _video_frames_dir(run_dir_eu)
+            if os.path.isdir(fd_eu):
+                ok, fail_reason = assemble_video(fd_eu, _video_mp4_path(run_dir_eu), vis_cfg["fps"])
+                if ok and vis_cfg.get("delete_frames_after_video"):
+                    shutil.rmtree(fd_eu)
+                if not ok:
+                    _log(f"Euclideanizer 0: video assembly failed — {fail_reason}. Frames kept in {fd_eu}.", since_start=time.time() - pipeline_start, style="error")
 
     # --- Euclideanizer: plotting and analysis ---
     if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):

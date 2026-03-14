@@ -1,6 +1,9 @@
 # Pipeline config template for HPO (run_hpo.py).
 # Use as pipeline_config in hpo_config.yaml. Optuna fills the keys in search_space; all other keys come from here.
 # Placeholder (null) values below are overwritten per trial: distmap/euclideanizer tuned params by Optuna; output_dir, data.path, data.split_seed, and epochs (if epoch_cap set) by run_hpo.
+#
+# Score-centric requirements (run_hpo exits if violated): scoring.enabled and plotting.enabled must be true;
+# plotting.sample_variance and each analysis.*.sample_variance (rmsd_gen, q_gen, coord_clustering_gen, distmap_clustering_gen) must include 1 (scoring uses gen variance 1 only). All four analysis gen blocks must be enabled.
 
 resume: false   # each trial is a fresh directory; HPO resume (--resume) is the Optuna study, not pipeline resume
 

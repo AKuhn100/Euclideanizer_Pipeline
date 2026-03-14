@@ -640,6 +640,31 @@ def _variance_lists_from_config(cfg: dict[str, Any]) -> dict[str, list[float]]:
     }
 
 
+def validate_hpo_pipeline_config(cfg: dict[str, Any]) -> tuple[bool, list[str]]:
+    """
+    Validate that the pipeline config is suitable for HPO: scoring enabled and all
+    score-relevant blocks enabled with sample_variance containing 1 (so scoring can compute full scores).
+    Returns (True, []) if valid; (False, [error messages]) otherwise.
+    """
+    errors = []
+    if not (cfg.get("scoring") and cfg["scoring"].get("enabled")):
+        errors.append("scoring.enabled must be true for HPO (scoring is the objective).")
+    plot_cfg = (cfg.get("plotting") or {})
+    if not plot_cfg.get("enabled"):
+        errors.append("plotting.enabled must be true for HPO (required for scoring inputs).")
+    variance_lists = _variance_lists_from_config(cfg)
+    if not any(_variance_equals_scoring(v) for v in variance_lists["plotting"]):
+        errors.append("plotting.sample_variance must include 1 (scoring uses gen variance 1 only).")
+    for key in ("rmsd_gen", "q_gen", "coord_clustering_gen", "distmap_clustering_gen"):
+        a = cfg.get("analysis") or {}
+        block = a.get(key) or {}
+        if not block.get("enabled"):
+            errors.append(f"analysis.{key}.enabled must be true for HPO (required for scoring).")
+        if not any(_variance_equals_scoring(v) for v in variance_lists[key]):
+            errors.append(f"analysis.{key}.sample_variance must include 1 (scoring uses gen variance 1 only).")
+    return (len(errors) == 0, errors)
+
+
 def compute_and_save(
     run_dir: str,
     seed_dir: str,
