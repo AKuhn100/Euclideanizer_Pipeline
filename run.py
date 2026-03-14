@@ -1703,6 +1703,13 @@ def run_one_hpo_trial(
     """
     import optuna
 
+    global _LOG_FILE
+    if _LOG_FILE is not None:
+        try:
+            _LOG_FILE.close()
+        except Exception:
+            pass
+        _LOG_FILE = None
     _init_log_file(trial_dir)
     pipeline_start = time.time()
     base_output_dir = trial_dir
@@ -1716,32 +1723,45 @@ def run_one_hpo_trial(
     save_pipeline_config(cfg, trial_dir)
 
     if train_stats is not None and test_stats is not None and data_path:
-        plot_cfg = cfg.get("plotting") or {}
-        plot_mt = plot_cfg.get("max_train")
-        plot_mc = plot_cfg.get("max_test")
+        plot_cfg = cfg["plotting"]
+        plot_mt = plot_cfg["max_train"]
+        plot_mc = plot_cfg["max_test"]
         _save_exp_stats_split_cache(
             seed_dir, data_path, num_structures, num_atoms,
             seed, training_split, train_stats, test_stats,
             max_train=plot_mt, max_test=plot_mc,
         )
 
-    dm_cfg = dict(cfg.get("distmap", {}))
-    eu_cfg = dict(cfg.get("euclideanizer", {}))
-    plot_cfg = cfg.get("plotting") or {}
-    analysis_cfg = cfg.get("analysis") or {}
-    do_plot = plot_cfg.get("enabled", True)
+    dm_cfg = cfg["distmap"]
+    eu_cfg = cfg["euclideanizer"]
+    plot_cfg = cfg["plotting"]
+    analysis_cfg = cfg["analysis"]
+    do_plot = plot_cfg["enabled"]
     plot_dpi = PLOT_DPI
-    save_pdf = plot_cfg.get("save_pdf_copy", False)
-    scoring_enabled = bool((cfg.get("scoring") or {}).get("enabled", True))
-    save_plot_data = plot_cfg.get("save_data") or scoring_enabled
-    num_recon_samples = plot_cfg.get("num_reconstruction_samples", 5)
-    do_recon_plot = plot_cfg.get("reconstruction", True)
-    do_bond_rg_scaling = plot_cfg.get("bond_rg_scaling", True)
-    do_avg_gen = plot_cfg.get("avg_gen_vs_exp", True)
-    do_bond_length_by_genomic_distance = plot_cfg.get("bond_length_by_genomic_distance", True)
+    save_pdf = plot_cfg["save_pdf_copy"]
+    scoring_enabled = bool(cfg["scoring"]["enabled"])
+    save_plot_data = plot_cfg["save_data"] or scoring_enabled
+    num_recon_samples = plot_cfg["num_reconstruction_samples"]
+    do_recon_plot = plot_cfg["reconstruction"]
+    do_bond_rg_scaling = plot_cfg["bond_rg_scaling"]
+    do_avg_gen = plot_cfg["avg_gen_vs_exp"]
+    do_bond_length_by_genomic_distance = plot_cfg["bond_length_by_genomic_distance"]
     sample_variances = get_sample_variances(cfg) if do_plot else []
-    gen_num_samples = plot_cfg.get("num_samples", 1000)
-    gen_decode_batch_size = plot_cfg.get("gen_decode_batch_size", 256)
+    gen_num_samples = plot_cfg["num_samples"]
+    gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
+
+    # Match normal pipeline startup logging (run.py main)
+    do_rmsd = analysis_cfg["rmsd_gen"]["enabled"]
+    do_rmsd_recon_cfg = analysis_cfg["rmsd_recon"]["enabled"]
+    do_q = analysis_cfg["q_gen"]["enabled"]
+    do_q_recon_cfg = analysis_cfg["q_recon"]["enabled"]
+    do_coord_clustering_gen = analysis_cfg["coord_clustering_gen"]["enabled"]
+    do_coord_clustering_recon_cfg = analysis_cfg["coord_clustering_recon"]["enabled"]
+    do_distmap_clustering_gen = analysis_cfg["distmap_clustering_gen"]["enabled"]
+    do_distmap_clustering_recon_cfg = analysis_cfg["distmap_clustering_recon"]["enabled"]
+    _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
+    _log(f"config: (HPO trial)  output: {base_output_dir}  seeds: [{seed}]", since_start=time.time() - pipeline_start, style="info")
+    _log(f"DistMap runs: 1  Euclideanizer: 1  resume=False  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     def _report_and_prune(epoch, model, train_hist, val_hist, run_dirs=None):
         val = float(val_hist[-1]) if val_hist else float("inf")
@@ -1750,17 +1770,19 @@ def run_one_hpo_trial(
             raise optuna.TrialPruned()
 
     # --- DistMap: train ---
-    _log("HPO trial: training DistMap...", since_start=time.time() - pipeline_start, style="info")
+    dm_epochs = int(dm_cfg["epochs"])
+    _log(f"DistMap run 0 (seed {seed}): training from scratch to {dm_epochs} epochs...", since_start=time.time() - pipeline_start, style="info")
+    phase_start_dm = time.time()
     dm_path, _ = train_distmap(
         dm_cfg, device, coords, run_dir_dm,
         split_seed=seed, training_split=training_split,
         epoch_callback=_report_and_prune,
         plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-        memory_efficient=dm_cfg.get("memory_efficient", False),
+        memory_efficient=dm_cfg["memory_efficient"],
         is_last_segment=True,
         display_root=base_output_dir,
     )
-    _log("HPO trial: DistMap training done.", since_start=time.time() - pipeline_start, style="success")
+    _log(f"DistMap 0: training done in {(time.time() - phase_start_dm) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
 
     # --- DistMap: plotting ---
     if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
@@ -1810,17 +1832,19 @@ def run_one_hpo_trial(
         torch.cuda.empty_cache()
 
     # --- Euclideanizer: train ---
-    _log("HPO trial: training Euclideanizer...", since_start=time.time() - pipeline_start, style="info")
+    eu_epochs = int(eu_cfg["epochs"])
+    _log(f"Euclideanizer run 0 (DistMap 0): training from scratch to {eu_epochs} epochs...", since_start=time.time() - pipeline_start, style="info")
+    phase_start_eu = time.time()
     eu_path, _ = train_euclideanizer(
         eu_cfg, device, coords, dm_path, run_dir_eu,
         split_seed=seed, training_split=training_split,
         epoch_callback=_report_and_prune,
         plot_loss=do_plot, plot_dpi=plot_dpi, save_pdf=save_pdf, save_plot_data=save_plot_data,
-        memory_efficient=eu_cfg.get("memory_efficient", False),
+        memory_efficient=eu_cfg["memory_efficient"],
         is_last_segment=True,
         display_root=base_output_dir,
     )
-    _log("HPO trial: Euclideanizer training done.", since_start=time.time() - pipeline_start, style="success")
+    _log(f"Euclideanizer 0 (DistMap 0): training done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
 
     # --- Euclideanizer: plotting and analysis ---
     if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
@@ -1873,13 +1897,13 @@ def run_one_hpo_trial(
             )
         # Analysis: latent + registered metrics (same structure as _run_one_distmap_group)
         any_analysis = any(
-            analysis_cfg.get(spec.gen_key, {}).get("enabled") or analysis_cfg.get(spec.recon_key, {}).get("enabled")
+            analysis_cfg[spec.gen_key]["enabled"] or analysis_cfg[spec.recon_key]["enabled"]
             for spec in ANALYSIS_METRICS
         )
         seed_test_to_train_cache = {}
         if any_analysis and coords is not None:
-            latent_cfg = analysis_cfg.get("latent") or {}
-            if latent_cfg.get("enabled") and coords is not None:
+            latent_cfg = analysis_cfg["latent"]
+            if latent_cfg["enabled"] and coords is not None:
                 latent_dir = os.path.join(run_dir_eu, "analysis", "latent")
                 latent_fig = os.path.join(latent_dir, "latent_distribution.png")
                 latent_corr_fig = os.path.join(latent_dir, "latent_correlation.png")
@@ -1887,55 +1911,55 @@ def run_one_hpo_trial(
                 latent_stats_npz = os.path.join(latent_data_dir, "latent_stats.npz")
                 train_mu_lat, test_mu_lat = _get_latent_vectors_euclideanizer(
                     frozen_vae, device, coords, training_split, seed, utils,
-                    max_train=latent_cfg.get("latent_max_train"),
-                    max_test=latent_cfg.get("latent_max_test"),
+                    max_train=analysis_cfg["latent_max_train"],
+                    max_test=analysis_cfg["latent_max_test"],
                 )
                 os.makedirs(latent_dir, exist_ok=True)
                 plot_latent_distribution(
                     train_mu_lat, test_mu_lat, latent_fig,
                     plot_dpi=plot_dpi, display_root=base_output_dir,
-                    save_pdf_copy=latent_cfg.get("save_pdf_copy", False),
+                    save_pdf_copy=latent_cfg["save_pdf_copy"],
                 )
                 plot_latent_correlation(
                     train_mu_lat, test_mu_lat, latent_corr_fig,
                     plot_dpi=plot_dpi, display_root=base_output_dir,
-                    save_pdf_copy=latent_cfg.get("save_pdf_copy", False),
+                    save_pdf_copy=latent_cfg["save_pdf_copy"],
                 )
-                if latent_cfg.get("save_data") or scoring_enabled:
+                if latent_cfg["save_data"] or scoring_enabled:
                     save_latent_stats_npz(
                         train_mu_lat, test_mu_lat, latent_stats_npz,
                         display_root=base_output_dir,
                     )
             _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
             for spec in ANALYSIS_METRICS:
-                do_gen = analysis_cfg.get(spec.gen_key, {}).get("enabled", False)
-                do_recon = analysis_cfg.get(spec.recon_key, {}).get("enabled", False)
+                do_gen = analysis_cfg[spec.gen_key]["enabled"]
+                do_recon = analysis_cfg[spec.recon_key]["enabled"]
                 if not (do_gen or do_recon):
                     continue
-                gen_cfg = analysis_cfg.get(spec.gen_key) or {}
-                recon_cfg = analysis_cfg.get(spec.recon_key) or {}
-                _variance_list = gen_cfg.get("sample_variance")
+                gen_cfg = analysis_cfg[spec.gen_key]
+                recon_cfg = analysis_cfg[spec.recon_key]
+                _variance_list = gen_cfg["sample_variance"]
                 if _variance_list is None:
                     _variance_list = []
                 if not isinstance(_variance_list, list):
                     _variance_list = [_variance_list]
-                _num_samples_list = gen_cfg.get("num_samples")
+                _num_samples_list = gen_cfg["num_samples"]
                 if _num_samples_list is None:
                     _num_samples_list = []
                 if not isinstance(_num_samples_list, list):
                     _num_samples_list = [_num_samples_list]
-                _max_recon_train_list = recon_cfg.get("max_recon_train")
+                _max_recon_train_list = recon_cfg["max_recon_train"]
                 if _max_recon_train_list is None:
                     _max_recon_train_list = [None]
                 if not isinstance(_max_recon_train_list, list):
                     _max_recon_train_list = [_max_recon_train_list]
-                _max_recon_test_list = recon_cfg.get("max_recon_test")
+                _max_recon_test_list = recon_cfg["max_recon_test"]
                 if _max_recon_test_list is None:
                     _max_recon_test_list = [None]
                 if not isinstance(_max_recon_test_list, list):
                     _max_recon_test_list = [_max_recon_test_list]
-                _ref_mt = analysis_cfg.get(f"{spec.id}_max_train")
-                _ref_mc = analysis_cfg.get(f"{spec.id}_max_test")
+                _ref_mt = analysis_cfg[f"{spec.id}_max_train"]
+                _ref_mc = analysis_cfg[f"{spec.id}_max_test"]
 
                 def _get_or_compute_cached(mt, mc):
                     cache_key = spec.id
@@ -2030,6 +2054,7 @@ def run_one_hpo_trial(
     else:
         _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
 
+    _log("Pipeline complete.", since_start=time.time() - pipeline_start, style="success")
     scores_path = os.path.join(run_dir_eu, "scoring", "scores.json")
     if not os.path.isfile(scores_path):
         raise RuntimeError("HPO trial: scoring did not produce scores.json")

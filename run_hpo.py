@@ -5,6 +5,12 @@ Optuna-based HPO for DistMap + Euclideanizer. Joint optimization; objective = ov
   python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.gro]
   python run_hpo.py --config samples/hpo_config.yaml --resume --n-trials-add 50
 
+Logging: Each trial writes a full pipeline-style log to output_dir/trial_N/pipeline.log (same
+format as run.py). An HPO-level summary is in output_dir/hpo.log (trial completed/pruned/failed).
+With n_jobs=1 and a TTY, stdout is wrapped so you see the same styled, verbose pipeline output
+as run.py; set optuna.show_progress_bar: false to get a clean stream without the tqdm bar. With
+n_jobs>1, follow hpo.log or tail trial_N/pipeline.log for progress.
+
 Multi-GPU: By default n_jobs = min(n_trials, n_gpus), so e.g. 8 H200s run 8 trials in
 parallel. Trial N uses GPU (N % n_gpus). Pruning works with n_jobs > 1 when using
 file-based SQLite storage (default). Set n_jobs: 1 in HPO config to force one trial at a time.
@@ -12,6 +18,7 @@ file-based SQLite storage (default). Set n_jobs: 1 in HPO config to force one tr
 from __future__ import annotations
 
 import argparse
+from typing import Any
 import copy
 import json
 import os
@@ -44,11 +51,15 @@ except ImportError:
 
 # In-process trial runner (enables pruning)
 import run as run_module
+from src import config as config_module
 
 SCORING_DIR = "scoring"
 SCORES_FILENAME = "scores.json"
 FAILED_TRIALS_LOG = "hpo_failed_trials.log"
 PIPELINE_CONFIG_FILENAME = "pipeline_config.yaml"
+# Saved in output_root so we know what was run and can enforce same config when adding trials (only n_trials may differ).
+HPO_CONFIG_FILENAME = "hpo_config.yaml"
+OPTUNA_KEYS_ALLOWED_TO_DIFFER = frozenset({"n_trials", "show_progress_bar"})
 
 
 def _load_yaml(path: str) -> dict:
@@ -64,6 +75,53 @@ def _load_yaml(path: str) -> dict:
     return data
 
 
+def _config_for_save(
+    hpo_cfg: dict,
+    data_path_resolved: str,
+    pipeline_config_resolved: str,
+) -> dict:
+    """Build HPO config dict to save in output_root (resolved paths so it documents what was run)."""
+    out = copy.deepcopy(hpo_cfg)
+    out["data_path"] = data_path_resolved
+    out["pipeline_config"] = pipeline_config_resolved
+    return out
+
+
+def _optuna_for_comparison(optuna_cfg: dict) -> dict:
+    """Optuna sub-dict with only keys that must match (exclude n_trials, show_progress_bar)."""
+    if not isinstance(optuna_cfg, dict):
+        return {}
+    return {k: v for k, v in optuna_cfg.items() if k not in OPTUNA_KEYS_ALLOWED_TO_DIFFER}
+
+
+def _hpo_configs_match_for_resume(current: dict, saved: dict, data_path_resolved: str, pipeline_config_resolved: str) -> tuple[bool, list[str]]:
+    """Compare current vs saved HPO config. Only n_trials and show_progress_bar may differ. Return (match, list of diff messages)."""
+    diffs = []
+    # Compare top-level (output_dir, seed, epoch_cap, search_space, etc.)
+    for key in ("output_dir", "data_path", "seed", "epoch_cap", "pipeline_config", "search_space", "n_gpus", "n_jobs"):
+        if key not in saved and key not in current:
+            continue
+        c = current.get(key)
+        s = saved.get(key)
+        if key == "data_path":
+            c = data_path_resolved
+            s = saved.get("data_path")
+        elif key == "pipeline_config":
+            c = pipeline_config_resolved
+            s = saved.get("pipeline_config")
+        elif key == "output_dir":
+            c = str(Path(c).resolve()) if c is not None else c
+            s = str(Path(s).resolve()) if s is not None else s
+        if c != s:
+            diffs.append(f"  {key}: current={c!r}  saved={s!r}")
+    # Optuna: all keys must match except n_trials and show_progress_bar
+    c_opt = _optuna_for_comparison(current.get("optuna") or {})
+    s_opt = _optuna_for_comparison(saved.get("optuna") or {})
+    if c_opt != s_opt:
+        diffs.append(f"  optuna (excluding n_trials, show_progress_bar): current and saved differ")
+    return (len(diffs) == 0, diffs)
+
+
 def _get_n_gpus(hpo_cfg: dict) -> int:
     n = hpo_cfg.get("n_gpus")
     if n is not None:
@@ -73,7 +131,7 @@ def _get_n_gpus(hpo_cfg: dict) -> int:
     return 1
 
 
-def _build_sampler(optuna_cfg: dict, seed: int):
+def _build_sampler(optuna_cfg: dict, seed: int) -> Any:
     """Build Optuna sampler from config. Injects top-level seed into sampler_kwargs if not already set."""
     sampler_name = optuna_cfg.get("sampler", "TPESampler")
     kwargs = dict(optuna_cfg.get("sampler_kwargs") or {})
@@ -287,13 +345,21 @@ def main() -> int:
         return 1
 
     hpo_cfg = _load_yaml(args.config)
+    # Required HPO keys (style guide: no code-side defaults for keys that affect behavior)
+    if "output_dir" not in hpo_cfg or hpo_cfg["output_dir"] is None or (isinstance(hpo_cfg["output_dir"], str) and not hpo_cfg["output_dir"].strip()):
+        print("HPO config must set output_dir (root for trial_0/, study DB, dashboard). Use an HPO config file (e.g. hpo_config.yaml), not the pipeline template (config_sample_hpo.yaml).", file=sys.stderr)
+        return 1
+    if "pipeline_config" not in hpo_cfg or not hpo_cfg["pipeline_config"]:
+        print("HPO config must set pipeline_config (path to base pipeline YAML).", file=sys.stderr)
+        return 1
+    if "optuna" not in hpo_cfg or not isinstance(hpo_cfg["optuna"], dict):
+        print("HPO config must set optuna (dict with n_trials, sampler, pruner, etc.).", file=sys.stderr)
+        return 1
     output_root = str(Path(hpo_cfg["output_dir"]).resolve())
+    Path(output_root).mkdir(parents=True, exist_ok=True)  # create before Optuna opens SQLite DB in output_root
     data_path = _resolve_data_path(hpo_cfg, args.data)
     seed = int(hpo_cfg.get("seed", 10))
-    pipeline_config_path = hpo_cfg.get("pipeline_config")
-    if not pipeline_config_path:
-        print("hpo_config must set pipeline_config (path to base pipeline YAML)", file=sys.stderr)
-        return 1
+    pipeline_config_path = hpo_cfg["pipeline_config"]
     base_config_path = (Path(args.config).resolve().parent / pipeline_config_path).resolve()
     if not base_config_path.is_file():
         base_config_path = (_SCRIPT_DIR / pipeline_config_path).resolve()
@@ -302,7 +368,7 @@ def main() -> int:
         return 1
     base_cfg = _load_yaml(str(base_config_path))
     search_space = hpo_cfg.get("search_space") or {}
-    optuna_cfg = hpo_cfg.get("optuna") or {}
+    optuna_cfg = hpo_cfg["optuna"]
     epoch_cap = hpo_cfg.get("epoch_cap")
     if epoch_cap is not None:
         epoch_cap = int(epoch_cap)
@@ -357,8 +423,29 @@ def main() -> int:
         if args.n_trials_add is not None and not args.resume:
             n_trials = args.n_trials_add
 
+    # Save HPO config in output root (like pipeline's saved config) and enforce same config when adding trials (only n_trials may differ).
+    saved_config_path = Path(output_root) / HPO_CONFIG_FILENAME
+    num_existing_trials = len(study.trials)
+    if num_existing_trials == 0:
+        to_save = _config_for_save(hpo_cfg, data_path, str(base_config_path.resolve()))
+        with open(saved_config_path, "w") as f:
+            yaml.dump(to_save, f, default_flow_style=False, sort_keys=False)
+    else:
+        if not saved_config_path.is_file():
+            print(f"HPO config enforcement: {output_root} has {num_existing_trials} existing trial(s) but no saved config at {saved_config_path}. Cannot add trials without a strict config match. Use a new output_dir for a new study.", file=sys.stderr)
+            return 1
+        saved_cfg = _load_yaml(str(saved_config_path))
+        match, diff_msgs = _hpo_configs_match_for_resume(
+            hpo_cfg, saved_cfg, data_path, str(base_config_path.resolve())
+        )
+        if not match:
+            print("HPO config must match the saved config when adding trials to an existing study. Only n_trials (and show_progress_bar) may differ. Differences:", file=sys.stderr)
+            for m in diff_msgs:
+                print(m, file=sys.stderr)
+            print(f"Saved config: {saved_config_path}", file=sys.stderr)
+            return 1
+
     failed_log_path = Path(output_root) / FAILED_TRIALS_LOG
-    Path(output_root).mkdir(parents=True, exist_ok=True)
 
     def objective(trial: optuna.Trial) -> float:
         # Round-robin GPU assignment: trial N uses GPU (N % n_gpus). CUDA_VISIBLE_DEVICES set so only that device is visible.
@@ -369,6 +456,7 @@ def main() -> int:
         trial_params = _suggest_params(trial, search_space)
         trial_dir = str((Path(output_root) / f"trial_{trial.number}").resolve())
         cfg = _build_trial_config(base_cfg, trial_params, trial_dir, data_path, seed, epoch_cap=epoch_cap)
+        config_module.validate_config(cfg)  # fail fast if trial config is missing required pipeline keys
         Path(trial_dir).mkdir(parents=True, exist_ok=True)
         config_out = Path(trial_dir) / PIPELINE_CONFIG_FILENAME
         with open(config_out, "w") as f:
@@ -403,16 +491,52 @@ def main() -> int:
     n_jobs_cfg = hpo_cfg.get("n_jobs")
     n_jobs = int(n_jobs_cfg) if n_jobs_cfg is not None else min(n_trials, n_gpus)
     n_jobs = max(1, min(n_jobs, n_trials))
+    show_progress_bar = optuna_cfg.get("show_progress_bar", True)
+
+    # When single-GPU, we will wrap stdout/stderr for run.py-style styled output; remember so we can restore in finally.
+    _hpo_wrapped_stdout = False
+
+    # HPO-level log: one file in output_root with trial outcomes. Full verbose pipeline output is in each trial_N/pipeline.log.
+    hpo_log_path = Path(output_root) / "hpo.log"
+    hpo_log_file = open(hpo_log_path, "a", encoding="utf-8")
+    hpo_log_file.write("\n" + "=" * 60 + "\n")
+    hpo_log_file.write(f"HPO started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  n_trials={n_trials}  n_jobs={n_jobs}\n")
+    hpo_log_file.write("=" * 60 + "\n")
+    hpo_log_file.flush()
+
+    def _hpo_log_callback(study, trial):
+        if trial.state == optuna.trial.TrialState.COMPLETE:
+            hpo_log_file.write(f"[{datetime.now().strftime('%H:%M:%S')}] Trial {trial.number} completed  value={trial.value}\n")
+        elif trial.state == optuna.trial.TrialState.PRUNED:
+            hpo_log_file.write(f"[{datetime.now().strftime('%H:%M:%S')}] Trial {trial.number} pruned\n")
+        elif trial.state == optuna.trial.TrialState.FAIL:
+            hpo_log_file.write(f"[{datetime.now().strftime('%H:%M:%S')}] Trial {trial.number} failed\n")
+        hpo_log_file.flush()
+
+    # When single-GPU, wrap stdout/stderr so pipeline _log() and training print() get the same styled output as run.py.
+    if n_jobs == 1 and sys.stdout.isatty():
+        run_module._pipeline_real_stdout = sys.stdout
+        run_module._pipeline_real_stderr = sys.stderr
+        sys.stdout = run_module._StyledStdout(run_module._pipeline_real_stdout)
+        sys.stderr = run_module._StyledStderr(run_module._pipeline_real_stderr)
+        _hpo_wrapped_stdout = True
+
     try:
         study.optimize(
             objective,
             n_trials=n_trials,
             n_jobs=n_jobs,
-            show_progress_bar=True,
+            show_progress_bar=show_progress_bar,
+            callbacks=[_hpo_log_callback],
         )
     except Exception as e:
         traceback.print_exc()
         return 1
+    finally:
+        if _hpo_wrapped_stdout and run_module._pipeline_real_stdout is not None:
+            sys.stdout = run_module._pipeline_real_stdout
+            sys.stderr = run_module._pipeline_real_stderr
+        hpo_log_file.close()
 
     # HPO dashboard: list trials and best
     best = study.best_trial

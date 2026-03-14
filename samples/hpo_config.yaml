@@ -33,6 +33,7 @@ search_space:
 # Optuna study; stored at output_dir/hpo_study.db by default (path identifies the run; no study_name config).
 optuna:
   n_trials: 20   # number of trials to run (or use --n-trials-add when resuming)
+  show_progress_bar: true   # if false, no tqdm bar; stdout is a clean stream of pipeline _log() and training output (best when n_jobs=1)
   # Sampler (optimization algorithm). Top-level seed is injected into sampler_kwargs if not set.
   # Options: TPESampler (default), RandomSampler, CmaEsSampler (no categoricals), NSGAIISampler, QMCSampler, GridSampler, BruteForceSampler (see optuna.samplers).
   sampler: "TPESampler"

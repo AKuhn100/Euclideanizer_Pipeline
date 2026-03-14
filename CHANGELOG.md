@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-03-14 (HPO config saved and enforced on resume)
+
+- **Saved HPO config.** When the first trials are run for a study, the HPO config is saved to `output_dir/hpo_config.yaml` (with data_path and pipeline_config resolved) so the run is documented and reproducible.
+- **Strict match when adding trials.** When loading an existing study (resume or same output_dir), the current config must match the saved config except for `optuna.n_trials` and `optuna.show_progress_bar`. Any other difference (search_space, pipeline_config, seed, epoch_cap, data_path, sampler, pruner, etc.) causes an error so runs cannot accidentally add trials with different parameters. Use a new output_dir for a different study.
+
+## 2026-03-14 (HPO logging aligned with normal run)
+
+- **HPO trial pipeline.log** now matches normal run.py logging: "Pipeline started." plus config/output/seeds and DistMap/Euclideanizer summary lines immediately after the banner; DistMap/Euclideanizer training messages use the same wording as main ("DistMap run 0 (seed X): training from scratch to Y epochs...", "DistMap 0: training done in Zm."); "Pipeline complete." at end of trial.
+
+## 2026-03-13 (HPO code audit vs style guide)
+
+- **Config validation:** Added `src.config.validate_config(cfg)` for in-memory pipeline configs. `run_hpo.py` validates each trial config after `_build_trial_config()` so pipeline code can use direct config access.
+- **run_hpo.py:** Required HPO keys `output_dir`, `pipeline_config`, `optuna` are enforced at startup (no .get() for these); direct access used after checks. Added return type `-> Any` for `_build_sampler()`.
+- **run.py run_one_hpo_trial:** Uses direct access for required pipeline keys (`cfg["data"]`, `cfg["distmap"]`, `cfg["plotting"]`, `cfg["analysis"]`, `cfg["scoring"]`, and required sub-keys) per §3.2; no code-side defaults for config-sourced parameters.
+
+## 2026-03-13 (Style guide and docs alignment)
+
+- **Style guide:** Documented HPO entrypoint (`run_hpo.py`), HPO vs pipeline config, output layout (`output_dir/trial_N/`, `hpo.log`, `hpo_study.db`), HPO logging and sample configs (`samples/hpo_config.yaml`, `samples/config_sample_hpo.yaml`); added checklist item for HPO changes; noted `run_hpo.py` uses pathlib for HPO paths.
+- **README:** HPO subsection updated for in-process trials, epoch_cap, sampler/pruner options, show_progress_bar, n_jobs, and logging (trial_N/pipeline.log, hpo.log, styled stdout when n_jobs=1 + TTY).
+
 ## 2026-03-13 (HPO pipeline template)
 
 - **HPO pipeline config template.** Added `Pipeline/samples/config_sample_hpo.yaml` for use as `pipeline_config` in HPO runs. Optuna-filled keys (distmap/euclideanizer search_space) are null; output_dir, data.path, data.split_seed set by run_hpo; everything else fixed: learning_rate 1e-4, variance 1, patience 50, early_stopping true, memory_efficient and save_final_models_per_stretch false, overwrite_existing false, save_pdf false, save_data true; plotting/analysis max_train/max_test 5000 (rmsd), 500 (q), null (clustering, latent); num_samples 5000 (rmsd/gen), 500 (q), 5000 (clustering gen); exp_stats_chunk_size 1000; resume false. Default `pipeline_config` in `samples/hpo_config.yaml` set to `config_sample_hpo.yaml`.

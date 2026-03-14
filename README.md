@@ -83,13 +83,13 @@ A separate entry point **`run_hpo.py`** runs Optuna-based joint optimization of 
 python run_hpo.py --config samples/hpo_config.yaml --data /path/to/coordinates.gro
 ```
 
-Trials run in parallel with **round-robin GPU assignment** (trial N → GPU `N % n_gpus`). Each trial runs the full pipeline (train DistMap → train Euclideanizer → plotting → analysis → scoring) in a subprocess; `scores.json` is read for the objective. To **resume** and run more trials after a previous run:
+Trials run **in-process** (or in parallel workers when `n_jobs` > 1) with **round-robin GPU assignment** (trial N → GPU `N % n_gpus`). Each trial runs the full pipeline (train DistMap → train Euclideanizer → plotting → analysis → scoring); validation loss is reported every epoch for pruning, and the objective is the pipeline **overall score** from `scores.json`. To **resume** and run more trials after a previous run:
 
 ```bash
 python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.gro --resume --n-trials-add 50
 ```
 
-HPO config defines: `output_dir` (trials and study DB live here), `data_path`, `seed` (used for pipeline train/test split and Optuna TPE sampler), `pipeline_config`, `search_space` (tuned params only; `memory_efficient` and `save_final_models_per_stretch` come from the base config), `optuna` (n_trials, pruner), and `n_gpus`. The Optuna study is stored at `output_dir/hpo_study.db` by default (path identifies the run; no separate study name). **Resume:** run with the same config and `--resume --n-trials-add N`; the script loads the study from that DB and runs N more trials (trial numbers continue). Failed trials are logged to `hpo_failed_trials.log`. See `Pipeline/HPO_SPEC.md` for the full design.
+HPO config defines: `output_dir` (required; trials and study DB live here), `data_path`, `seed` (train/test split and Optuna sampler), `epoch_cap` (max epochs per trial; overrides pipeline epochs when set), `pipeline_config` (YAML path; use `samples/config_sample_hpo.yaml` as the pipeline template for trials), `search_space` (tuned params only), `optuna` (n_trials, sampler/sampler_kwargs, pruner/pruner_kwargs, pruner_patient/pruner_patience, show_progress_bar), `n_gpus`, and `n_jobs` (parallel trials; default `min(n_trials, n_gpus)`). Study is stored at `output_dir/hpo_study.db`. The HPO config is saved to `output_dir/hpo_config.yaml` (with resolved paths) when the study is first run; when adding trials to an existing study, the current config must match that saved config except for `n_trials` and `show_progress_bar`. **Logging:** each trial writes `output_dir/trial_N/pipeline.log`; HPO-level summary (completed/pruned/failed) goes to `output_dir/hpo.log`. With `n_jobs=1` and a TTY, pipeline log output is mirrored to stdout with the same styling as `run.py`. **Resume:** same config + `--resume --n-trials-add N`; trial numbers continue. See `Pipeline/HPO_SPEC.md` for the full design.
 
 
 ### Running on a cluster (SLURM)

@@ -185,6 +185,11 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
                 )
 
 
+def validate_config(cfg: Dict[str, Any]) -> None:
+    """Validate that cfg has all required pipeline keys. Raises KeyError or ValueError if not. Use for in-memory configs (e.g. HPO trial config)."""
+    _validate_config(cfg)
+
+
 def _ensure_list(x: Any) -> List[Any]:
     if x is None:
         return [None]
