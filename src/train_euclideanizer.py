@@ -38,12 +38,16 @@ def train_euclideanizer(
     is_last_segment: bool = False,
     memory_efficient: bool = False,
     display_root: str | None = None,
-) -> str:
+) -> tuple[str, bool]:
     """
     Train one Euclideanizer. When resuming (resume_from_path + additional_epochs): load from
     prev run's euclideanizer_last.pt (last epoch of previous segment), carry over best from prev
-    segment; save best (euclideanizer.pt) and last (euclideanizer_last.pt). Returns path to euclideanizer.pt.
+    segment; save best (euclideanizer.pt) and last (euclideanizer_last.pt). Returns (path to euclideanizer.pt, stopped_early).
+    When early_stopping is True and validation loss does not improve for patience epochs, training
+    stops and stopped_early is True; best model and run_config with early_stopped=True are saved.
     """
+    early_stopping = bool(eu_cfg.get("early_stopping", False))
+    patience = int(eu_cfg.get("patience", 20))
     num_atoms = coords.size(1)
     latent_dim = frozen_latent_dim
     batch_size = eu_cfg["batch_size"]
@@ -109,7 +113,9 @@ def train_euclideanizer(
     else:
         save_run_config({"euclideanizer": eu_cfg}, model_dir, last_epoch_trained=0, best_epoch=None)
 
+    epochs_without_improvement = 0
     train_start = time.time()
+    stopped_early = False
     for epoch in range(epochs):
         embed.train()
         ep_loss, n_b = 0.0, 0
@@ -167,16 +173,24 @@ def train_euclideanizer(
         if avg_val < best_val:
             best_val = avg_val
             best_epoch = start_epoch_offset + epoch + 1  # 1-indexed global
+            epochs_without_improvement = 0
             if memory_efficient:
                 torch.save(embed.state_dict(), os.path.join(model_dir, "euclideanizer.pt"))
                 save_run_config({"euclideanizer": eu_cfg}, model_dir, last_epoch_trained=0, best_epoch=best_epoch, best_val=best_val)
             else:
                 best_state = {k: v.cpu().clone() for k, v in embed.state_dict().items()}
+        else:
+            epochs_without_improvement += 1
         if epoch_callback is not None:
             epoch_callback(epoch + 1, embed, train_loss_hist, val_loss_hist, run_dirs=[output_dir])
         if (epoch + 1) % 10 == 0 or epoch == 0:
             elapsed = (time.time() - train_start) / 60
             print(f"  Epoch {epoch+1}/{epochs} Train: {avg_train:.6f} Val: {avg_val:.6f} (elapsed {elapsed:.1f}m)" + (" *" if avg_val <= best_val else ""))
+        if early_stopping and epochs_without_improvement >= patience:
+            stopped_early = True
+            actual_epochs = start_epoch_offset + epoch + 1
+            print(f"  Euclideanizer early stopping at epoch {actual_epochs} (no validation improvement for {patience} epochs).")
+            break
 
     elapsed = (time.time() - train_start) / 60
     print(f"  Euclideanizer training finished in {elapsed:.1f}m.")
@@ -190,9 +204,11 @@ def train_euclideanizer(
         embed.load_state_dict(best_state)
         torch.save(best_state, os.path.join(model_dir, "euclideanizer.pt"))
     model_path = os.path.join(model_dir, "euclideanizer.pt")
+    last_epochs = (start_epoch_offset + len(train_loss_hist)) if stopped_early else eu_cfg["epochs"]
     save_run_config(
         {"euclideanizer": eu_cfg}, model_dir,
-        last_epoch_trained=eu_cfg["epochs"], best_epoch=best_epoch, best_val=best_val,
+        last_epoch_trained=last_epochs, best_epoch=best_epoch, best_val=best_val,
+        early_stopped=stopped_early,
     )
     print(f"  Saved: {utils.display_path(model_path, display_root)}")
     if save_last and is_resume and prev_run_dir is not None and not save_final_models_per_stretch:
@@ -214,4 +230,4 @@ def train_euclideanizer(
             save_plot_data=save_plot_data,
             display_root=display_root,
         )
-    return model_path
+    return model_path, stopped_early

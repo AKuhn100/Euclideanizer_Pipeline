@@ -885,7 +885,7 @@ def _run_completed(
     save_final_models_per_stretch: bool = False,
     _log_fail_reason: str | None = None,
 ) -> bool:
-    """True if run_dir has a completed run: last_epoch_trained == expected_epochs, section matches if given, best checkpoint exists. When multi_segment, last checkpoint required only if save_final_models_per_stretch (we don't require it when false since it is deleted after the next segment uses it)."""
+    """True if run_dir has a completed run: last_epoch_trained == expected_epochs (or early_stopped and best exists), section matches if given, best checkpoint exists. When multi_segment, last checkpoint required only if save_final_models_per_stretch (we don't require it when false since it is deleted after the next segment uses it)."""
     model_dir = os.path.join(run_dir, model_subdir)
     run_cfg = load_run_config(model_dir)
     if run_cfg is None:
@@ -893,7 +893,14 @@ def _run_completed(
             _log(f"{_log_fail_reason}: run_config not found or invalid at {model_dir}", since_start=None, style="skip")
         return False
     last_trained = run_cfg.get("last_epoch_trained")
-    if last_trained != expected_epochs:
+    early_stopped = bool(run_cfg.get("early_stopped", False))
+    if early_stopped:
+        if last_trained is None:
+            if _log_fail_reason:
+                _log(f"{_log_fail_reason}: early_stopped but last_epoch_trained missing", since_start=None, style="skip")
+            return False
+        # Consider complete when we have a best checkpoint and stopped early (no need to match expected_epochs).
+    elif last_trained != expected_epochs:
         if _log_fail_reason:
             _log(f"{_log_fail_reason}: last_epoch_trained={last_trained!r} (type {type(last_trained).__name__}) != expected_epochs={expected_epochs!r} (type {type(expected_epochs).__name__})", since_start=None, style="skip")
         return False
@@ -930,9 +937,13 @@ def _distmap_training_action(
     dm_last_segment: bool,
     dm_save_final: bool,
 ) -> dict:
-    """Determine how to run this DistMap segment: skip, from_scratch, resume_from_best, or resume_from_prev_last. Returns a dict with 'action' and, when relevant, resume_from_path, prev_run_dir, additional_epochs, best_epoch."""
+    """Determine how to run this DistMap segment: skip, from_scratch, resume_from_best, or resume_from_prev_last. Returns a dict with 'action' and, when relevant, resume_from_path, prev_run_dir, additional_epochs, best_epoch. When prev segment early_stopped, returns skip so no further segments run."""
     dm_path = _dm_path(run_dir_dm)
     run_label = os.path.basename(run_dir_dm)
+    if prev_run_dir_dm is not None and dm_multi:
+        prev_cfg = load_run_config(os.path.join(prev_run_dir_dm, "model"))
+        if prev_cfg and prev_cfg.get("early_stopped"):
+            return {"action": "skip"}
     if resume and os.path.isfile(dm_path) and _run_completed(
         run_dir_dm, ev, section_key="distmap", expected_section=dm_cfg,
         multi_segment=dm_multi, checkpoint_last_name="model_last.pt" if dm_multi else None,
@@ -981,8 +992,12 @@ def _euclideanizer_training_action(
     eu_last_segment: bool,
     eu_save_final: bool,
 ) -> dict:
-    """Determine how to run this Euclideanizer segment: skip, from_scratch, resume_from_best, or resume_from_prev_last. Returns a dict with 'action' and, when relevant, resume_from_path, prev_run_dir, additional_epochs, best_epoch."""
+    """Determine how to run this Euclideanizer segment: skip, from_scratch, resume_from_best, or resume_from_prev_last. Returns a dict with 'action' and, when relevant, resume_from_path, prev_run_dir, additional_epochs, best_epoch. When prev segment early_stopped, returns skip so no further segments run."""
     eu_path = _eu_path(eu_run_dir)
+    if prev_eu_run_dir is not None and eu_multi:
+        prev_cfg = load_run_config(os.path.join(prev_eu_run_dir, "model"))
+        if prev_cfg and prev_cfg.get("early_stopped"):
+            return {"action": "skip"}
     if resume and os.path.isfile(eu_path) and _run_completed(
         eu_run_dir, eu_ev, section_key="euclideanizer", expected_section=eu_cfg_seg,
         multi_segment=eu_multi, checkpoint_last_name="euclideanizer_last.pt" if eu_multi else None,
@@ -1765,8 +1780,10 @@ def _run_one_distmap_group(
         )
         if dm_act["action"] == "skip":
             _log(f"DistMap run {ri} (seed {seed}, epochs={ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
-            prev_dm_path = dm_path
-            prev_dm_ev = ev
+            dm_stopped_early = False
+            if os.path.isfile(dm_path):
+                prev_dm_path = dm_path
+                prev_dm_ev = ev
         else:
             if vis_enabled:
                 fd_dm = _video_frames_dir(run_dir_dm)
@@ -1781,7 +1798,7 @@ def _run_one_distmap_group(
                     )
                 else:
                     epoch_cb = None
-                train_distmap(
+                dm_path, dm_stopped_early = train_distmap(
                     dm_cfg, device, coords, run_dir_dm,
                     split_seed=split_seed, training_split=training_split,
                     epoch_callback=epoch_cb,
@@ -1797,7 +1814,7 @@ def _run_one_distmap_group(
                     epoch_cb, _ = make_distmap_epoch_hook(
                         coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=dm_act["best_epoch"], total_epochs_display=dm_max_epoch
                     )
-                train_distmap(
+                dm_path, dm_stopped_early = train_distmap(
                     dm_cfg, device, coords, run_dir_dm,
                     split_seed=split_seed, training_split=training_split,
                     epoch_callback=epoch_cb,
@@ -1816,7 +1833,7 @@ def _run_one_distmap_group(
                     epoch_cb, _ = make_distmap_epoch_hook(
                         coords, dm_cfg, run_dir_dm, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=prev_dm_ev, total_epochs_display=dm_max_epoch
                     )
-                train_distmap(
+                dm_path, dm_stopped_early = train_distmap(
                     dm_cfg, device, coords, run_dir_dm,
                     split_seed=split_seed, training_split=training_split,
                     epoch_callback=epoch_cb,
@@ -1831,7 +1848,7 @@ def _run_one_distmap_group(
             prev_dm_path = dm_path
             prev_dm_ev = ev
             _log(f"DistMap {ri}: training done in {(time.time() - phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-    
+
         if vis_enabled:
             fd_dm = _video_frames_dir(run_dir_dm)
             if os.path.isdir(fd_dm):
@@ -1935,8 +1952,10 @@ def _run_one_distmap_group(
                 )
                 if eu_act["action"] == "skip":
                     _log(f"Euclideanizer run {euri} (DistMap {ri}, epochs={eu_ev}): resumed (skip training).", since_start=time.time() - pipeline_start, style="skip")
-                    prev_eu_path = eu_path_seg
-                    prev_eu_ev = eu_ev
+                    eu_stopped_early = False
+                    if os.path.isfile(eu_path_seg):
+                        prev_eu_path = eu_path_seg
+                        prev_eu_ev = eu_ev
                 else:
                     if vis_enabled:
                         fd_eu_pre = _video_frames_dir(eu_run_dir)
@@ -1949,7 +1968,7 @@ def _run_one_distmap_group(
                             epoch_cb, _ = make_euclideanizer_epoch_hook(
                                 coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, total_epochs_display=eu_max_epoch
                             )
-                        train_euclideanizer(
+                        _, eu_stopped_early = train_euclideanizer(
                             eu_cfg_seg, device, coords, dm_path, eu_run_dir,
                             split_seed=split_seed, training_split=training_split,
                             frozen_latent_dim=dm_cfg["latent_dim"],
@@ -1966,7 +1985,7 @@ def _run_one_distmap_group(
                             epoch_cb, _ = make_euclideanizer_epoch_hook(
                                 coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=eu_act["best_epoch"], total_epochs_display=eu_max_epoch
                             )
-                        train_euclideanizer(
+                        _, eu_stopped_early = train_euclideanizer(
                             eu_cfg_seg, device, coords, dm_path, eu_run_dir,
                             split_seed=split_seed, training_split=training_split,
                             frozen_latent_dim=dm_cfg["latent_dim"],
@@ -1986,7 +2005,7 @@ def _run_one_distmap_group(
                             epoch_cb, _ = make_euclideanizer_epoch_hook(
                                 coords, eu_cfg_seg, dm_path, dm_cfg["latent_dim"], eu_run_dir, device, utils, vis_cfg, split_seed=split_seed, training_split=training_split, epoch_start=prev_eu_ev, total_epochs_display=eu_max_epoch
                             )
-                        train_euclideanizer(
+                        _, eu_stopped_early = train_euclideanizer(
                             eu_cfg_seg, device, coords, dm_path, eu_run_dir,
                             split_seed=split_seed, training_split=training_split,
                             frozen_latent_dim=dm_cfg["latent_dim"],
@@ -2001,7 +2020,7 @@ def _run_one_distmap_group(
                         )
                     prev_eu_path = eu_path_seg
                     prev_eu_ev = eu_ev
-    
+
                 if vis_enabled:
                     fd_eu = _video_frames_dir(eu_run_dir)
                     if os.path.isdir(fd_eu):
@@ -2277,7 +2296,10 @@ def _run_one_distmap_group(
                         del embed, frozen_vae
                         torch.cuda.empty_cache()
                         _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-
+                if eu_stopped_early:
+                    break
+        if dm_stopped_early:
+            break
 
 def _run_one_seed(
     seed: int,

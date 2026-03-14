@@ -35,11 +35,15 @@ def train_distmap(
     is_last_segment: bool = False,
     memory_efficient: bool = False,
     display_root: str | None = None,
-) -> str:
+) -> tuple[str, bool]:
     """
     Train one DistMap model. When resuming: load from prev run's model_last.pt, carry over best;
-    save model.pt (best) and model_last.pt (last). Returns path to model.pt.
+    save model.pt (best) and model_last.pt (last). Returns (path to model.pt, stopped_early).
+    When early_stopping is True and validation loss does not improve for patience epochs, training
+    stops and stopped_early is True; best model and run_config with early_stopped=True are saved.
     """
+    early_stopping = bool(dm_cfg.get("early_stopping", False))
+    patience = int(dm_cfg.get("patience", 20))
     num_atoms = coords.size(1)
     beta_kl = dm_cfg["beta_kl"]
     latent_dim = dm_cfg["latent_dim"]
@@ -93,7 +97,9 @@ def train_distmap(
     else:
         save_run_config({"distmap": dm_cfg}, model_dir, last_epoch_trained=0, best_epoch=None)
 
+    epochs_without_improvement = 0
     train_start = time.time()
+    stopped_early = False
     for epoch in range(epochs):
         model.train()
         ep_loss, ep_kl, ep_recon, n_b = 0.0, 0.0, 0.0, 0
@@ -137,16 +143,24 @@ def train_distmap(
         if avg_val < best_val:
             best_val = avg_val
             best_epoch = start_epoch_offset + epoch + 1  # 1-indexed global
+            epochs_without_improvement = 0
             if memory_efficient:
                 torch.save(model.state_dict(), os.path.join(model_dir, "model.pt"))
                 save_run_config({"distmap": dm_cfg}, model_dir, last_epoch_trained=0, best_epoch=best_epoch, best_val=best_val)
             else:
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        else:
+            epochs_without_improvement += 1
         if epoch_callback is not None:
             epoch_callback(epoch + 1, model, train_loss_hist, val_loss_hist, run_dirs=[output_dir])
         if (epoch + 1) % 10 == 0 or epoch == 0:
             elapsed = (time.time() - train_start) / 60
             print(f"  Epoch {epoch+1}/{epochs} Train: {avg_train:.6f} Val: {avg_val:.6f} (elapsed {elapsed:.1f}m)" + (" *" if avg_val <= best_val else ""))
+        if early_stopping and epochs_without_improvement >= patience:
+            stopped_early = True
+            actual_epochs = start_epoch_offset + epoch + 1
+            print(f"  DistMap early stopping at epoch {actual_epochs} (no validation improvement for {patience} epochs).")
+            break
 
     elapsed = (time.time() - train_start) / 60
     print(f"  DistMap training finished in {elapsed:.1f}m.")
@@ -159,9 +173,11 @@ def train_distmap(
     model_path = os.path.join(model_dir, "model.pt")
     if not memory_efficient:
         torch.save(best_state, model_path)
+    last_epochs = (start_epoch_offset + len(train_loss_hist)) if stopped_early else dm_cfg["epochs"]
     save_run_config(
         {"distmap": dm_cfg}, model_dir,
-        last_epoch_trained=dm_cfg["epochs"], best_epoch=best_epoch, best_val=best_val,
+        last_epoch_trained=last_epochs, best_epoch=best_epoch, best_val=best_val,
+        early_stopped=stopped_early,
     )
     print(f"  Saved: {utils.display_path(model_path, display_root)}")
     # Delete previous segment's last only after writing current last (fallback if best save was interrupted)
@@ -184,4 +200,4 @@ def train_distmap(
             save_plot_data=save_plot_data,
             display_root=display_root,
         )
-    return model_path
+    return model_path, stopped_early

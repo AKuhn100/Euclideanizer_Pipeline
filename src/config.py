@@ -451,8 +451,9 @@ def save_run_config(
     last_epoch_trained: Optional[int] = None,
     best_epoch: Optional[int] = None,
     best_val: Optional[float] = None,
+    early_stopped: bool = False,
 ) -> str:
-    """Write the config for this run to directory/filename. Always writes last_epoch_trained, best_epoch (1-indexed), best_val (use None when not applicable)."""
+    """Write the config for this run to directory/filename. Always writes last_epoch_trained, best_epoch (1-indexed), best_val (use None when not applicable). early_stopped=True when training was stopped by validation-loss patience."""
     if yaml is None:
         raise RuntimeError("PyYAML is required to save run config. pip install pyyaml")
     os.makedirs(directory, exist_ok=True)
@@ -461,6 +462,7 @@ def save_run_config(
     out["last_epoch_trained"] = last_epoch_trained
     out["best_epoch"] = best_epoch
     out["best_val"] = best_val
+    out["early_stopped"] = early_stopped
     path = os.path.join(directory, filename)
     with open(path, "w") as f:
         yaml.dump(_to_serializable(out), f, default_flow_style=False, sort_keys=False)

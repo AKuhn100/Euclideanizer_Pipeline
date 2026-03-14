@@ -23,6 +23,8 @@ distmap:
   lambda_w_gen: 1.0
   memory_efficient: false
   save_final_models_per_stretch: false
+  early_stopping: false
+  patience: 20
 
 euclideanizer:
   epochs: [1]
@@ -37,6 +39,8 @@ euclideanizer:
   lambda_kabsch_mse: 0
   memory_efficient: false
   save_final_models_per_stretch: false
+  early_stopping: false
+  patience: 20
 
 plotting:
   enabled: true
