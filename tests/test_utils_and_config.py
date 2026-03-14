@@ -14,12 +14,14 @@ from scipy.spatial.transform import Rotation
 
 from conftest import assert_exact_or_numerical
 from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
-from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling
+from src.gro_io import write_structures_gro
+from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling, compute_exp_statistics
 from src.rmsd import _rmsd_matrix_batch, _recon_rmsd_one_to_one
 from src.utils import (
     display_path,
     get_available_cuda_count,
     get_device,
+    get_distmaps,
     get_train_test_split,
     get_upper_tri,
     load_data,
@@ -134,6 +136,41 @@ def test_load_data_valid_gro(tmp_path):
     assert out.shape == (1, 2, 3)
     assert_exact_or_numerical(out[0, 0], np.array([0.1, 0.2, 0.3]), atol=1e-7, name="parsed xyz row 0")
     assert_exact_or_numerical(out[0, 1], np.array([0.4, 0.5, 0.6]), atol=1e-7, name="parsed xyz row 1")
+
+
+def test_gro_roundtrip(tmp_path):
+    """write_structures_gro output can be loaded back by load_data."""
+    coords = np.random.rand(5, 10, 3).astype(np.float32)
+    write_structures_gro(coords, str(tmp_path), title_prefix="Chromosome test")
+    loaded = load_data(str(tmp_path / "structures.gro"))
+    assert loaded.shape == (5, 10, 3)
+    np.testing.assert_allclose(loaded, coords, atol=1e-3)  # GRO format is 3dp
+
+
+def test_gro_single_structure(tmp_path):
+    """Single-structure roundtrip."""
+    coords = np.random.rand(1, 20, 3).astype(np.float32)
+    write_structures_gro(coords, str(tmp_path), title_prefix="Chromosome test")
+    loaded = load_data(str(tmp_path / "structures.gro"))
+    assert loaded.shape == (1, 20, 3)
+
+
+def test_compute_exp_statistics_output_keys():
+    """compute_exp_statistics produces expected keys used by scoring and plotting."""
+    coords_np = np.random.rand(20, 10, 3).astype(np.float32)
+    device = torch.device("cpu")
+    stats = compute_exp_statistics(
+        coords_np, device, get_distmaps,
+        max_sep=5, chunk_size=10, avg_map_sample=20,
+    )
+    required = {
+        "exp_distmaps", "exp_bonds", "exp_rg",
+        "genomic_distances", "exp_scaling", "avg_exp_map",
+    }
+    assert required.issubset(stats.keys())
+    assert stats["exp_distmaps"].shape == (20, 10, 10)
+    assert stats["avg_exp_map"].shape == (10, 10)
+    assert len(stats["genomic_distances"]) == 5
 
 
 def test_load_data_raises_atom_line_too_few_columns(tmp_path):

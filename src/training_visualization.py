@@ -287,10 +287,12 @@ def render_eu_frame(epoch, total_epochs, probe_ref_coords, probe_input_dms, prob
 
 def assemble_video(frames_dir, output_path, fps):
     """Assemble frame_%05d.png in frames_dir into output_path.
-    Returns (True, None) if successful; (False, reason) on failure (reason for pipeline log)."""
+    Returns (True, None) if successful; (False, reason) on failure (reason for pipeline log).
+    Uses EUCLIDEANIZER_FFMPEG if set (e.g. by multi-GPU HPO launcher so workers see ffmpeg)."""
     pattern = os.path.join(frames_dir, "frame_%05d.png")
+    ffmpeg_exe = os.environ.get("EUCLIDEANIZER_FFMPEG", "ffmpeg")
     cmd = [
-        "ffmpeg", "-y", "-framerate", str(fps), "-i", pattern,
+        ffmpeg_exe, "-y", "-framerate", str(fps), "-i", pattern,
         "-c:v", "libx264", "-preset", "slow", "-crf", "18",
         "-pix_fmt", "yuv420p", "-movflags", "+faststart", output_path,
     ]

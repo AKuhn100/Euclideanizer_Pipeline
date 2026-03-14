@@ -62,6 +62,8 @@ from run import (
     _reference_size_config,
     _reference_size_changed,
     _delete_reference_size_caches,
+    _has_any_plotting_output,
+    _has_any_analysis_output,
     EXP_STATS_CACHE_DIR,
     EXP_STATS_SPLIT_META,
     EXP_STATS_TRAIN_NPZ,
@@ -640,6 +642,94 @@ def test_run_completed_false_when_last_epoch_mismatch(tmp_path):
     save_run_config({"distmap": {"epochs": 2}}, str(model_dir), last_epoch_trained=1, best_epoch=1, best_val=0.5)
     (model_dir / "model.pt").write_bytes(b"x")
     assert _run_completed(str(tmp_path), 2, section_key="distmap", expected_section=None, multi_segment=False) is False
+
+
+def test_run_completed_early_stopped_treated_as_complete(tmp_path):
+    """early_stopped=True: run is complete even when last_epoch_trained != expected_epochs."""
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    save_run_config(
+        {"distmap": {"epochs": 500}}, str(model_dir),
+        last_epoch_trained=87, best_epoch=70, best_val=0.5, early_stopped=True,
+    )
+    (model_dir / "model.pt").write_bytes(b"x")
+    assert _run_completed(
+        str(tmp_path), 500, section_key="distmap",
+        expected_section=None, multi_segment=False,
+    ) is True
+
+
+def test_run_completed_early_stopped_false_still_requires_epoch_match(tmp_path):
+    """early_stopped=False: run is not complete when last_epoch_trained != expected_epochs."""
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    save_run_config(
+        {"distmap": {"epochs": 500}}, str(model_dir),
+        last_epoch_trained=87, best_epoch=70, best_val=0.5, early_stopped=False,
+    )
+    (model_dir / "model.pt").write_bytes(b"x")
+    assert _run_completed(
+        str(tmp_path), 500, section_key="distmap",
+        expected_section=None, multi_segment=False,
+    ) is False
+
+
+def test_distmap_training_groups_single_epochs_value(cfg):
+    """Single epochs value -> one group, one checkpoint."""
+    cfg = dict(cfg)
+    cfg["distmap"] = dict(cfg["distmap"])
+    cfg["distmap"]["epochs"] = 100
+    groups = distmap_training_groups(cfg)
+    assert len(groups) == 1
+    assert groups[0]["checkpoints"] == [(0, 100)]
+
+
+def test_distmap_training_groups_segment_order(cfg):
+    """Multi-segment: checkpoints sorted by epoch, indices match grid order."""
+    cfg = dict(cfg)
+    cfg["distmap"] = dict(cfg["distmap"])
+    cfg["distmap"]["epochs"] = [50, 200, 100]  # deliberately unsorted
+    groups = distmap_training_groups(cfg)
+    assert len(groups) == 1
+    epoch_vals = [ev for _, ev in groups[0]["checkpoints"]]
+    assert epoch_vals == sorted(epoch_vals), "checkpoints must be sorted by epoch"
+
+
+def test_distmap_training_groups_cartesian_different_groups(cfg):
+    """Different beta_kl values -> separate groups, each with own segments."""
+    cfg = dict(cfg)
+    cfg["distmap"] = dict(cfg["distmap"])
+    cfg["distmap"]["beta_kl"] = [0.01, 0.05]
+    cfg["distmap"]["epochs"] = [50, 100]
+    groups = distmap_training_groups(cfg)
+    assert len(groups) == 2  # two beta_kl values -> two groups
+    for g in groups:
+        assert len(g["checkpoints"]) == 2  # two segments each
+
+
+def test_has_any_plotting_output_false_when_empty(tmp_path):
+    (tmp_path / "seed_0").mkdir()
+    assert _has_any_plotting_output(str(tmp_path), [0]) is False
+
+
+def test_has_any_plotting_output_true_when_plot_exists(tmp_path):
+    p = tmp_path / "seed_0" / "distmap" / "0" / "plots" / "reconstruction"
+    p.mkdir(parents=True)
+    assert _has_any_plotting_output(str(tmp_path), [0]) is True
+
+
+def test_has_any_analysis_output_rmsd_gen(tmp_path):
+    assert _has_any_analysis_output(str(tmp_path), [0], "rmsd_gen") is False
+    p = tmp_path / "seed_0" / "distmap" / "0" / "euclideanizer" / "0" / "analysis" / "rmsd" / "gen"
+    p.mkdir(parents=True)
+    assert _has_any_analysis_output(str(tmp_path), [0], "rmsd_gen") is True
+
+
+def test_has_any_analysis_output_latent(tmp_path):
+    assert _has_any_analysis_output(str(tmp_path), [0], "latent") is False
+    p = tmp_path / "seed_0" / "distmap" / "0" / "euclideanizer" / "0" / "analysis" / "latent"
+    p.mkdir(parents=True)
+    assert _has_any_analysis_output(str(tmp_path), [0], "latent") is True
 
 
 def test_euclideanizer_plotting_all_present_requires_resume(tmp_path):

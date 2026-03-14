@@ -32,6 +32,7 @@ from src.scoring import (
     _run_name_has_scoring_variance,
     _gen_variance_stem_has_scoring_variance,
     _variance_lists_from_config,
+    _pairwise_wasserstein_mean_from_lags,
     compute_and_save,
 )
 
@@ -65,6 +66,33 @@ def test_wasserstein_on_zscored_identical_small():
     b = a.copy()
     d = wasserstein_on_zscored(a, b)
     assert d >= 0 and d < 0.01
+
+
+def test_pairwise_wasserstein_mean_identical_distributions_near_zero():
+    """Identical distributions -> Wasserstein 0 -> mean near 0."""
+    pytest.importorskip("scipy.stats")
+    k_values = np.array([1, 2, 3])
+    d = np.array([np.ones(10), np.ones(10), np.ones(10)], dtype=object)
+    result = _pairwise_wasserstein_mean_from_lags(k_values, d, d.copy())
+    assert result < 0.01
+
+
+def test_pairwise_wasserstein_mean_different_distributions_positive():
+    """Distinct distributions -> Wasserstein > 0."""
+    pytest.importorskip("scipy.stats")
+    k_values = np.array([1, 2])
+    exp_d = np.array([np.ones(20), np.ones(20) * 2], dtype=object)
+    gen_d = np.array([np.ones(20) * 5, np.ones(20) * 10], dtype=object)
+    result = _pairwise_wasserstein_mean_from_lags(k_values, exp_d, gen_d)
+    assert result > 0
+
+
+def test_pairwise_wasserstein_empty_returns_nan():
+    """Empty k_values -> nan."""
+    result = _pairwise_wasserstein_mean_from_lags(
+        np.array([]), np.array([]), np.array([])
+    )
+    assert np.isnan(result)
 
 
 def test_exp_score_zero_d_is_one():

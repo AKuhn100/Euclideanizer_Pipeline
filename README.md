@@ -89,7 +89,7 @@ Each trial runs the full pipeline (train DistMap → train Euclideanizer → plo
 python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.gro --resume --n-trials-add 50
 ```
 
-**Multi-GPU:** The same command auto-uses all available GPUs. When more than one GPU is detected (or `n_gpus` in config is > 1), `run_hpo.py` spawns one worker per GPU sharing the same SQLite study DB; workers stop when total trials reach `n_trials`. Set `n_gpus` in config to limit (e.g. `n_gpus: 2`); omit or null to use all.
+**Multi-GPU:** The same command auto-uses all available GPUs. When more than one GPU is detected (or `n_gpus` in config is > 1), `run_hpo.py` spawns one worker per GPU sharing the same SQLite study DB; workers stop when total trials reach `n_trials`. Set `n_gpus` in config to limit (e.g. `n_gpus: 2`); omit or null to use all. For training videos (ffmpeg), **load the ffmpeg module in the same shell before starting** `run_hpo.py`; the launcher resolves ffmpeg and passes it to workers via `EUCLIDEANIZER_FFMPEG` so subprocesses see it even when PATH differs.
 
 HPO config: `output_dir` (required), `data_path`, `seed`, `epoch_cap`, `pipeline_config`, `search_space`, `optuna` (n_trials, sampler, pruner, show_progress_bar), `n_gpus` (optional; null = use all GPUs). Study at `output_dir/hpo_study.db`; config saved to `output_dir/hpo_config.yaml` on first run; when adding trials, config must match except `n_trials` and `show_progress_bar`. **Logging:** `output_dir/trial_N/pipeline.log` per trial; `output_dir/hpo.log` for HPO summary. See `Pipeline/specs/HPO_SPEC.md` for the full design.
 

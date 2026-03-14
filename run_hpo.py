@@ -15,16 +15,17 @@ for a clean stream.
 from __future__ import annotations
 
 import argparse
-import subprocess
-from typing import Any
 import copy
 import json
 import os
+import shutil
+import subprocess
 import sys
 import traceback
 import warnings
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -446,10 +447,14 @@ def main() -> int:
             cmd.append("--resume")
         if args.n_trials_add is not None:
             cmd.extend(["--n-trials-add", str(args.n_trials_add)])
+        # Resolve ffmpeg in launcher's PATH so workers get it even if their PATH differs (e.g. module not visible in subprocess).
+        ffmpeg_path = shutil.which("ffmpeg")
         procs = []
         for i in range(n_gpus):
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = str(i)
+            if ffmpeg_path:
+                env["EUCLIDEANIZER_FFMPEG"] = ffmpeg_path
             p = subprocess.Popen(cmd, env=env, cwd=str(_SCRIPT_DIR))
             procs.append((i, p))
         exit_codes = []
