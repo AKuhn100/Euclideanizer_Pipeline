@@ -1,0 +1,234 @@
+# Pipeline style guide and developer reference
+
+This document is for developers working on the Euclideanizer pipeline. It summarizes **priorities**, **implementation decisions**, and **conventions** so that changes stay consistent with how the system is designed and optimized.
+
+---
+
+## Guiding principle: usable code for scientific inquiry
+
+A core goal of this project is to produce useful codebases for scientific inquiry. A major source of frustration in scientific software is when users cannot replicate results or generalize use to other projects in a way that would be reasonable to expect from the publication. To reduce that risk:
+
+- **Fail-safe where possible.** Design so that misuse is hard and failure modes are clear and informative. Avoid situations where a user concludes the software "doesn't work" because of hidden requirements or opaque behavior.
+- **Transparent and reproducible.** Prefer no magic numbers and no hidden behavior. The config and saved `run_config.yaml` should tell you exactly what was used, so that results are reproducible and choices are explicit.
+- **Expose what matters, hide what doesn't.** Not every option should be configurable — low-level implementation details add complexity without helping most users. Expose what affects scientific outcomes, reproducibility, or resource use; keep the rest simple and stable.
+
+This principle drives the emphasis on required config keys, resume/reproducibility, clear errors, and documentation—so that the codebase stays robust and trustworthy for replication and reuse.
+
+---
+
+## 1. Getting started
+
+### Entrypoint and layout
+
+- **Pipeline entrypoint**: `run.py`. All training, plotting, analysis, and dashboard are driven from here. There is no separate “plot-only” or “analysis-only” script; behavior is controlled by config and resume/overwrite logic.
+- **HPO entrypoint**: `run_hpo.py`. Optuna-based hyperparameter optimization; uses an HPO config (e.g. `hpo_config.yaml`) that references a pipeline config as the template for each trial. Trials run in-process (or in parallel when `n_jobs` > 1); each trial runs one full pipeline via `run.run_one_hpo_trial()`. Output: `output_dir/trial_N/` (same layout as a single pipeline run), `output_dir/hpo_study.db`, `output_dir/hpo.log`, `output_dir/dashboard/`. See `specs/HPO_SPEC.md` and README § HPO.
+- **Config is required**: No default config file. The pipeline is always invoked with `--config path/to/config.yaml`. All hyperparameters and options come from the config (with optional CLI overrides). Required keys are enforced in `src/config.py`; missing keys fail at load time. HPO requires an HPO config (output_dir, data_path, pipeline_config, search_space, optuna, etc.); `output_dir` is required and validated at startup.
+- **Package layout**: Core logic lives under `src/`. `run.py` imports from `src` (config, utils, metrics, plotting, train_*, analysis_metrics, rmsd, q_analysis, dashboard, gro_io). `run_hpo.py` imports `run` and uses `run.run_one_hpo_trial()` and run's logging. Tests live in `tests/` and use the same helpers as the main loop.
+- **Specs**: All specification documents live under `specs/` (e.g. `specs/HPO_SPEC.md`, `specs/SCORING_SPEC.md`). Do not add or edit specs in the pipeline root; keep a single canonical spec per topic under `specs/`.
+
+### Running and testing
+
+- Run pipeline: `python run.py --config samples/config_sample.yaml [--data path/to/data.gro]`
+- Run HPO: `python run_hpo.py --config samples/hpo_config.yaml [--data path/to/data.gro]` (use an HPO config, not the pipeline template). Resume: `--resume --n-trials-add N`.
+- Behavior tests (no dataset/GPU): `pytest tests/test_pipeline_behavior.py -v`
+- Full test suite including smoke: `pytest tests/ -v`
+- Smoke test only: `pytest tests/test_smoke.py -v` (requires `tests/test_data/spheres.gro`)
+- Batch-size benchmark: `python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro` (sweeps batch sizes × learning rates; reports time per epoch, samples/sec, validation loss, peak VRAM). Uses a single training config (first value for any list in distmap/euclideanizer); prints a warning when config has lists. Use `--mode dm` (DistMap only), `--mode eu` (train DM 50 epochs in temp, then EU benchmark only; temp purged), or `--mode both` (default). Optional: `--batch-sizes`, `--learning-rates`, `--epochs`, `--dm-checkpoint`, `--output`. See README § Benchmark and calibration.
+
+---
+
+## 2. Pipeline priorities
+
+These goals drive design and where we accept complexity.
+
+### 2.1 Resume and minimal rework
+
+- **Resume is the default.** The pipeline skips any run (training, plotting, analysis) whose outputs already exist and are considered “complete.” Interrupted runs resume from the best checkpoint (or previous segment’s last) rather than restarting.
+- **Config must match on resume.** If the output directory exists and resume is on, training-related config (data, distmap, euclideanizer, training_visualization) must match the saved pipeline config exactly; otherwise the run fails with a diff before loading data.
+- **Granular overwrite.** When only plotting or analysis config changes, the pipeline does **not** wipe the whole output dir. It treats five independent **chunks**: Plotting, RMSD (gen), RMSD (recon), Q (gen), Q (recon). Only the chunks whose config changed are prompted, deleted, and re-run. Training and other chunks are left intact.
+- **Overwrite_existing per component.** Each analysis block (e.g. `rmsd_gen`, `rmsd_recon`) and plotting have an `overwrite_existing` flag. When true and outputs exist, only that component’s outputs are removed and re-run (with optional prompt, or `--yes-overwrite` to skip). This avoids mixing old and new results.
+
+### 2.2 Data loading: load only what’s needed
+
+- **Need-based loading.** What gets loaded (coordinates, experimental statistics, train/test split stats) is determined by **which outputs are missing**, not by a single “full run” flag. The logic is centralized in `_pipeline_data_needs()` and `PipelineDataNeeds` (need_coords, need_exp_stats, need_train_test_stats).
+- **Coords-only path:** When only training, reconstruction plots, recon_statistics, bond_length_by_genomic_distance, or RMSD/Q/coord-clustering/distmap-clustering analysis are missing, the pipeline loads the coordinate dataset and (if needed) computes or reuses train/test statistics. It does **not** load full experimental statistics when only those outputs are needed.
+- **Stats-only path:** When only gen_variance (or bond_length_by_genomic_distance) plots are missing and the relevant caches (base + per-seed train/test) exist and are valid, the pipeline loads **only** those caches (no .gro file). This minimizes I/O and memory for “regen gen_variance only” (or bond-length-only) runs.
+- **No load:** When all runs are complete and all plot/analysis outputs are present, nothing is loaded (e.g. when only assembling training videos from existing frames).
+
+### 2.3 Caching and reuse
+
+- **Experimental statistics** are cached under `output_dir/experimental_statistics/` (full) and `output_dir/seed_<n>/experimental_statistics/` (train/test). Reused when dataset path, dimensions, and (for split/reference caches) `max_train`/`max_test` match.
+- **Reference-size caches** (plotting split stats, test→train RMSD, Q, coord_clustering feats, distmap_clustering feats) are keyed by `max_train`/`max_test` (or equivalent). When **reference-size config** (e.g. `plotting.max_train`, `analysis.rmsd_max_train`) **changes** and the run will use that component (plotting or that analysis), the pipeline **prompts** (same phrase as overwrite) and **deletes** the affected caches so they are recomputed with the new values. This avoids reusing stale caches when you change train/test limits.
+- **Test→train RMSD** is cached at seed level (`test_to_train_rmsd.npz` or `test_to_train_rmsd_{mt}_{mc}.npz`, using `all` when a limit is null). Same idea for **Q**, **coord_clustering** (`coord_clustering_train_test_feats_*.npz`), and **distmap_clustering** (`distmap_clustering_train_test_feats_*.npz`). These caches are reused by all runs in that seed and are not duplicated in per-run analysis dirs.
+- **Per-run** analysis outputs (e.g. `rmsd_data.npz`, `rmsd_recon_data.npz`) are controlled by `save_data` in the config.
+- **Clamping:** If `max_train` or `max_test` is larger than the number of available train/test structures, the pipeline uses all available (slicing is capped automatically).
+
+### 2.4 Dashboard and redo behavior
+
+- **Dashboard is removed when any plotting or analysis is redone.** When the user confirms overwrite (via `overwrite_existing` or config-diff), the pipeline calls `_delete_dashboard(base_output_dir)` **once** at the start (before deleting component-specific outputs). The dashboard is then rebuilt at the end of the run if `dashboard.enabled` is true. This avoids mixing an old dashboard with new plots/analysis.
+- **Component-specific deletion only.** Aside from the dashboard, overwrite and config-diff delete only the relevant outputs (e.g. only `analysis/rmsd/recon/` for rmsd_recon), not the whole run or seed directory.
+
+---
+
+## 3. Implementation decisions
+
+### 3.1 Analysis metrics: single registry and loop
+
+- **Pluggable metrics** are defined in `src/analysis_metrics.py` via `ANALYSIS_METRICS` (list of `AnalysisMetricSpec`). Each spec has: id, gen_key, recon_key, subdir, figure_filename, and callables (get_or_compute, run_gen_analysis, run_recon_analysis, cache_filename, kwargs_for_cache, build_gen_plot_cfg, build_recon_plot_cfg, etc.).
+- **Single loop in run.py.** Training/plotting/analysis in `run.py` iterates over `ANALYSIS_METRICS` for cache lookup, presence checks, and running gen/recon. Adding a new metric means implementing the module (e.g. `rmsd.py`, `q_analysis.py`) and adding one spec to `ANALYSIS_METRICS`; no duplicated “if rmsd … elif q …” blocks in the main loop.
+- **Presence and data needs.** `_euclideanizer_analysis_all_present()` accepts `analysis_cfg` (and optionally a list of specs) and, for each enabled metric, checks that the expected gen/recon/latent files exist. `_pipeline_data_needs()` builds a single `analysis_cfg` from the current config and calls that presence check once per Euclideanizer run; it does not have separate branches per metric.
+- **Presence checks.** `_euclideanizer_analysis_all_present()` can be called with either a full `analysis_cfg` dict or with flattened kwargs (do_rmsd, variance_list, …). In the latter case, `_analysis_cfg_from_need_data_kwargs()` builds a minimal analysis_cfg for the same single-loop implementation.
+
+### 3.2 Config-driven behavior: no defaults
+
+**The pipeline is config-driven.** Every parameter that affects training, plotting, or analysis must be specified in the config file. This makes it possible to see exactly what was used for any run by reading the config (and the saved `run_config.yaml` in each output directory).
+
+- **Require all keys that affect behavior.** All such keys are listed in `REQUIRED_KEYS` and `REQUIRED_ANALYSIS_SUBKEYS` in `src/config.py`. Validation at load time fails with a clear error if any required key is missing. There are **no code-side defaults** for these: if the key is missing, the pipeline does not run. When adding a new option, add it to the required keys and to the sample config so users must set it explicitly.
+- **Avoid default values in function arguments for config-sourced parameters.** If a value is intended to come from config, the caller should read it from config and pass it explicitly. Do not use `def f(..., batch_size=128)` for parameters that the pipeline is supposed to get from config—it becomes unclear whether a run used the default or a value from config. Use required config keys and pass the value through at the call site so the source is obvious.
+- **When reading from the full pipeline config, use direct access.** For required keys, use `cfg["section"]["key"]` (or the appropriate nesting) so that a missing key raises immediately. Reserve `.get(key, default)` only for genuinely optional keys (if any) or for minimal constructed configs used internally (e.g. for presence checks). Do not add new “convenience” defaults when reading config; add the key to the schema instead so the config file is the single source of truth. **In-memory configs** (e.g. HPO trial config built in `run_hpo.py`): call `src.config.validate_config(cfg)` before using the config so that pipeline code can use direct access; `run_hpo` validates each trial config after `_build_trial_config()` and before running the trial.
+- **No backwards compatibility.** Do not carry old functionality or config schema forward; it increases technical debt and vestigial code. Require the current schema and use direct access so missing keys fail fast. When the schema or behavior changes, update code and config; do not add branches or `.get()` defaults to support older configs or legacy output dirs.
+- **Lists in config:** Any distmap/euclideanizer key except `batch_size` can be a single value or a list. Lists are expanded into a Cartesian product (one run per combination). **`batch_size` must be a single positive integer or `null`** (no list). `null` = auto-calibrate at start of run (see below). For `epochs`, a list means multi-segment training (e.g. [100, 300]: train to 100, then resume from that segment’s last and train to 300).
+- **In-run batch-size calibration:** When `distmap.batch_size` or `euclideanizer.batch_size` is `null`, the pipeline calibrates the largest batch size before training. When `plotting.gen_decode_batch_size` or any analysis block's `query_batch_size` / `gen_decode_batch_size` is `null`, the pipeline calibrates (decode-only path) and uses one value for both; resolved values are written to `run_config.yaml` and reused on resume. **Training and inference batch sizes are independent:** fixed training sizes can be set while leaving gen_decode/query as `null` for inference calibration. Auto-calibration maximizes throughput; optimal *training* batch size for validation performance is batch-dependent—use `tests/benchmark_batch_size.py` to find it. Calibration uses **`calibration_safety_margin_gb`** (fixed GB reserved), **`calibration_binary_search_steps`** (max halving iterations after OOM), and **`calibration_training_batch_cap`** / **`calibration_decode_batch_cap`** (upper bounds). Memory limit is computed via `_compute_memory_limit`; probe uses `torch.cuda.max_memory_reserved()`. See `src/calibrate.py`.
+
+### 3.3 Config and naming
+
+- **Analysis config keys:** `rmsd_gen`, `rmsd_recon`, `q_gen`, `q_recon`, `coord_clustering_*`, `distmap_clustering_*`. File and directory names follow the metric (e.g. `analysis/rmsd/`, `rmsd_distributions.png`). In figure content (titles, axis labels), use the full description (e.g. “min RMSD to training set”) where the caveat matters.
+
+### 3.4 Run completion and training actions
+
+- A run is **complete** only if: (1) the best checkpoint exists, (2) `last_epoch_trained` in the saved run config equals the expected max epochs (and section match), and (3) for multi-segment runs, the last-epoch checkpoint is present only when there is a **next** segment that needs it (last segment with `save_final_models_per_stretch: false` does not require/write the last-epoch file).
+- **Training actions** (same for DistMap and Euclideanizer): **skip** (run complete), **from_scratch** (no previous or resume=False), **resume_from_best** (interrupted; resume from best), **resume_from_prev_last** (new segment; start from previous segment’s last checkpoint). Logic lives in `_distmap_training_action()` and `_euclideanizer_training_action()`.
+
+### 3.5 Multi-GPU
+
+- When 2+ CUDA devices are available, work is split into **(seed, DistMap group)** tasks. One worker process per GPU runs its assigned tasks sequentially on that device. Resume, overwrite, and output layout are unchanged.
+- **All seed-level caches must be precomputed in the main process before spawning workers.** The main process precomputes per-seed train/test statistics (plotting), then all seed-level analysis caches (RMSD, Q, coord_clustering, distmap_clustering) for each enabled metric, then **frees its copy of the dataset** before spawning workers so that only workers hold data (avoiding 1 + N copies and OOM). Workers then only **read** these caches. This avoids multiple processes writing the same cache file concurrently, which would corrupt the file (e.g. pickled-data or zlib errors on load). When adding a new seed-level cache (e.g. a new analysis metric that writes under `experimental_statistics/`), add it to the precompute loop in `run.py` so it is created once in the main process before branching to GPUs.
+- Use `--no-multi-gpu` or `--gpus 1` to force single-process if needed (e.g. memory or debugging).
+
+### 3.6 Dashboard
+
+- The dashboard (`src/dashboard.py`) is built once at the end of the pipeline when `dashboard.enabled` is true. It scans the output tree and assembles an HTML report from plots and analysis outputs.
+- **Views:** Browse (hierarchical drill-down: seeds → DistMap runs → Euclideanizer runs, with full parameters), Detail (single run with parameter panel and all blocks), Compare (two DistMap runs or two Euclideanizer runs side-by-side with parameter panels; “Set as A” / “Set as B” to choose left/right), Vary aspect (sweep one parameter on the x-axis with full context config per row; horizontal scroll for wide tables), and Radar grid (grid of radar plots by overall score, best-to-worst; hover to see run parameters).
+- **Single loop over metrics.** `_blocks_for_euclideanizer_run()` uses a list of metric descriptors and iterates to collect blocks for RMSD, Q, coord clustering, and distmap clustering. Block types include `rmsd_gen`, `rmsd_recon`, `q_gen`, `q_recon`, `coord_clustering_*`, `distmap_clustering_*`, and (when `analysis/latent/` exists) a single **latent** pair: `latent_distribution`, `latent_correlation`. There is one latent block per Euclideanizer run from `analysis/latent/`, not per analysis metric. When **`scores.json`** exists, a **scores** block shows a spider/radar plot and overall and component scores in the Detail view; if `scoring.save_pdf_copy` is true, a PDF of the spider is written under dashboard assets. The JS `blockTypeOrder` orders blocks; when adding a new metric or plot type, extend it accordingly.
+
+---
+
+## 4. Conventions and patterns
+
+### 4.1 Code style
+
+- **Python:** 3.9+. Use `from __future__ import annotations` where helpful. Type hints are used for public helpers and dataclasses (e.g. `PipelineDataNeeds`, `AnalysisMetricSpec`).
+- **Paths:** Use `os.path.join()` for portability in `run.py` and `src/`. Helpers like `_analysis_path()`, `_plot_path()` centralize output paths so that renames (e.g. min_rmsd → rmsd) happen in one place. `run_hpo.py` uses `pathlib.Path` for HPO-specific paths (output_dir, trial dirs, study DB) for consistency with Optuna and file creation there.
+- **Logging:** Pipeline uses a custom log (e.g. `pipeline.log` in output root) plus mirror to stdout. `_log(..., style="info"|"skip"|"error")` for consistent formatting and elapsed time. **HPO:** Each trial writes to `output_dir/trial_N/pipeline.log`; HPO-level summary (trial completed/pruned/failed) goes to `output_dir/hpo.log`. With `n_jobs=1` and a TTY, pipeline log output is mirrored to stdout with the same styling as `run.py`.
+
+### 4.2 Config and tests
+
+- **Sample config:** `samples/config_sample.yaml` must contain all required keys and serve as the reference. Test configs (`tests/config_test.yaml`, `tests/config_smoke.yaml`) use the same schema with minimal values. **HPO:** Use `samples/hpo_config.yaml` as the HPO config reference and `samples/config_sample_hpo.yaml` as the pipeline template for trials; HPO config keys and behavior are documented in `specs/HPO_SPEC.md`.
+- **Tests must fail when behavior is wrong.** A test that passes even when the intended behavior is broken is useless. Design tests so that they would **fail** if the implementation regresses: e.g. test rotated-then-aligned RMSD is near zero (not just “identical coords give zero”), compare against a known-good reference (e.g. scipy) where applicable, and assert on the actual outcome (e.g. RMSD &lt; threshold) rather than only on shape or presence. Avoid tests that only check “same input → same output” when the same input makes both correct and incorrect implementations pass.
+- **Behavior tests** in `tests/test_pipeline_behavior.py` use temporary directories and the same helpers as `run.py` (`_run_completed`, `_pipeline_need_data`, `_pipeline_data_needs`, `_euclideanizer_analysis_all_present`, training actions, etc.). They do **not** run training, plotting, or analysis; they only test control flow and resume/need_data logic.
+- **Smoke test** runs the full pipeline once with a small dataset and asserts that key outputs exist. It is included in the default pytest run but can be skipped with `-m "not slow"`.
+- **Benchmarks** live in `tests/` as standalone scripts (e.g. `benchmark_batch_size.py`), not pytest tests. The batch-size benchmark measures efficiency (time per epoch, samples/sec, peak VRAM) and efficacy (validation loss) across batch sizes; it uses a single training config (first of each list in config) and does not run a combinatorial grid. See README § Benchmark and calibration.
+
+### 4.3 Adding or changing analysis metrics
+
+1. Implement the metric module (e.g. gen/recon functions, cache filename, plot_cfg builders).
+2. In `src/analysis_metrics.py`, add helpers and an `AnalysisMetricSpec` entry to `ANALYSIS_METRICS` (id, gen_key, recon_key, subdir, figure_filename, and all callables). Order: rmsd, q, then coord_clustering, then distmap_clustering (coords before distmap). Prefer **parameterized helpers** (e.g. factories keyed by metric id or prefix) over copy-pasted per-metric functions when two or more metrics share the same structure (see §4.8).
+3. In `src/config.py`, add the new gen/recon keys and any reference-size keys (e.g. `*_max_train`, `*_max_test`) to `REQUIRED_KEYS["analysis"]` and `REQUIRED_ANALYSIS_SUBKEYS`.
+4. In `src/run.py`, keep the analysis loop **data-driven**: use `spec.id` (e.g. `analysis_cfg.get(f"{spec.id}_max_train")`) and a single cache path keyed by `spec.id` rather than adding new `if spec.id == "…"` branches. Extend `_reference_size_config`/purge, `_analysis_cfg_from_need_data_kwargs`, need_coords, overwrite/config-diff/chunk labels, and `_delete_analysis_outputs_for_component` / `_has_any_analysis_output` in a way that stays generic (e.g. iterating over specs or a small map from id to config key names).
+5. In `src/dashboard.py`, prefer a **single parameterized** block-discovery function (e.g. `_append_clustering_analysis_blocks(subdir, type_prefix, display_name, include_latent=…)`) called for each metric rather than separate near-duplicate functions. Extend the JS `blockTypeOrder` with the new block types.
+6. Update `samples/config_sample.yaml` and test configs with the new blocks; add or adjust tests in `test_pipeline_behavior.py` and any metric-specific tests.
+
+### 4.4 Data and scoring modularity
+
+**Saved data is raw plot/analysis data only; scores are computed only in scoring.** Pipeline components (plotting, analysis) write the exact arrays or values that were plotted or used for figures — no precomputed scores or aggregate statistics. The scoring module (`src/scoring.py`) loads those saved NPZ/outputs and computes all component scores and the overall score itself. This keeps scoring as a single place that defines score formulas (see `SCORING_SPEC.md`) and makes it easy to change formulas without re-running heavy pipeline steps. When `save_data` or scoring is enabled, the pipeline generates and saves all raw data needed for scoring; the decision to keep or delete that data after scoring runs is made at the end based on config (e.g. cleanup when `save_data` is false).
+
+**Generation data for scoring: variance = 1 only.** All generation-related scores must be computed from data produced with sample_variance = 1. Scoring reads each block’s `sample_variance` from config and loads only from paths that indicate variance 1 (e.g. `gen_variance_1.0_data.npz`, analysis gen run names like `default_var1.0`). If a block’s config does not include 1, those gen components are marked missing. Gen output paths always include the variance in the name (see SCORING_SPEC §7). This is enforced and tested in `test_scoring.py` and `test_pipeline_behavior.py`.
+
+### 4.5 Pipeline component alignment (plotting, analysis, latent, scoring)
+
+**Every pipeline component that produces outputs must follow the same patterns.** When adding or changing a component (e.g. scoring, latent), mirror how plotting and analysis work so the codebase stays consistent and predictable.
+
+- **Overwrite flow:** Use the shared `_overwrite_descriptors` pattern: (label, enabled, overwrite_existing, has_output_fn). On confirm, delete only that component’s outputs via a dedicated delete helper (e.g. `_delete_scoring_outputs`, `_delete_analysis_outputs_for_component`). Do **not** re-check `overwrite_existing` when computing “need to run”; after the upfront delete, “need” = “output is missing.”
+- **Need-to-run:** If a component can be the *only* thing that needs to run (e.g. user enabled only scoring overwrite), it must be included in the need logic so the pipeline actually runs. Add a “needs run” condition (e.g. `scoring_needs_run = scoring_enabled and not _has_any_scoring_output(...)`) and combine it with `need_any` so we don’t skip the run when only that component’s output is missing.
+- **No unnecessary data load:** If a component does **not** need coordinates or experimental statistics (e.g. scoring only reads NPZ from disk), the pipeline must **not** load the full dataset when that component is the only one that needs to run. Add a dedicated path (e.g. `scoring_only = need_any and scoring_needs_run and not needs.need_any()`) that skips all data loading and only iterates over runs to execute that component. This avoids loading a large .gro and GPU tensors just to trigger the loop.
+- **Dashboard:** When any component (including scoring) will be re-run, delete the dashboard once so it gets rebuilt with current outputs. Include the new component in the condition that triggers `_delete_dashboard`.
+- **Cleanup:** If the component writes NPZ or other intermediates that can be removed when `save_data` is false (e.g. after scoring has run), include it in the post-scoring cleanup loop with the same pattern as other blocks (check config, delete only that component’s data dirs).
+- **Config access:** Use **direct access** for all config keys that are part of the current schema (`cfg["section"]["key"]`) so missing keys fail fast and verbosely (§3.2). Do not add `.get()` with defaults to support older or partial configs; we do not maintain backwards compatibility (§3.2).
+
+Applying these rules keeps latent, scoring, and analysis/plotting aligned and avoids “jerry-rigged” one-off branches.
+
+### 4.6 Don’t add unrequested abstraction layers
+
+- **Only implement what’s asked for.** If the user asks for “component scores on the radar,” do not add a separate category/aggregate layer (e.g. category_scores) unless they ask for it. Extra concepts (categories, tiers) add code, config, and UI surface; remove them if they were added speculatively and are unused.
+- **Remove dead code when changing behavior.** When you remove a feature (e.g. category scores) or replace an implementation (e.g. inline clustering instead of `_clustering_components`), delete the now-unused helpers, config keys, and branches. Grep for the old function or key to ensure no callers remain; then remove the definition. Orphaned code causes confusion and bit rot.
+
+### 4.7 Third-party API compatibility
+
+- **Avoid fragile or version-specific kwargs.** When calling plotting/third-party APIs (e.g. matplotlib `set_xticklabels`), use only arguments that are widely supported. Do not pass kwargs that may exist in one version but not another (e.g. `pad` for tick labels in some matplotlib versions); if in doubt, omit or guard by version. Prefer shared constants from `plot_config.py` (e.g. `PLOT_DPI`, `FONT_SIZE_*`) so behavior is consistent and easy to adjust.
+
+### 4.8 Overwrite and config-diff flow
+
+- **Overwrite_existing (component-level):** When `to_overwrite` is non-empty (user confirmed overwrite for specific components), the pipeline calls `_delete_dashboard(base_output_dir)` once, then for each label in `to_overwrite` deletes only that component’s outputs (via `_delete_plotting_outputs_only` or `_delete_analysis_outputs_for_component`), then proceeds with the run. No full wipe of the output dir.
+- **Config-diff:** When the saved pipeline config differs from the current config and the diff affects plotting or analysis chunks, the pipeline computes `chunks_with_outputs` for the chunks that need updating. Before the loop that deletes those chunks, it calls `_delete_dashboard(base_output_dir)` once. Then each affected chunk’s outputs are removed and re-run; training is skipped when only plotting/analysis config changed.
+- **Reference-size change:** When `max_train`/`max_test` (or equivalent) differ from the saved config for a component that will be run (plotting, RMSD, Q, coord clustering, or distmap clustering), the pipeline prompts (same confirmation phrase as overwrite) and deletes the **cached data** that depends on those values (per-seed split cache for plotting; RMSD/Q/coord_clustering/distmap_clustering seed caches for analysis). It does **not** delete component outputs (plots/analysis dirs); those may be deleted by overwrite or config-diff. After the purge, caches are recomputed with the new limits on the next run.
+
+### 4.9 Modularity and avoiding redundant code
+
+When editing the pipeline, keep it **modular and concise** so that adding or changing a metric or component does not require duplicating large blocks. Prefer data-driven and parameterized patterns over repeated branches.
+
+- **Data-driven config and cache keys.** In the main analysis loop, avoid long `if spec.id == "rmsd" … elif spec.id == "q" …` chains. Use a single pattern keyed by `spec.id`, e.g. `analysis_cfg.get(f"{spec.id}_max_train")` for reference sizes, and one cache dict keyed by `spec.id` for get-or-compute so every metric shares the same code path.
+- **Parameterized helpers in analysis_metrics.py.** When two metrics (e.g. coord_clustering and distmap_clustering) share the same structure and differ only by config key prefix or a few options (e.g. `include_batch_size`), introduce **factory functions** (e.g. `_make_clustering_cache_filename(prefix)`, `_make_clustering_kwargs_for_cache(prefix, include_batch_size=True)`) that return the callable. Then wire each metric by calling the factory with the right prefix/options instead of duplicating tens of lines per metric.
+- **Single parameterized block discovery in the dashboard.** If two analysis types produce the same block layout (e.g. gen/recon figures and optional latent blocks), use one function parameterized by subdir, type prefix, display name, and flags (e.g. `include_latent`) rather than two nearly identical `_append_*_analysis_blocks` functions.
+- **Loops over descriptors.** When multiple components need the same treatment (overwrite labels, chunk names, need_coords, purge), maintain a small list or map of component descriptors and loop over it instead of repeating the same logic per component. This makes adding a new metric a one-line extension to the list rather than several new branches.
+
+Applying these patterns keeps the codebase easier to extend and reduces the risk of inconsistent behavior when only one of several parallel branches is updated.
+
+### 4.10 Plot and figure conventions
+
+All pipeline-generated figures (plotting, analysis, training curves) must follow these rules so that outputs look consistent and are interpretable without external notes.
+
+- **Title case:** Use Title Case for all figure titles, axis labels, and legend text (capitalize the first letter of each word). Examples: "Pairwise RMSE", "Min RMSD (Aligned Coords)", "Mixing Score", "Train Recon (Q to Original)", "Reconstruction Statistics (Test Set)". Single-word labels (e.g. "Density", "Epoch", "Loss") are unchanged. Exception: training loss curves may use "Training Loss" / "Euclideanizer Training Loss" as the figure title where that is the standard name for the curve.
+- **Short labels in figures:** Use the short form for data sources everywhere in plot text: **Train**, **Test**, **Gen**, **Exp**, **Recon** (and "Train recon", "Test recon" where both words are needed). Do not use "Training", "Generated", or "Experimental" in axis labels, panel titles, or legends. Dashboard and README prose can use longer forms where clarity demands it.
+- **Explain plotted metrics:** Any metric or statistic shown in a figure must be documented so a reader can interpret it without guessing. Prefer documenting in the **README** (Analysis section) and/or with a clear in-figure cue (e.g. axis label, colorbar label, or one-line note). When adding a new metric to a plot, add a sentence to the README and optionally a short in-figure label. Current metrics and where they are explained:
+  - **c** (dendrograms): Cophenetic correlation coefficient; correlation between original pairwise distances and distances implied by the tree (c ∈ [0, 1]; higher = better fit). Documented in README § Clustering; shown in panel title as e.g. `(c=0.92)`.
+  - **Mixing score:** Fraction of each point's k-NN that are from a different source, vs expected under random. Documented in README § Clustering; panel titles say "Mixing" and the mixing_analysis figure has "Mixing Score" and "Observed" / "Expected (Random)".
+  - **Pearson r** (RMSE similarity): Correlation of quantile-matched pairwise RMSE values between two populations; shown in panel title as `(r=...)`. README describes the Q–Q comparison.
+  - **Quantile (%)** (RMSE similarity colorbar): Color encodes quantile 0–100% along the Q–Q curve; label "Quantile (%)" on the colorbar.
+- **Colors:** Use the centralized palette in `src/plot_config.py` (COLOR_TRAIN, COLOR_TEST, COLOR_GEN, COLOR_TRAIN_RECON, COLOR_TEST_RECON, COLOR_EXP, and the panel color lists) for all analysis and plotting figures. The training video uses a different dark-theme palette; that is documented in the training_visualization module and is acceptable.
+- **Colormaps:** Use `CMAP_DM` and `CMAP_DM_R` (viridis) from `plot_config.py` for distance-map heatmaps and for the RMSE similarity scatter colorbar. Training video may use other colormaps (e.g. plasma, rainbow) as documented.
+- **Axis and layout consistency:** (1) Pure and mixed dendrograms share the same y-axis limits across panels for comparability. (2) RMSE similarity panels share the same x and y limits and use a square aspect ratio. (3) Where a diagonal (y=x) is drawn, it spans the full range (e.g. from 0 to the shared max). (4) RMSE plot axes show actual RMSE values; use a single horizontal colorbar for quantile when points are colored by quantile.
+- **Concise titles:** Do not add long descriptive sublines inside panel titles (e.g. "Leaf strip colour = source" or "Each leaf is one structure..."). Keep titles short; put longer explanations in the README.
+
+### 4.10.1 Plot etiquette
+
+- **Title case everywhere:** All text in figures (titles, axis labels, legend entries, tick labels, annotations) must use Title Case. This includes scoring plots (e.g. radar/spider labels). Apply consistently so outputs look professional and consistent.
+- **Avoid grid lines unless essential:** Do not add grid lines to standard 2D plots (e.g. histograms, line plots, scatter plots). Grid lines add visual noise; use them only where they are essential for reading values (e.g. the radar/spider plot needs ring and spoke lines to interpret the scale). For polar/radar charts, the manual rings and spokes are part of the design; for Cartesian plots, leave grid off unless explicitly required.
+- **Centralize styling in plot_config:** Use `src/plot_config.py` for all colors (COLOR_TRAIN, COLOR_TEST, COLOR_GEN, etc.), font sizes (FONT_SIZE_TITLE, FONT_SIZE_TICK, etc.), colormaps (CMAP_DM, CMAP_DM_R), and DPI (PLOT_DPI). Do not hardcode hex colors, font sizes, or DPI in plotting or analysis modules. This keeps the look consistent and makes global changes easy.
+
+---
+
+## 5. Optimizations and trade-offs
+
+- **Resume and skip:** Maximize “skip” when outputs exist so that re-runs and config tweaks do not redo training or heavy plotting. This leads to more branching in the main loop (presence checks, need_coords vs need_exp_stats) but keeps wall time and resource use low for typical development and re-analysis.
+- **Stats-only load:** When only gen_variance is missing, loading only caches avoids reading the full .gro and keeps memory lower. The trade-off is that cache invalidation (path/size) must be correct and documented.
+- **Seed-level analysis caches:** Test→train RMSD and Q are cached once per seed and reused by all DistMap/Euclideanizer runs in that seed. This avoids recomputing the same test→train matrix for every run; the cost is that cache keys (e.g. query_batch_size, max_train/max_test) must match what analysis expects.
+- **Dashboard removed on redo:** Deleting the dashboard whenever any plot/analysis is redone ensures the next run produces a single consistent report. The alternative (partial dashboard update) was avoided to prevent confusion between old and new outputs.
+- **Multi-GPU memory:** Workers hold full dataset copies. For very large datasets or many workers, CPU RAM can be a bottleneck; the style guide and README document using `--no-multi-gpu` or higher job memory when needed.
+
+---
+
+## 6. Summary checklist for changes
+
+- [ ] Config: if you add or rename analysis or training_visualization keys, update `src/config.py` (REQUIRED_KEYS, REQUIRED_ANALYSIS_SUBKEYS), `samples/config_sample.yaml`, and test configs. Analysis order: rmsd, q, coord_clustering, distmap_clustering. When changing **scoring**: update `src/config.py` (scoring keys), `src/scoring.py`, sample config, and tests (e.g. `test_scoring.py`, `test_pipeline_behavior.py`).
+- [ ] Paths and filenames: use the shared helpers (`_analysis_path`, `_plot_path`) and the same naming as the rest of the pipeline (e.g. `rmsd` for the first metric in paths and filenames; “min RMSD” only in figure text where the caveat is needed).
+- [ ] Resume/overwrite: preserve the rule that only the affected component’s outputs are deleted (and dashboard is removed once when any redo happens). Do not delete the whole output dir unless the user explicitly confirmed full overwrite (--no-resume).
+- [ ] Data needs: if you add a new kind of output that requires coords or stats, extend `_pipeline_data_needs` and the loading logic so that we still load only what’s needed.
+- [ ] Tests: add or update behavior tests in `test_pipeline_behavior.py` for new control flow; keep config and path assertions in sync with the code. **Ensure each test would fail if the intended behavior were broken** (§4.2). Run `pytest tests/ -v` before submitting.
+- [ ] Docs: update README.md if you change CLI behavior, config keys, or output layout; keep this style guide in sync with implementation decisions.
+- [ ] HPO: when changing HPO config schema, `run_hpo.py`, or trial behavior, update `specs/HPO_SPEC.md`, `samples/hpo_config.yaml` (and `samples/config_sample_hpo.yaml` if pipeline template changes), and the README HPO subsection.
+- [ ] Redundancy: when adding or editing analysis/plotting/dashboard logic, prefer data-driven and parameterized patterns (§4.8) so new metrics or options don’t duplicate large blocks; refactor existing branches if you notice repeated if/elif or copy-pasted helpers.
+- [ ] Component alignment (§4.4): when adding or changing a pipeline component (e.g. scoring, latent), mirror overwrite flow, need-to-run logic, no unnecessary data load (scoring-only path), dashboard delete, and cleanup. Use direct config access; no backwards-compatibility code (§3.2).
+- [ ] Unrequested layers and dead code (§4.5): do not add category/aggregate layers or extra concepts unless asked; when removing a feature or replacing an implementation, remove all now-unused helpers and branches.
+- [ ] Config-driven, no defaults (§3.2): when adding options that affect behavior, add them to REQUIRED_KEYS or REQUIRED_ANALYSIS_SUBKEYS and to the sample config; do not introduce code-side or argument defaults for those options. Use direct config access for required keys; avoid default values in function arguments for parameters that come from config.
+- [ ] Multi-GPU seed-level caches (§3.5): if you add a new seed-level cache (e.g. under `experimental_statistics/`), ensure it is precomputed in the main process in the multi-GPU precompute block in `run.py` before workers are spawned, so only one process ever writes it and workers only read it.
+- [ ] Plot conventions (§4.9): when adding or editing figures, use Title Case for titles/axes/legends; short labels (Train, Test, Gen, Exp, Recon); document any new plotted metric in the README (and optionally in-figure); use `plot_config.py` and `CMAP_DM`/`CMAP_DM_R`; keep axis/layout rules (shared limits, square aspect, full diagonal, single colorbar where applicable); keep titles concise.
