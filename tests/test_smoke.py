@@ -44,14 +44,15 @@ def test_pipeline_smoke_run(tmp_path):
 
     n_gpus = _smoke_test_num_gpus()
     # One GPU: single task (one seed) for a faster run. Two+ GPUs: two seeds so multi-GPU path runs both tasks.
+    # --yes-overwrite avoids any overwrite confirmation prompt (non-interactive pytest would hang on input()).
+    output_dir = os.path.join(tmp_path, "smoke_out")
     if n_gpus >= 2:
         seeds_to_check = (0, 1)
-        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", os.path.join(tmp_path, "smoke_out"), "--no-resume"]
+        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", output_dir, "--no-resume", "--yes-overwrite"]
     else:
         seeds_to_check = (0,)
-        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", os.path.join(tmp_path, "smoke_out"), "--no-resume", "--data.split_seed", "0"]
+        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", output_dir, "--no-resume", "--yes-overwrite", "--data.split_seed", "0"]
 
-    output_dir = os.path.join(tmp_path, "smoke_out")
     argv_save = sys.argv
     cwd_save = os.getcwd()
     try:

@@ -5,7 +5,7 @@
 
 resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
 # Calibration: fixed GB reserved regardless of GPU size; max halving steps after OOM.
-calibration_safety_margin_gb: 2.0
+calibration_safety_margin_gb: 10.0
 calibration_binary_search_steps: 5
 # Upper bounds for calibration. training = cap for distmap/euclideanizer batch_size; decode = cap for gen_decode_batch_size / query_batch_size.
 calibration_training_batch_cap: 512
@@ -25,7 +25,7 @@ distmap:
   latent_dim: [256]   # dimension of the latent space
   beta_kl: [0.01]   # weight for KL term in VAE loss
   epochs: [1, 2]   # training epochs; list = multi-segment (e.g. train to 1, then resume to 2)
-  batch_size: null   # null = auto-calibrate at start of each run; or set an integer to use a fixed value
+  batch_size: 128   # null = auto-calibrate at start of each run; or set an integer to use a fixed value
   learning_rate: [1.0e-4]   # optimizer learning rate
   lambda_mse: [1.0]   # weight for MSE reconstruction loss
   lambda_w_recon: [3.0]   # weight for Wasserstein reconstruction term
@@ -38,7 +38,7 @@ distmap:
 # Euclideanizer. One run per (DistMap run × euclideanizer hyperparameter combination). Latent dim is taken from the frozen DistMap.
 euclideanizer:
   epochs: [1]   # training epochs; list = multi-segment
-  batch_size: null   # null = auto-calibrate at start of each run; or set an integer to use a fixed value
+  batch_size: 128  # null = auto-calibrate at start of each run; or set an integer to use a fixed value
   learning_rate: [1.0e-4]   # optimizer learning rate
   lambda_mse: [1.0]   # weight for MSE reconstruction loss
   lambda_w_recon: [3.0]   # weight for Wasserstein reconstruction term

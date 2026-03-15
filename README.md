@@ -61,7 +61,7 @@ python run.py --config samples/config_sample.yaml --data /path/to/coordinates.gr
 
 Training requires a dataset path: set it with `--data` or in the config under `data.path`. All other options (output dir, hyperparameters, plotting, etc.) come from the config and can be overridden with CLI flags.
 
-**Batch-size calibration:** Set `distmap.batch_size` and/or `euclideanizer.batch_size` to `null` to auto-calibrate at run time. Set `plotting.gen_decode_batch_size` and analysis blocks' `query_batch_size` / `gen_decode_batch_size` to `null` to calibrate inference batch sizes after training (one value for both). Calibration uses a fixed GB safety margin (`calibration_safety_margin_gb`) and a configurable number of binary-search refinement steps (`calibration_binary_search_steps`). Resolved values are written to `run_config.yaml` and reused on resume.
+**Batch-size calibration:** Set `distmap.batch_size` and/or `euclideanizer.batch_size` to `null` to auto-calibrate at run time. Set `plotting.gen_decode_batch_size` and analysis blocks' `query_batch_size` / `gen_decode_batch_size` to `null` to calibrate inference batch sizes (one value for both). **Training and inference batch sizes are independent:** you can set fixed training batch sizes (e.g. 32 and 64) and still leave gen_decode/query as `null` to have inference batch sizes auto-calibrated. Calibration uses a fixed GB safety margin (`calibration_safety_margin_gb`) and a configurable number of binary-search refinement steps (`calibration_binary_search_steps`). Resolved values are written to `run_config.yaml` and reused on resume. **Tip:** Maximum throughput and compute efficiency are achieved when using auto-calibration, but ideal *training* performance (e.g. validation loss) can be batch-size dependent. Use the batch-size benchmark (`tests/benchmark_batch_size.py`) to find the best training batch size for your hardware and data.
 
 **Common options:**
 
@@ -90,6 +90,8 @@ Each trial runs the full pipeline (train DistMap → train Euclideanizer → plo
 ```bash
 python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.gro --resume --n-trials-add 50
 ```
+
+**Resume behavior:** The study is loaded from the existing SQLite DB. Trials that were in progress when the run was stopped (or that failed) are **not** re-run; they remain in the study as incomplete/failed. Resume runs **new** trials until the total number of trials (complete, pruned, failed, or in progress) reaches the previous count plus `n_trials_add`. So you get additional trials, not a retry of interrupted ones.
 
 **Multi-GPU:** The same command auto-uses all available GPUs. When more than one GPU is detected (or `n_gpus` in config is > 1), `run_hpo.py` spawns one worker per GPU sharing the same SQLite study DB; workers stop when total trials reach `n_trials`. Set `n_gpus` in config to limit (e.g. `n_gpus: 2`); omit or null to use all. For training videos (ffmpeg), **load the ffmpeg module in the same shell before starting** `run_hpo.py`; the launcher resolves ffmpeg and passes it to workers via `EUCLIDEANIZER_FFMPEG` so subprocesses see it even when PATH differs.
 
@@ -139,7 +141,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 
 **Batch-size benchmark (efficiency vs efficacy)**
 
-A standalone script `tests/benchmark_batch_size.py` sweeps over batch sizes and reports wall-clock time per epoch, samples per second, final validation loss, and peak reserved VRAM for DistMap and/or Euclideanizer. Use it to choose a batch size that balances throughput and memory.
+A standalone script `tests/benchmark_batch_size.py` sweeps over batch sizes and reports wall-clock time per epoch, samples per second, final validation loss, and peak reserved VRAM for DistMap and/or Euclideanizer. Use it to find the optimal *training* batch size for your hardware and data (throughput vs. validation performance); see also the batch-size calibration note above for inference vs. training.
 
 - **Requires:** A pipeline YAML config (all required keys, including calibration), a GRO dataset, and a GPU (recommended).
 - **Run from the pipeline directory:**
@@ -148,8 +150,8 @@ A standalone script `tests/benchmark_batch_size.py` sweeps over batch sizes and 
 python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro
 ```
 
-- **Options:** `--batch-sizes 32 64 128 256 512` (default: 8 16 32 64 128 256 512), `--epochs 20`, `--model distmap|euclideanizer|both` (default: both), `--dm-checkpoint /path/to/ckpt.pt` (for Euclideanizer; if omitted and model is euclideanizer or both, a DistMap is trained for 5 epochs first), `--split-seed 0`, `--output benchmark_results.json`, `--device cuda:0`.
-- **Output:** Printed tables per model and a JSON file (default `benchmark_results.json`) with one record per (model, batch_size) run.
+- **Options:** `--mode dm|eu|both` (default: both). **dm** = DistMap benchmark only. **eu** = train a DistMap for 50 epochs in a temporary directory, run the Euclideanizer benchmark using that checkpoint, then purge the temp dir. **both** = DistMap sweep then Euclideanizer sweep (if no `--dm-checkpoint`, a 5-epoch DistMap is trained in a temp dir and purged). For each specified batch size the script sweeps the specified learning rates (grid: batch_size × learning_rate). Also: `--batch-sizes 32 64 128 256 512`, `--learning-rates 1e-4 5e-4 1e-3` (default: from config, one value per model), `--epochs 20`, `--dm-checkpoint /path/to/ckpt.pt` (for Euclideanizer; if omitted in eu/both, a feeder DistMap is trained as above), `--split-seed 0`, `--output benchmark_results.json`, `--device cuda:0`.
+- **Output:** Printed tables per model and a JSON file (default `benchmark_results.json`) with one record per (model, batch_size, learning_rate) run.
 
 ---
 

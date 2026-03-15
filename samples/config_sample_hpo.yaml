@@ -25,7 +25,7 @@ distmap:
   latent_dim: null   # filled by Optuna
   beta_kl: null   # filled by Optuna
   epochs: 500   # overridden by HPO epoch_cap when set
-  batch_size: null
+  batch_size: 128
   learning_rate: 1.0e-4
   lambda_mse: null   # filled by Optuna
   lambda_w_recon: null   # filled by Optuna
@@ -37,7 +37,7 @@ distmap:
 
 euclideanizer:
   epochs: 500   # overridden by HPO epoch_cap when set
-  batch_size: null
+  batch_size: 128
   learning_rate: 1.0e-4
   lambda_mse: null   # filled by Optuna
   lambda_w_recon: null   # filled by Optuna

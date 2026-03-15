@@ -1,0 +1,93 @@
+[
+  {
+    "model": "euclideanizer",
+    "batch_size": 8,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 34.99524822235107,
+    "samples_per_sec": 173.50927078499421,
+    "final_train_loss": 0.920284635229073,
+    "final_val_loss": 0.9392329395562901,
+    "peak_reserved_gb": 19.408203125,
+    "peak_allocated_gb": 3.753890037536621,
+    "oom": false,
+    "notes": ""
+  },
+  {
+    "model": "euclideanizer",
+    "batch_size": 16,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 22.224782967567442,
+    "samples_per_sec": 272.8485586945518,
+    "final_train_loss": 0.7412152666215217,
+    "final_val_loss": 0.75859621357494,
+    "peak_reserved_gb": 5.826171875,
+    "peak_allocated_gb": 4.521152496337891,
+    "oom": false,
+    "notes": ""
+  },
+  {
+    "model": "euclideanizer",
+    "batch_size": 32,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 16.548291198412578,
+    "samples_per_sec": 365.47580215292345,
+    "final_train_loss": 0.603932537099041,
+    "final_val_loss": 0.6310002489102522,
+    "peak_reserved_gb": 8.0078125,
+    "peak_allocated_gb": 6.056617259979248,
+    "oom": false,
+    "notes": ""
+  },
+  {
+    "model": "euclideanizer",
+    "batch_size": 64,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 14.1950275739034,
+    "samples_per_sec": 423.8103778720381,
+    "final_train_loss": 0.5274866676711022,
+    "final_val_loss": 0.5316053418205944,
+    "peak_reserved_gb": 13.578125,
+    "peak_allocated_gb": 9.126111030578613,
+    "oom": false,
+    "notes": ""
+  },
+  {
+    "model": "euclideanizer",
+    "batch_size": 128,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 12.650505185127258,
+    "samples_per_sec": 475.554130998088,
+    "final_train_loss": 0.4749561947710971,
+    "final_val_loss": 0.46798145602297203,
+    "peak_reserved_gb": 24.716796875,
+    "peak_allocated_gb": 15.270434379577637,
+    "oom": false,
+    "notes": ""
+  },
+  {
+    "model": "euclideanizer",
+    "batch_size": 256,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 12.120966823895772,
+    "samples_per_sec": 485.76983053795306,
+    "final_train_loss": 0.5559672402298969,
+    "final_val_loss": 0.5447319738169577,
+    "peak_reserved_gb": 44.765625,
+    "peak_allocated_gb": 27.55343246459961,
+    "oom": false,
+    "notes": ""
+  },
+  {
+    "model": "euclideanizer",
+    "batch_size": 512,
+    "epochs_run": 30,
+    "avg_epoch_wall_sec": 11.004267120361328,
+    "samples_per_sec": 511.8014619600648,
+    "final_train_loss": 0.9395474574782632,
+    "final_val_loss": 0.9431714171088785,
+    "peak_reserved_gb": 88.59375,
+    "peak_allocated_gb": 52.12199783325195,
+    "oom": false,
+    "notes": ""
+  }
+]

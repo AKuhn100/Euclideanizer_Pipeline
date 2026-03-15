@@ -1,24 +1,36 @@
 #!/usr/bin/env python3
 """
-Batch size efficiency sweep for DistMap + Euclideanizer pipeline.
+Batch size and learning rate sweep for DistMap + Euclideanizer pipeline.
 
-Trains for a fixed number of epochs at each batch size and reports:
+For each specified batch size, sweeps the specified learning rates (and vice versa).
+Trains for a fixed number of epochs per (batch_size, learning_rate) and reports:
   - Wall-clock time per epoch
   - Samples per second
   - Final validation loss
   - Peak reserved VRAM
 
+Modes (--mode):
+  - dm:  Benchmark DistMap only (batch-size × learning-rate grid).
+  - eu:  Train a DistMap for 50 epochs in a temporary directory, then run the
+         Euclideanizer benchmark over batch sizes × learning rates; temp dir
+         is purged at the end.
+  - both: DistMap grid, then Euclideanizer grid (if no --dm-checkpoint, a
+          quick 5-epoch DistMap is trained in a temp dir and purged).
+
 Usage:
-    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro
+    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro --mode dm
+    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro --mode eu
     python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro \
-        --batch-sizes 32 64 128 256 512 --epochs 20 --model both
+        --batch-sizes 32 64 128 --learning-rates 1e-4 5e-4 1e-3 --epochs 20 --mode both
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, asdict
 
@@ -26,8 +38,9 @@ import numpy as np
 import torch
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-if _SCRIPT_DIR not in sys.path:
-    sys.path.insert(0, _SCRIPT_DIR)
+_PIPELINE_ROOT = os.path.dirname(_SCRIPT_DIR)
+if _PIPELINE_ROOT not in sys.path:
+    sys.path.insert(0, _PIPELINE_ROOT)
 
 from src import utils
 from src.config import load_config, get_data_path
@@ -45,6 +58,7 @@ from src.euclideanizer.loss import euclideanizer_loss
 class BenchmarkResult:
     model: str           # "distmap" or "euclideanizer"
     batch_size: int
+    learning_rate: float
     epochs_run: int
     avg_epoch_wall_sec: float
     samples_per_sec: float
@@ -222,8 +236,8 @@ def benchmark_distmap(
 
     if len(train_ds) < batch_size:
         return BenchmarkResult(
-            model="distmap", batch_size=batch_size, epochs_run=0,
-            avg_epoch_wall_sec=0, samples_per_sec=0,
+            model="distmap", batch_size=batch_size, learning_rate=dm_cfg["learning_rate"],
+            epochs_run=0, avg_epoch_wall_sec=0, samples_per_sec=0,
             final_train_loss=float("nan"), final_val_loss=float("nan"),
             peak_reserved_gb=0, peak_allocated_gb=0, oom=False,
             notes=f"Skipped: train set ({len(train_ds)}) smaller than batch_size ({batch_size})",
@@ -279,6 +293,7 @@ def benchmark_distmap(
         return BenchmarkResult(
             model="distmap",
             batch_size=batch_size,
+            learning_rate=dm_cfg["learning_rate"],
             epochs_run=n_epochs,
             avg_epoch_wall_sec=avg_epoch,
             samples_per_sec=samples_per_sec,
@@ -292,7 +307,8 @@ def benchmark_distmap(
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         return BenchmarkResult(
-            model="distmap", batch_size=batch_size, epochs_run=len(epoch_times),
+            model="distmap", batch_size=batch_size, learning_rate=dm_cfg["learning_rate"],
+            epochs_run=len(epoch_times),
             avg_epoch_wall_sec=float(np.mean(epoch_times)) if epoch_times else 0,
             samples_per_sec=0, final_train_loss=float("nan"), final_val_loss=float("nan"),
             peak_reserved_gb=0, peak_allocated_gb=0, oom=True,
@@ -321,8 +337,8 @@ def benchmark_euclideanizer(
 
     if len(train_ds) < batch_size:
         return BenchmarkResult(
-            model="euclideanizer", batch_size=batch_size, epochs_run=0,
-            avg_epoch_wall_sec=0, samples_per_sec=0,
+            model="euclideanizer", batch_size=batch_size, learning_rate=eu_cfg["learning_rate"],
+            epochs_run=0, avg_epoch_wall_sec=0, samples_per_sec=0,
             final_train_loss=float("nan"), final_val_loss=float("nan"),
             peak_reserved_gb=0, peak_allocated_gb=0, oom=False,
             notes=f"Skipped: train set ({len(train_ds)}) smaller than batch_size ({batch_size})",
@@ -383,6 +399,7 @@ def benchmark_euclideanizer(
         return BenchmarkResult(
             model="euclideanizer",
             batch_size=batch_size,
+            learning_rate=eu_cfg["learning_rate"],
             epochs_run=n_epochs,
             avg_epoch_wall_sec=avg_epoch,
             samples_per_sec=samples_per_sec,
@@ -396,7 +413,8 @@ def benchmark_euclideanizer(
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         return BenchmarkResult(
-            model="euclideanizer", batch_size=batch_size, epochs_run=len(epoch_times),
+            model="euclideanizer", batch_size=batch_size, learning_rate=eu_cfg["learning_rate"],
+            epochs_run=len(epoch_times),
             avg_epoch_wall_sec=float(np.mean(epoch_times)) if epoch_times else 0,
             samples_per_sec=0, final_train_loss=float("nan"), final_val_loss=float("nan"),
             peak_reserved_gb=0, peak_allocated_gb=0, oom=True,
@@ -416,25 +434,33 @@ def _print_table(results: list[BenchmarkResult]) -> None:
         return
 
     model_name = results[0].model
-    print(f"\n{'='*90}")
+    lrs = sorted(set(r.learning_rate for r in results))
+    multi_lr = len(lrs) > 1
+    print(f"\n{'='*100}")
     print(f"  {model_name.upper()} BENCHMARK RESULTS")
-    print(f"{'='*90}")
-    print(
-        f"  {'B':>6}  {'Epoch(s)':>9}  {'Samples/s':>10}  "
+    print(f"{'='*100}")
+    header = (
+        f"  {'B':>6}  {'LR':>10}  {'Epoch(s)':>9}  {'Samples/s':>10}  "
         f"{'Train Loss':>11}  {'Val Loss':>10}  "
         f"{'Reserved(GB)':>13}  {'Alloc(GB)':>10}  {'Status':>8}"
     )
-    print(f"  {'-'*6}  {'-'*9}  {'-'*10}  {'-'*11}  {'-'*10}  {'-'*13}  {'-'*10}  {'-'*8}")
+    if not multi_lr:
+        header = header.replace("  {'LR':>10}  ", "  ")
+    print(header)
+    sep = "  " + "-"*6 + "  " + ("-"*10 + "  " if multi_lr else "") + "-"*9 + "  " + "-"*10 + "  " + "-"*11 + "  " + "-"*10 + "  " + "-"*13 + "  " + "-"*10 + "  " + "-"*8
+    print(sep)
 
     for r in results:
         status = "OOM" if r.oom else ("SKIP" if r.epochs_run == 0 else "OK")
-        print(
-            f"  {r.batch_size:>6}  {r.avg_epoch_wall_sec:>8.1f}s  {r.samples_per_sec:>10.1f}  "
+        lr_str = f"{r.learning_rate:>10.2e}  " if multi_lr else ""
+        row = (
+            f"  {r.batch_size:>6}  {lr_str}{r.avg_epoch_wall_sec:>8.1f}s  {r.samples_per_sec:>10.1f}  "
             f"{r.final_train_loss:>11.5f}  {r.final_val_loss:>10.5f}  "
             f"{r.peak_reserved_gb:>13.2f}  {r.peak_allocated_gb:>10.2f}  {status:>8}"
         )
+        print(row)
         if r.notes:
-            print(f"  {'':>6}  {r.notes}")
+            print(f"  {'':>6}  {'':>10}  {r.notes}" if multi_lr else f"  {'':>6}  {r.notes}")
 
     # Find efficiency sweet spot: best samples/sec before val loss degrades >10% from minimum
     valid = [r for r in results if not r.oom and r.epochs_run > 0 and r.samples_per_sec > 0]
@@ -444,13 +470,14 @@ def _print_table(results: list[BenchmarkResult]) -> None:
         candidates = [r for r in valid if r.final_val_loss <= threshold]
         if candidates:
             best = max(candidates, key=lambda r: r.samples_per_sec)
-            print(f"\n  Suggested batch size: {best.batch_size}")
+            print(f"\n  Suggested: batch_size={best.batch_size}" + (f" learning_rate={best.learning_rate:.2e}" if multi_lr else ""))
             print(f"  (Highest throughput within 10% of best validation loss)")
-            print(f"  Best val loss: {min_val_loss:.5f} at B={min(valid, key=lambda r: r.final_val_loss).batch_size}")
+            best_val = min(valid, key=lambda r: r.final_val_loss)
+            print(f"  Best val loss: {min_val_loss:.5f} at B={best_val.batch_size}" + (f" lr={best_val.learning_rate:.2e}" if multi_lr else ""))
             print(f"  Suggested throughput: {best.samples_per_sec:.1f} samples/s")
             print(f"  Suggested VRAM reserved: {best.peak_reserved_gb:.2f} GB")
 
-    print(f"{'='*90}\n")
+    print(f"{'='*100}\n")
 
 
 def _save_results(results: list[BenchmarkResult], output_path: str) -> None:
@@ -480,14 +507,21 @@ def main():
         help="Epochs to run at each batch size (default: 20)",
     )
     parser.add_argument(
+        "--learning-rates", type=float, nargs="+", default=None,
+        help="Learning rates to sweep (default: from config, one value per model). E.g. 1e-4 5e-4 1e-3. For each batch size we run each learning rate.",
+    )
+    parser.add_argument(
+        "--mode", choices=["dm", "eu", "both"], default="both",
+        help="dm = DistMap benchmark only; eu = train DistMap 50 epochs in temp dir, then Euclideanizer benchmark only (temp purged); both = DistMap sweep then Euclideanizer sweep (default: both)",
+    )
+    parser.add_argument(
         "--model", choices=["distmap", "euclideanizer", "both"], default="both",
-        help="Which model to benchmark (default: both)",
+        help="Deprecated: use --mode. Which model to benchmark (default: both). Ignored if --mode is set.",
     )
     parser.add_argument(
         "--dm-checkpoint", type=str, default=None,
         help="Path to trained DistMap checkpoint for Euclideanizer benchmark. "
-             "If not provided and model=euclideanizer or both, a DistMap will be "
-             "trained for 5 epochs first to produce one.",
+             "If not provided and mode=eu or both, a DistMap is trained first (eu: 50 epochs in temp; both: 5 epochs in temp). Temp dirs are purged after use.",
     )
     parser.add_argument(
         "--split-seed", type=int, default=0,
@@ -548,42 +582,51 @@ def main():
     n_epochs = args.epochs
     all_results: list[BenchmarkResult] = []
 
+    # Resolve mode: --mode takes precedence over deprecated --model
+    mode = args.mode
+    run_dm_bench = mode in ("dm", "both")
+    run_eu_bench = mode in ("eu", "both")
+    # For EU benchmark, when we train a feeder DistMap: eu mode = 50 epochs, both = 5 epochs
+    dm_epochs_for_eu = 50 if mode == "eu" else 5
+
     # ---- DistMap benchmark ----
-    if args.model in ("distmap", "both"):
-        print(f"\nBenchmarking DistMap across batch sizes: {batch_sizes}")
+    if run_dm_bench:
+        learning_rates_dm = args.learning_rates if args.learning_rates is not None else [dm_cfg["learning_rate"]]
+        learning_rates_dm = sorted(set(learning_rates_dm))
+        print(f"\nBenchmarking DistMap: batch_sizes={batch_sizes}, learning_rates={learning_rates_dm}")
         print(f"Epochs per run: {n_epochs}\n")
         dm_results = []
         for bs in batch_sizes:
-            print(f"  → DistMap batch_size={bs}")
-            result = benchmark_distmap(
-                batch_size=bs,
-                n_epochs=n_epochs,
-                coords=coords,
-                coords_np=coords_np,
-                dm_cfg=dm_cfg,
-                device=device,
-                training_split=training_split,
-                split_seed=split_seed,
-            )
-            dm_results.append(result)
-            all_results.append(result)
-            if result.oom:
-                print(f"  OOM at batch_size={bs} — stopping DistMap sweep.")
-                break
+            for lr in learning_rates_dm:
+                dm_cfg_lr = {**dm_cfg, "learning_rate": lr}
+                print(f"  → DistMap batch_size={bs} lr={lr:.2e}")
+                result = benchmark_distmap(
+                    batch_size=bs,
+                    n_epochs=n_epochs,
+                    coords=coords,
+                    coords_np=coords_np,
+                    dm_cfg=dm_cfg_lr,
+                    device=device,
+                    training_split=training_split,
+                    split_seed=split_seed,
+                )
+                dm_results.append(result)
+                all_results.append(result)
+                if result.oom:
+                    print(f"  OOM at batch_size={bs} lr={lr:.2e}")
 
         _print_table(dm_results)
 
     # ---- Euclideanizer benchmark ----
-    if args.model in ("euclideanizer", "both"):
+    if run_eu_bench:
         dm_checkpoint = args.dm_checkpoint
+        tmp_dir = None
 
-        # Train a quick DistMap if no checkpoint provided
         if dm_checkpoint is None:
-            print("\nNo --dm-checkpoint provided. Training a DistMap for 5 epochs to produce one...")
-            import tempfile
             from src.train_distmap import train_distmap
             tmp_dir = tempfile.mkdtemp(prefix="benchmark_dm_")
-            quick_cfg = {**dm_cfg, "epochs": 5, "batch_size": min(64, len(coords_np) // 2)}
+            print(f"\nNo --dm-checkpoint provided. Training a DistMap for {dm_epochs_for_eu} epochs in temp dir (will be purged)...")
+            quick_cfg = {**dm_cfg, "epochs": dm_epochs_for_eu, "batch_size": min(64, len(coords_np) // 2)}
             dm_checkpoint, _ = train_distmap(
                 quick_cfg, device, coords, tmp_dir,
                 split_seed=split_seed, training_split=training_split,
@@ -595,30 +638,41 @@ def main():
             )
             print(f"  DistMap checkpoint: {dm_checkpoint}\n")
 
-        print(f"\nBenchmarking Euclideanizer across batch sizes: {batch_sizes}")
-        print(f"Epochs per run: {n_epochs}\n")
-        eu_results = []
-        for bs in batch_sizes:
-            print(f"  → Euclideanizer batch_size={bs}")
-            result = benchmark_euclideanizer(
-                batch_size=bs,
-                n_epochs=n_epochs,
-                coords=coords,
-                coords_np=coords_np,
-                dm_checkpoint=dm_checkpoint,
-                dm_cfg=dm_cfg,
-                eu_cfg=eu_cfg,
-                device=device,
-                training_split=training_split,
-                split_seed=split_seed,
-            )
-            eu_results.append(result)
-            all_results.append(result)
-            if result.oom:
-                print(f"  OOM at batch_size={bs} — stopping Euclideanizer sweep.")
-                break
+        try:
+            learning_rates_eu = args.learning_rates if args.learning_rates is not None else [eu_cfg["learning_rate"]]
+            learning_rates_eu = sorted(set(learning_rates_eu))
+            print(f"\nBenchmarking Euclideanizer: batch_sizes={batch_sizes}, learning_rates={learning_rates_eu}")
+            print(f"Epochs per run: {n_epochs}\n")
+            eu_results = []
+            for bs in batch_sizes:
+                for lr in learning_rates_eu:
+                    eu_cfg_lr = {**eu_cfg, "learning_rate": lr}
+                    print(f"  → Euclideanizer batch_size={bs} lr={lr:.2e}")
+                    result = benchmark_euclideanizer(
+                        batch_size=bs,
+                        n_epochs=n_epochs,
+                        coords=coords,
+                        coords_np=coords_np,
+                        dm_checkpoint=dm_checkpoint,
+                        dm_cfg=dm_cfg,
+                        eu_cfg=eu_cfg_lr,
+                        device=device,
+                        training_split=training_split,
+                        split_seed=split_seed,
+                    )
+                    eu_results.append(result)
+                    all_results.append(result)
+                    if result.oom:
+                        print(f"  OOM at batch_size={bs} lr={lr:.2e}")
 
-        _print_table(eu_results)
+            _print_table(eu_results)
+        finally:
+            if tmp_dir is not None and os.path.isdir(tmp_dir):
+                try:
+                    shutil.rmtree(tmp_dir)
+                    print(f"  Purged temp DistMap dir: {tmp_dir}")
+                except OSError as e:
+                    print(f"  WARNING: Could not remove temp dir {tmp_dir}: {e}", file=sys.stderr)
 
     # Save results
     _save_results(all_results, args.output)
