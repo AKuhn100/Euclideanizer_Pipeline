@@ -1,0 +1,10 @@
+# Python bytecode
+__pycache__/
+
+# Pytest
+.pytest_cache/
+
+# Test data (script to generate data is available for user)
+tests/test_data/spheres.gro
+
+dev/
