@@ -3,6 +3,8 @@
 
 resume: true
 calibration_memory_fraction: 0.85   # for distmap/euclideanizer training batch_size only; null when both are fixed
+calibration_training_batch_cap: 512
+calibration_decode_batch_cap: 4096
 
 data:
   path: null

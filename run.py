@@ -1908,6 +1908,7 @@ def run_one_hpo_trial(
             is_last_segment=True,
             display_root=base_output_dir,
             calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+            calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
             on_batch_size_resolved=lambda bs: _log(f"DistMap run 0: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
         )
         _log(f"DistMap 0: training done in {(time.time() - phase_start_dm) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
@@ -1996,6 +1997,7 @@ def run_one_hpo_trial(
             is_last_segment=True,
             display_root=base_output_dir,
             calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+            calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
             on_batch_size_resolved=lambda bs: _log(f"Euclideanizer run 0 (DistMap 0): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
         )
         _log(f"Euclideanizer 0 (DistMap 0): training done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
@@ -2280,9 +2282,11 @@ def _resolve_inference_batch_sizes(
     threshold = cfg.get("calibration_memory_fraction")
     if threshold is None:
         threshold = 0.85
+    decode_batch_cap = cfg["calibration_decode_batch_cap"]
     resolved = calibrate_gen_decode_batch_size(
         frozen_vae, embed, device, threshold=threshold,
         latent_dim=getattr(frozen_vae, "_latent_space_dim", None),
+        decode_batch_cap=decode_batch_cap,
     )
     run_cfg = load_run_config(eu_model_dir) or {}
     run_cfg = {**run_cfg, "gen_decode_batch_size": resolved, "query_batch_size": resolved}
@@ -2440,6 +2444,7 @@ def _run_one_distmap_group(
                     is_last_segment=dm_last_segment,
                     display_root=base_output_dir,
                     calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                    calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
                     on_batch_size_resolved=lambda bs, _ri=ri: _log(f"DistMap run {_ri}: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                 )
             elif dm_act["action"] == "resume_from_best":
@@ -2461,6 +2466,7 @@ def _run_one_distmap_group(
                     memory_efficient=dm_cfg["memory_efficient"],
                     display_root=base_output_dir,
                     calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                    calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
                     on_batch_size_resolved=lambda bs, _ri=ri: _log(f"DistMap run {_ri}: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                 )
             else:
@@ -2482,6 +2488,7 @@ def _run_one_distmap_group(
                     memory_efficient=dm_cfg["memory_efficient"],
                     display_root=base_output_dir,
                     calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                    calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
                     on_batch_size_resolved=lambda bs, _ri=ri: _log(f"DistMap run {_ri}: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                 )
             prev_dm_path = dm_path
@@ -2618,6 +2625,7 @@ def _run_one_distmap_group(
                             is_last_segment=eu_last_segment,
                             display_root=base_output_dir,
                             calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                            calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
                             on_batch_size_resolved=lambda bs, _euri=euri, _ri=ri: _log(f"Euclideanizer run {_euri} (DistMap {_ri}): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                         )
                     elif eu_act["action"] == "resume_from_best":
@@ -2640,6 +2648,7 @@ def _run_one_distmap_group(
                             memory_efficient=eu_cfg_seg["memory_efficient"],
                             display_root=base_output_dir,
                             calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                            calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
                             on_batch_size_resolved=lambda bs, _euri=euri, _ri=ri: _log(f"Euclideanizer run {_euri} (DistMap {_ri}): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                         )
                     else:
@@ -2662,6 +2671,7 @@ def _run_one_distmap_group(
                             memory_efficient=eu_cfg_seg["memory_efficient"],
                             display_root=base_output_dir,
                             calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                            calibration_training_batch_cap=cfg["calibration_training_batch_cap"],
                             on_batch_size_resolved=lambda bs, _euri=euri, _ri=ri: _log(f"Euclideanizer run {_euri} (DistMap {_ri}): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                         )
                     prev_eu_path = eu_path_seg

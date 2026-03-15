@@ -15,13 +15,8 @@ from . import utils
 from .distmap.loss import distmap_vae_loss
 from .euclideanizer.loss import euclideanizer_loss
 
-# Conservative default when CUDA is not available.
+# Conservative default when CUDA is not available (used only when calibration is skipped).
 FALLBACK_BATCH_SIZE_NO_CUDA = 32
-
-# Upper bound for search when not capped by dataset size.
-DEFAULT_HIGH = 512
-# Upper bound for inference/decode batch size (no dataset cap).
-DEFAULT_HIGH_DECODE = 4096
 
 
 def _get_train_size(coords: torch.Tensor, training_split: float, split_seed: int) -> int:
@@ -100,11 +95,13 @@ def calibrate_distmap_batch_size(
     threshold: float = 0.85,
     training_split: float = 0.8,
     split_seed: int = 0,
+    training_batch_cap: int = 512,
 ) -> int:
     """
     Find the largest batch size for DistMap training that stays under the given
     GPU memory fraction. Uses binary search with full training steps (forward,
-    loss, backward, step). Caps at train split size.
+    loss, backward, step). Caps at min(training_batch_cap, train split size).
+    training_batch_cap comes from config (calibration_training_batch_cap).
 
     Returns a positive integer. If CUDA is not available, returns
     FALLBACK_BATCH_SIZE_NO_CUDA with a warning. If even batch_size=1 exceeds
@@ -120,12 +117,13 @@ def calibrate_distmap_batch_size(
 
     num_atoms = coords.size(1)
     train_size = _get_train_size(coords, training_split, split_seed)
-    max_cap = min(DEFAULT_HIGH, train_size)
+    max_cap = min(training_batch_cap, train_size)
     if max_cap < 1:
         return 1
 
     total_mem = torch.cuda.get_device_properties(device).total_memory
     limit = int(total_mem * threshold)
+    print(f"  Calibrating DistMap batch_size (memory fraction={threshold}, max={max_cap})...")
 
     def _probe(bs: int) -> bool | None:
         """Return True if under limit, False if over, None if OOM."""
@@ -153,11 +151,15 @@ def calibrate_distmap_batch_size(
     while high <= max_cap:
         result = _probe(high)
         if result is True:
+            print(f"    batch_size={high} under limit")
             low = high
             high = min(high * 2, max_cap)
             if high == low:
                 break
         else:
+            status = "OOM" if result is None else "over limit"
+            print(f"    batch_size={high} {status}; binary search [{low}, {high - 1}]")
+            high = high - 1
             break
 
     if low == 1 and _probe(1) not in (True, None):
@@ -174,8 +176,11 @@ def calibrate_distmap_batch_size(
         mid = (low + high + 1) // 2
         result = _probe(mid)
         if result is True:
+            print(f"    mid {mid} under limit")
             low = mid
         else:
+            status = "OOM" if result is None else "over limit"
+            print(f"    mid {mid} {status}")
             high = mid - 1
 
     torch.cuda.empty_cache()
@@ -192,11 +197,12 @@ def calibrate_euclideanizer_batch_size(
     threshold: float = 0.85,
     training_split: float = 0.8,
     split_seed: int = 0,
+    training_batch_cap: int = 512,
 ) -> int:
     """
     Find the largest batch size for Euclideanizer training that stays under the
     given GPU memory fraction. frozen_vae must already be on device in eval mode.
-    Caps at train split size.
+    Caps at min(training_batch_cap, train split size). training_batch_cap from config (calibration_training_batch_cap).
     """
     if not torch.cuda.is_available() or device.type != "cuda":
         warnings.warn(
@@ -209,12 +215,13 @@ def calibrate_euclideanizer_batch_size(
     num_atoms = coords.size(1)
     latent_dim = frozen_vae._latent_space_dim
     train_size = _get_train_size(coords, training_split, split_seed)
-    max_cap = min(DEFAULT_HIGH, train_size)
+    max_cap = min(training_batch_cap, train_size)
     if max_cap < 1:
         return 1
 
     total_mem = torch.cuda.get_device_properties(device).total_memory
     limit = int(total_mem * threshold)
+    print(f"  Calibrating Euclideanizer batch_size (memory fraction={threshold}, max={max_cap})...")
 
     def _probe(bs: int) -> bool | None:
         torch.cuda.empty_cache()
@@ -239,11 +246,15 @@ def calibrate_euclideanizer_batch_size(
     while high <= max_cap:
         result = _probe(high)
         if result is True:
+            print(f"    batch_size={high} under limit")
             low = high
             high = min(high * 2, max_cap)
             if high == low:
                 break
         else:
+            status = "OOM" if result is None else "over limit"
+            print(f"    batch_size={high} {status}; binary search [{low}, {high - 1}]")
+            high = high - 1
             break
 
     if low == 1 and _probe(1) not in (True, None):
@@ -258,8 +269,11 @@ def calibrate_euclideanizer_batch_size(
         mid = (low + high + 1) // 2
         result = _probe(mid)
         if result is True:
+            print(f"    mid {mid} under limit")
             low = mid
         else:
+            status = "OOM" if result is None else "over limit"
+            print(f"    mid {mid} {status}")
             high = mid - 1
 
     torch.cuda.empty_cache()
@@ -290,12 +304,13 @@ def calibrate_gen_decode_batch_size(
     threshold: float = 0.85,
     latent_dim: int | None = None,
     num_atoms: int | None = None,
-    max_cap: int = DEFAULT_HIGH_DECODE,
+    decode_batch_cap: int = 4096,
 ) -> int:
     """
     Find the largest decode batch size (inference: z -> VAE decode -> embed -> coords) under the
     given GPU memory fraction. Used for gen_decode_batch_size and query_batch_size (same profile).
-    frozen_vae and embed must already be on device. Returns a positive int; on CPU returns fallback.
+    frozen_vae and embed must already be on device. decode_batch_cap from config (calibration_decode_batch_cap).
+    Returns a positive int; on CPU returns fallback.
     """
     if not torch.cuda.is_available() or device.type != "cuda":
         warnings.warn(
@@ -308,7 +323,8 @@ def calibrate_gen_decode_batch_size(
         latent_dim = frozen_vae._latent_space_dim
     total_mem = torch.cuda.get_device_properties(device).total_memory
     limit = int(total_mem * threshold)
-    max_cap = min(max_cap, DEFAULT_HIGH_DECODE)
+    max_cap = decode_batch_cap
+    print(f"  Calibrating gen_decode_batch_size (memory fraction={threshold}, max={max_cap})...")
 
     def _probe(bs: int) -> bool | None:
         torch.cuda.empty_cache()
@@ -328,11 +344,15 @@ def calibrate_gen_decode_batch_size(
     while high <= max_cap:
         result = _probe(high)
         if result is True:
+            print(f"    batch_size={high} under limit")
             low = high
             high = min(high * 2, max_cap)
             if high == low:
                 break
         else:
+            status = "OOM" if result is None else "over limit"
+            print(f"    batch_size={high} {status}; binary search [{low}, {high - 1}]")
+            high = high - 1
             break
 
     if low == 1 and _probe(1) not in (True, None):
@@ -347,8 +367,11 @@ def calibrate_gen_decode_batch_size(
         mid = (low + high + 1) // 2
         result = _probe(mid)
         if result is True:
+            print(f"    mid {mid} under limit")
             low = mid
         else:
+            status = "OOM" if result is None else "over limit"
+            print(f"    mid {mid} {status}")
             high = mid - 1
 
     torch.cuda.empty_cache()

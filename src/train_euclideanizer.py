@@ -40,6 +40,7 @@ def train_euclideanizer(
     memory_efficient: bool = False,
     display_root: str | None = None,
     calibration_memory_fraction: float | None = None,
+    calibration_training_batch_cap: int = 512,
     on_batch_size_resolved: Callable[[int], None] | None = None,
 ) -> tuple[str, bool]:
     """
@@ -87,6 +88,7 @@ def train_euclideanizer(
             batch_size = calibrate_euclideanizer_batch_size(
                 embed, frozen_vae, eu_cfg, coords, device, threshold=threshold,
                 training_split=training_split, split_seed=split_seed,
+                training_batch_cap=calibration_training_batch_cap,
             )
             eu_cfg = {**eu_cfg, "batch_size": batch_size}
             print(f"  Auto-calibrated batch_size: {batch_size}")

@@ -4,8 +4,11 @@
 # The project does not bundle large data; use tests/test_data/spheres.gro (generate with tests/test_data/generate_spheres.py) or your own .gro path.
 
 resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
-# Target GPU memory fraction for in-run auto-calibration of distmap.batch_size and euclideanizer.batch_size only (0–1). Required when either of those two is null; set null when both are fixed integers. Does not affect gen_decode_batch_size or query_batch_size (plotting/analysis); set those in their sections.
+# Target GPU memory fraction for in-run auto-calibration (0–1). Used when any of distmap.batch_size, euclideanizer.batch_size, plotting.gen_decode_batch_size, or analysis *.*.query_batch_size/gen_decode_batch_size is null. Required when any of those are null; set null only when all are fixed integers.
 calibration_memory_fraction: 0.85
+# Upper bounds for calibration binary search (no code-side defaults). training = cap for distmap/euclideanizer batch_size; decode = cap for gen_decode_batch_size / query_batch_size.
+calibration_training_batch_cap: 512
+calibration_decode_batch_cap: 4096
 
 data:
   path: "tests/test_data/spheres.gro"   # path to GRO-style coordinate file; required for training (or pass --data)
@@ -69,7 +72,7 @@ plotting:
   avg_gen_vs_exp: true   # if true, plot average generated vs experimental statistics
   bond_length_by_genomic_distance: false   # if true, plot 5×4 grid of pairwise distance distributions by lag k
   num_samples: 10   # number of structures to generate per variance for gen_variance and related plots
-  gen_decode_batch_size: 128   # batch size when decoding latents to structures for gen plots
+  gen_decode_batch_size: 128   # batch size when decoding latents to structures for gen plots; null = auto-calibrate after training
   sample_variance: [1]   # list of latent variances; one plot set per value
   num_reconstruction_samples: 5   # number of structures to decode for reconstruction plots
   max_train: null   # cap on train structures for reference stats; null = use all
@@ -95,8 +98,8 @@ analysis:
     overwrite_existing: false   # if true, prompt then remove existing rmsd gen outputs before re-running
     num_samples: [1]   # list of sample counts per run name (e.g. [1, 10] → run "1", "10")
     sample_variance: [1, 2]   # list of latent variances; one set of outputs per value
-    query_batch_size: 128   # batch size for RMSD query (nearest-neighbour search)
-    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
+    query_batch_size: 128   # batch size for RMSD query (nearest-neighbour search); null = auto-calibrate (same value as gen_decode)
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures; null = auto-calibrate
     save_data: true   # if true, save rmsd_data.npz (and similar) in analysis output dir
     save_pdf_copy: false   # if true, save PDF copies of RMSD (gen) figures in a pdf/ subdir
     save_structures_gro: true   # if true, save generated structures as GRO for this analysis
@@ -113,8 +116,8 @@ analysis:
     num_samples: [500]   # list of sample counts per run name
     sample_variance: [1]   # list of latent variances
     delta: 0.7071   # Q smoothing parameter (1/sqrt(2) → denominator 2*delta^2 = 1)
-    query_batch_size: 64   # batch size for Q computation
-    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
+    query_batch_size: 64   # batch size for Q computation; null = auto-calibrate
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures; null = auto-calibrate
     save_data: true   # if true, save Q data as .npz
     save_pdf_copy: true   # if true, save PDF copies of Q figures
     save_structures_gro: false   # if true, save generated structures as GRO
@@ -134,7 +137,7 @@ analysis:
     n_subsample: 150   # number of structures to subsample (FPS) for clustering; reduces cost
     k_mixing: 10   # number of nearest neighbours used to compute source mixing score (0–1, higher = more mixing)
     linkage_method: "average"   # scipy linkage method for hierarchical clustering (e.g. average, single, complete)
-    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures; null = auto-calibrate
     save_data: false   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies of clustering figures
   coord_clustering_recon:
@@ -155,7 +158,7 @@ analysis:
     n_subsample: 150   # number of structures to subsample (FPS) for clustering
     k_mixing: 10   # nearest neighbours for mixing score
     linkage_method: "average"   # scipy linkage method
-    gen_decode_batch_size: 128   # batch size when decoding latents to structures (same as plotting)
+    gen_decode_batch_size: 128   # batch size when decoding latents to structures; null = auto-calibrate
     feats_batch_size: 64   # batch size for computing distance-map features (cache and analysis)
     save_data: false   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies

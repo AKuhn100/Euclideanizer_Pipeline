@@ -132,10 +132,11 @@ REQUIRED_ANALYSIS_SUBKEYS["latent"] = [
 ]
 # Order: training_visualization before plotting so training-related config is grouped.
 # calibration_memory_fraction: required; null only when both distmap and euclideanizer batch_size are positive integers; else float in (0, 1] for auto-calibration.
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_memory_fraction", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
+# calibration_training_batch_cap / calibration_decode_batch_cap: required; positive int; upper bound for binary search when calibrating training vs inference batch sizes.
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_memory_fraction", "calibration_training_batch_cap", "calibration_decode_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
 
 # Sections that must match exactly when resuming (training and training visualization).
-TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_memory_fraction"]
+TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_memory_fraction", "calibration_training_batch_cap", "calibration_decode_batch_cap"]
 # Sections that may differ on resume; if they do, user is prompted and plotting/analysis outputs are removed and re-run.
 PLOTTING_ANALYSIS_KEYS = ["plotting", "analysis", "scoring"]
 
@@ -239,6 +240,12 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
         if frac is not None and not isinstance(frac, (int, float)):
             raise ValueError(
                 f"calibration_memory_fraction must be null or a float in (0, 1], got {type(frac).__name__}."
+            )
+    for key in ("calibration_training_batch_cap", "calibration_decode_batch_cap"):
+        val = cfg.get(key)
+        if val is None or not isinstance(val, int) or val < 1:
+            raise ValueError(
+                f"{key} must be a positive integer (upper bound for calibration binary search), got {val!r}."
             )
 
 
