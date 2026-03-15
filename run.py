@@ -2190,6 +2190,7 @@ def run_one_hpo_trial(
                         continue
                     _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
                 plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
+                plot_cfg_gen = {**plot_cfg_gen, "save_data": plot_cfg_gen.get("save_data") or cfg.get("scoring", {}).get("enabled", False)}
                 pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                 extra_kw = spec.gen_extra_kwargs(analysis_cfg)
                 for var in _variance_list:
@@ -2231,6 +2232,7 @@ def run_one_hpo_trial(
                 if do_recon and _max_recon_train_list and _max_recon_test_list:
                     n_recon = len(_max_recon_train_list) * len(_max_recon_test_list)
                     plot_cfg_recon = spec.build_recon_plot_cfg(analysis_cfg)
+                    plot_cfg_recon = {**plot_cfg_recon, "save_data": plot_cfg_recon.get("save_data") or cfg.get("scoring", {}).get("enabled", False)}
                     recon_extra = spec.recon_extra_kwargs(analysis_cfg)
                     for max_recon_train in _max_recon_train_list:
                         for max_recon_test in _max_recon_test_list:
@@ -2976,7 +2978,7 @@ def _run_one_distmap_group(
                                     if spec.requires_reference_bounds and (_mt_gen is None or _mc_gen is None):
                                         continue
                                     _tt, _train_c, _test_c = _get_or_compute_cached(_ref_mt, _ref_mc)
-                                    plot_cfg_gen = spec.build_gen_plot_cfg(analysis_cfg)
+                                    plot_cfg_gen = {**spec.build_gen_plot_cfg(analysis_cfg), "save_data": analysis_save_data}
                                     pre_kw = spec.precomputed_kwargs(_tt, _train_c, _test_c)
                                     extra_kw = spec.gen_extra_kwargs(analysis_cfg)
                                     for var in _variance_list:
@@ -3020,7 +3022,7 @@ def _run_one_distmap_group(
 
                                 if do_recon and _max_recon_train_list and _max_recon_test_list:
                                     n_recon = len(_max_recon_train_list) * len(_max_recon_test_list)
-                                    plot_cfg_recon = spec.build_recon_plot_cfg(analysis_cfg)
+                                    plot_cfg_recon = {**spec.build_recon_plot_cfg(analysis_cfg), "save_data": analysis_save_data}
                                     recon_extra = spec.recon_extra_kwargs(analysis_cfg)
                                     for max_recon_train in _max_recon_train_list:
                                         for max_recon_test in _max_recon_test_list:

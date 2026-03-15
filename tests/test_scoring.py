@@ -407,3 +407,73 @@ def test_compute_and_save_rmsd_gen_only_from_variance_one_path(tmp_path):
     # Scores should reflect variance=1 data (0.5), not variance=2 data (999)
     assert scores["component_scores"]["gen_rmsd_train_vs_tt"] > 0.01
 
+
+def test_compute_and_save_all_components_present_when_all_data_saved(tmp_path):
+    """When pipeline runs top-to-bottom with scoring enabled, analysis saves NPZ (effective save_data).
+    This test asserts: when all analysis/plot NPZ data is present, compute_and_save produces no missing components."""
+    run_dir = tmp_path / "run"
+    seed_dir = tmp_path / "seed"
+    exp_cache = seed_dir / "experimental_statistics"
+    exp_cache.mkdir(parents=True)
+
+    # Seed caches
+    np.savez_compressed(exp_cache / "exp_stats_train.npz", exp_rg=np.array([1.0]), exp_scaling=np.array([1.0]), avg_exp_map=np.eye(3))
+    np.savez_compressed(exp_cache / "exp_stats_test.npz", exp_rg=np.array([1.0]), exp_scaling=np.array([1.0]), avg_exp_map=np.eye(3))
+    np.savez_compressed(exp_cache / "test_to_train_rmsd.npz", test_to_train=np.array([0.5, 0.6]))
+    np.savez_compressed(exp_cache / "q_test_to_train.npz", test_to_train_q=np.array([0.7, 0.8]))
+
+    # Plots
+    (run_dir / "plots" / "recon_statistics" / "data").mkdir(parents=True)
+    for subset in ("train", "test"):
+        r = run_dir / "plots" / "recon_statistics" / "data" / f"recon_statistics_{subset}_data.npz"
+        np.savez_compressed(r, recon_rg=np.array([1.0]), recon_scaling=np.array([1.0]), recon_avg_map=np.eye(3),
+                            pairwise_k_values=np.array([1]), pairwise_exp_d=np.array([np.array([1.0])], dtype=object), pairwise_recon_d=np.array([np.array([1.0])], dtype=object))
+    (run_dir / "plots" / "gen_variance" / "data").mkdir(parents=True)
+    np.savez_compressed(run_dir / "plots" / "gen_variance" / "data" / "gen_variance_1.0_data.npz",
+                        gen_rg=np.array([1.0]), gen_scaling=np.array([1.0]), avg_gen_map=np.eye(3),
+                        pairwise_k_values=np.array([1]), pairwise_gen_d=np.array([np.array([1.0])], dtype=object), pairwise_exp_composite_d=np.array([np.array([1.0])], dtype=object))
+
+    # RMSD gen + recon
+    (run_dir / "analysis" / "rmsd" / "gen" / "default_var1.0" / "data").mkdir(parents=True)
+    np.savez_compressed(run_dir / "analysis" / "rmsd" / "gen" / "default_var1.0" / "data" / "rmsd_data.npz", gen_to_train=np.array([0.5]), gen_to_test=np.array([0.5]))
+    (run_dir / "analysis" / "rmsd" / "recon" / "data").mkdir(parents=True)
+    np.savez_compressed(run_dir / "analysis" / "rmsd" / "recon" / "data" / "rmsd_recon_data.npz", recon_train_rmsd=np.array([0.3]), recon_test_rmsd=np.array([0.4]))
+
+    # Q gen + recon
+    (run_dir / "analysis" / "q" / "gen" / "default_var1.0" / "data").mkdir(parents=True)
+    np.savez_compressed(run_dir / "analysis" / "q" / "gen" / "default_var1.0" / "data" / "q_data.npz", gen_to_train=np.array([0.8]), gen_to_test=np.array([0.8]))
+    (run_dir / "analysis" / "q" / "recon" / "data").mkdir(parents=True)
+    np.savez_compressed(run_dir / "analysis" / "q" / "recon" / "data" / "q_recon_data.npz", recon_train_q=np.array([0.9]), recon_test_q=np.array([0.9]))
+
+    # Latent
+    (run_dir / "analysis" / "latent" / "data").mkdir(parents=True)
+    np.savez_compressed(run_dir / "analysis" / "latent" / "data" / "latent_stats.npz",
+                        mean_train=np.array([0.0]), mean_test=np.array([0.0]), std_train=np.array([1.0]), std_test=np.array([1.0]))
+
+    # Clustering: gen has Train+Gen, Test+Gen; recon has Train+Train Recon, Test+Test Recon (per _mix_key_to_component)
+    for subdir in ("coord_clustering", "distmap_clustering"):
+        (run_dir / "analysis" / subdir / "gen" / "default_var1.0" / "data").mkdir(parents=True)
+        np.savez_compressed(run_dir / "analysis" / subdir / "gen" / "default_var1.0" / "data" / "clustering_data.npz",
+                            mixing_keys=np.array(["Train+Gen", "Test+Gen"], dtype=object), mixing_ratio=np.array([1.0, 1.0], dtype=np.float64))
+        (run_dir / "analysis" / subdir / "recon" / "data").mkdir(parents=True)
+        np.savez_compressed(run_dir / "analysis" / subdir / "recon" / "data" / "clustering_data.npz",
+                            mixing_keys=np.array(["Train+Train Recon", "Test+Test Recon"], dtype=object), mixing_ratio=np.array([1.0, 1.0], dtype=np.float64))
+
+    cfg = {
+        "plotting": {"sample_variance": [1.0]},
+        "analysis": {
+            "rmsd_gen": {"sample_variance": [1.0]}, "rmsd_recon": {},
+            "q_gen": {"sample_variance": [1.0]}, "q_recon": {},
+            "coord_clustering_gen": {"sample_variance": [1.0]}, "coord_clustering_recon": {},
+            "distmap_clustering_gen": {"sample_variance": [1.0]}, "distmap_clustering_recon": {},
+        },
+        "scoring": {"save_pdf_copy": False},
+    }
+    out = compute_and_save(str(run_dir), str(seed_dir), cfg)
+    assert out is not None
+    with open(os.path.join(run_dir, "scoring", "scores.json")) as f:
+        scores = json.load(f)
+    assert len(scores["missing"]) == 0, f"Expected no missing components; got: {scores['missing']}"
+    assert len(scores["present"]) == len(EXPECTED_COMPONENTS)
+    assert np.isfinite(scores["overall_score"]), f"overall_score should be finite; got {scores['overall_score']}"
+
