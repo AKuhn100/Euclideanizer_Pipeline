@@ -430,7 +430,9 @@ def main() -> int:
             pruner = pruner_cls(**pruner_kwargs)
         if optuna_cfg.get("pruner_patient"):
             pruner_patience = int(optuna_cfg.get("pruner_patience", 5))
-            pruner = optuna.pruners.PatientPruner(pruner, patience=pruner_patience)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*PatientPruner.*")
+                pruner = optuna.pruners.PatientPruner(pruner, patience=pruner_patience)
         study = optuna.create_study(
             study_name=study_name,
             storage=storage,
@@ -609,13 +611,15 @@ def main() -> int:
     optimize_n_trials = n_trials if not args.worker else None
 
     try:
-        study.optimize(
-            objective,
-            n_trials=optimize_n_trials,
-            n_jobs=n_jobs,
-            show_progress_bar=show_progress_bar,
-            callbacks=callbacks,
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*Progress bar won't be displayed.*", category=UserWarning)
+            study.optimize(
+                objective,
+                n_trials=optimize_n_trials,
+                n_jobs=n_jobs,
+                show_progress_bar=show_progress_bar,
+                callbacks=callbacks,
+            )
     except Exception as e:
         traceback.print_exc()
         return 1
