@@ -545,7 +545,7 @@ def render_scores_spider(
     ax.spines["polar"].set_visible(False)
 
 # ── spoke labels ──────────────────────────────────────────────────────────
-    label_r = 1.15  # bump out a touch more since we're no longer side-hugging
+    label_r = 1.2  # bump out a touch more since we're no longer side-hugging
     for angle, comp in zip(angles, components):
         is_missing = comp in missing_set
         label_color = "#E07B00" if is_missing else COLOR_GRAY_TEXT
