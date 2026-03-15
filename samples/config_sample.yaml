@@ -4,6 +4,8 @@
 # The project does not bundle large data; use tests/test_data/spheres.gro (generate with tests/test_data/generate_spheres.py) or your own .gro path.
 
 resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
+# Target GPU memory fraction for in-run auto-calibration of distmap.batch_size and euclideanizer.batch_size only (0–1). Required when either of those two is null; set null when both are fixed integers. Does not affect gen_decode_batch_size or query_batch_size (plotting/analysis); set those in their sections.
+calibration_memory_fraction: 0.85
 
 data:
   path: "tests/test_data/spheres.gro"   # path to GRO-style coordinate file; required for training (or pass --data)
@@ -19,7 +21,7 @@ distmap:
   latent_dim: [256]   # dimension of the latent space
   beta_kl: [0.01]   # weight for KL term in VAE loss
   epochs: [1, 2]   # training epochs; list = multi-segment (e.g. train to 1, then resume to 2)
-  batch_size: 128   # training batch size (must be single integer, no list)
+  batch_size: null   # null = auto-calibrate at start of each run; or set an integer to use a fixed value
   learning_rate: [1.0e-4]   # optimizer learning rate
   lambda_mse: [1.0]   # weight for MSE reconstruction loss
   lambda_w_recon: [3.0]   # weight for Wasserstein reconstruction term
@@ -32,7 +34,7 @@ distmap:
 # Euclideanizer. One run per (DistMap run × euclideanizer hyperparameter combination). Latent dim is taken from the frozen DistMap.
 euclideanizer:
   epochs: [1]   # training epochs; list = multi-segment
-  batch_size: 256   # training batch size (must be single integer)
+  batch_size: null   # null = auto-calibrate at start of each run; or set an integer to use a fixed value
   learning_rate: [1.0e-4]   # optimizer learning rate
   lambda_mse: [1.0]   # weight for MSE reconstruction loss
   lambda_w_recon: [3.0]   # weight for Wasserstein reconstruction term
@@ -76,7 +78,7 @@ plotting:
   save_pdf_copy: true   # if true, save a PDF copy of each figure where supported
   save_structures_gro: true   # if true, save generated structures as GRO for gen_variance (Euclideanizer only)
 
-# Analysis: metrics run after plotting for each Euclideanizer. Reference sizes (below) cap train/test for caching; null = use all.
+# Analysis: metrics run after plotting for each Euclideanizer. Reference sizes (below) cap train/test for caching; null = use all. Large values can be slow (O(n²) pairwise comparisons).
 analysis:
   rmsd_max_train: null   # cap on train structures for RMSD test→train cache; null = use all
   rmsd_max_test: null   # cap on test structures for RMSD test→train cache; null = use all

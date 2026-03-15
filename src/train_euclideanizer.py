@@ -4,6 +4,7 @@ Train a single Euclideanizer with given config (frozen DistMap).
 from __future__ import annotations
 
 import os
+from typing import Callable
 import time
 import torch
 import shutil
@@ -38,6 +39,8 @@ def train_euclideanizer(
     is_last_segment: bool = False,
     memory_efficient: bool = False,
     display_root: str | None = None,
+    calibration_memory_fraction: float | None = None,
+    on_batch_size_resolved: Callable[[int], None] | None = None,
 ) -> tuple[str, bool]:
     """
     Train one Euclideanizer. When resuming (resume_from_path + additional_epochs): load from
@@ -66,10 +69,32 @@ def train_euclideanizer(
     else:
         epochs = eu_cfg["epochs"]
 
+    model_dir = os.path.join(output_dir, "model")
+    os.makedirs(model_dir, exist_ok=True)
+
     frozen_vae = load_frozen_vae(frozen_vae_path, num_atoms, latent_dim, device)
     embed = Euclideanizer(num_atoms=num_atoms).to(device)
     if is_resume:
         embed.load_state_dict(torch.load(resume_from_path, map_location=device))
+
+    if batch_size is None:
+        run_cfg = load_run_config(model_dir)
+        if run_cfg and isinstance(run_cfg.get("euclideanizer", {}).get("batch_size"), int):
+            batch_size = run_cfg["euclideanizer"]["batch_size"]
+        else:
+            from .calibrate import calibrate_euclideanizer_batch_size
+            threshold = calibration_memory_fraction if calibration_memory_fraction is not None else 0.85
+            batch_size = calibrate_euclideanizer_batch_size(
+                embed, frozen_vae, eu_cfg, coords, device, threshold=threshold,
+                training_split=training_split, split_seed=split_seed,
+            )
+            eu_cfg = {**eu_cfg, "batch_size": batch_size}
+            print(f"  Auto-calibrated batch_size: {batch_size}")
+            if on_batch_size_resolved is not None:
+                on_batch_size_resolved(batch_size)
+    else:
+        batch_size = eu_cfg["batch_size"]
+
     optimizer = torch.optim.Adam(embed.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=epochs, eta_min=1e-6
@@ -93,8 +118,6 @@ def train_euclideanizer(
     best_state = None
     best_epoch = None
 
-    model_dir = os.path.join(output_dir, "model")
-    os.makedirs(model_dir, exist_ok=True)
     start_epoch_offset = 0  # global epoch offset when resuming (best_epoch if resuming from best, else last_epoch_trained)
     if is_resume and prev_run_dir is not None:
         prev_model_dir = os.path.join(prev_run_dir, "model")

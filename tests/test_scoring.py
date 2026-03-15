@@ -321,7 +321,7 @@ def test_compute_and_save_uses_only_variance_one_gen_variance(tmp_path):
     np.savez_compressed(exp_cache / "exp_stats_train.npz", exp_rg=np.array([1.0]), exp_scaling=np.array([1.0]), avg_exp_map=np.eye(3))
     np.savez_compressed(exp_cache / "exp_stats_test.npz", exp_rg=np.array([1.0]), exp_scaling=np.array([1.0]), avg_exp_map=np.eye(3))
     np.savez_compressed(exp_cache / "test_to_train_rmsd.npz", test_to_train=np.array([0.5, 0.6]), train_coords_np=np.zeros((2, 3, 3)), test_coords_np=np.zeros((2, 3, 3)))
-    np.savez_compressed(exp_cache / "q_test_to_train_500_200.npz", test_to_train_max_q=np.array([0.9, 0.85]))
+    np.savez_compressed(exp_cache / "q_test_to_train.npz", test_to_train_max_q=np.array([0.9, 0.85]))
     for subset in ("train", "test"):
         r = run_dir / "plots" / "recon_statistics" / "data" / f"recon_statistics_{subset}_data.npz"
         np.savez_compressed(r, recon_rg=np.array([1.0]), recon_scaling=np.array([1.0]), recon_avg_map=np.eye(3), pairwise_k_values=np.array([1]), pairwise_exp_d=np.array([np.array([1.0])], dtype=object), pairwise_recon_d=np.array([np.array([1.0])], dtype=object))

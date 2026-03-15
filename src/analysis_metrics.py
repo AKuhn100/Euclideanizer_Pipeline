@@ -79,7 +79,7 @@ def _q_cache_filename(analysis_cfg: dict, max_train: int | None = None, max_test
     mt = max_train if max_train is not None else analysis_cfg["q_max_train"]
     mc = max_test if max_test is not None else analysis_cfg["q_max_test"]
     if mt is None and mc is None:
-        return "q_test_to_train_500_200.npz"
+        return "q_test_to_train.npz"
     return f"q_test_to_train_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
 
 
@@ -89,8 +89,8 @@ def _q_kwargs_for_cache(analysis_cfg: dict, max_train: int | None = None, max_te
     mt = max_train if max_train is not None else analysis_cfg["q_max_train"]
     mc = max_test if max_test is not None else analysis_cfg["q_max_test"]
     return {
-        "max_train": mt if mt is not None else 500,
-        "max_test": mc if mc is not None else 200,
+        "max_train": mt,
+        "max_test": mc,
         "delta": recon["delta"],
         "query_batch_size": gen["query_batch_size"],
     }
@@ -324,7 +324,7 @@ class AnalysisMetricSpec:
     recon_key: str
     subdir: str
     figure_filename: str
-    requires_reference_bounds: bool  # if True, gen analysis needs non-None max_train/max_test (e.g. Q)
+    requires_reference_bounds: bool  # if True, gen analysis needs non-None max_train/max_test
     get_or_compute_test_to_train: Callable[..., tuple[Any, Any, Any]]
     run_gen_analysis: Callable[..., str]
     run_gen_analysis_multi: Callable[..., list[str]]
@@ -365,7 +365,7 @@ ANALYSIS_METRICS: list[AnalysisMetricSpec] = [
         recon_key="q_recon",
         subdir="q",
         figure_filename="q_distributions.png",
-        requires_reference_bounds=True,
+        requires_reference_bounds=False,
         get_or_compute_test_to_train=_q_get_or_compute,
         run_gen_analysis=q_analysis.run_q_analysis,
         run_gen_analysis_multi=q_analysis.run_q_analysis_multi,

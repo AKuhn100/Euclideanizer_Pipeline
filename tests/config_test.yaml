@@ -2,6 +2,7 @@
 # 1 seed, 2 DistMap runs (epochs 1 and 2), 2 Euclideanizer runs (epochs 1 and 2).
 
 resume: true
+calibration_memory_fraction: 0.85   # for distmap/euclideanizer training batch_size only; null when both are fixed
 
 data:
   path: null

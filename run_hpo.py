@@ -166,6 +166,32 @@ def _ensure_single_value(cfg: dict, section: str, key: str) -> None:
         )
 
 
+def _get_dm_epochs_max(
+    base_cfg: dict,
+    search_space: dict,
+    epoch_cap: int | None,
+) -> int:
+    """Return the maximum DistMap epochs any trial can have. Used so Euclideanizer reports use step = dm_epochs_max + epoch and never overlap DistMap steps."""
+    if epoch_cap is not None:
+        return int(epoch_cap)
+    dm_space = search_space.get("distmap") or {}
+    epochs_spec = dm_space.get("epochs")
+    if isinstance(epochs_spec, dict) and epochs_spec.get("type") == "int":
+        high = epochs_spec.get("high")
+        if high is not None:
+            return int(high)
+    dm_cfg = base_cfg.get("distmap") or {}
+    v = dm_cfg.get("epochs")
+    if v is None:
+        raise KeyError(
+            "Cannot determine dm_epochs_max: epoch_cap is unset, distmap.epochs is not in search_space with type int, "
+            "and base pipeline config has no distmap.epochs. Set epoch_cap in HPO config or ensure distmap.epochs exists in the pipeline template."
+        )
+    if isinstance(v, list):
+        return int(max(v))
+    return int(v)
+
+
 def _build_trial_config(
     base_cfg: dict,
     trial_params: dict,
@@ -176,7 +202,7 @@ def _build_trial_config(
 ) -> dict:
     """Build full pipeline config for one trial. base_cfg is the template (from pipeline_config);
     trial_params overlay Optuna-suggested values for search_space keys; output_dir, data.path, data.split_seed,
-    and optionally epoch_cap are set from HPO. Everything else (lr, batch_size, plotting, analysis, etc.) comes from the template."""
+    and optionally epoch_cap are set from HPO."""
     cfg = copy.deepcopy(base_cfg)
     cfg["output_dir"] = str(Path(trial_dir).resolve())
     cfg["data"] = dict(cfg.get("data", {}))
@@ -470,6 +496,7 @@ def main() -> int:
     epoch_cap = hpo_cfg.get("epoch_cap")
     if epoch_cap is not None:
         epoch_cap = int(epoch_cap)
+    dm_epochs_max = _get_dm_epochs_max(base_cfg, search_space, epoch_cap)
 
     # Save HPO config in output root (like pipeline's saved config) and enforce same config when adding trials (only n_trials may differ).
     saved_config_path = Path(output_root) / HPO_CONFIG_FILENAME
@@ -522,6 +549,7 @@ def main() -> int:
                 cfg, trial_dir, trial, device,
                 coords, coords_np, num_atoms, num_structures,
                 exp_stats, train_stats, test_stats, data_path,
+                dm_epochs_max=dm_epochs_max,
             )
         except optuna.TrialPruned:
             raise

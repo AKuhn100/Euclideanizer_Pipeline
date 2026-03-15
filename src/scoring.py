@@ -809,8 +809,8 @@ def compute_and_save(
                         data.setdefault("recon_train_q", qr.get("recon_train_q") or qr.get("train_recon_q"))
                         data.setdefault("recon_test_q", qr.get("recon_test_q") or qr.get("test_recon_q"))
 
-    # Seed Q: q_test_to_train_500_200.npz or q_test_to_train_{max_train}_{max_test}.npz
-    tt_q_npz = _load_npz_safe(os.path.join(exp_cache, "q_test_to_train_500_200.npz"))
+    # Seed Q: q_test_to_train.npz when both max_train/max_test null; else q_test_to_train_{mt}_{mc}.npz
+    tt_q_npz = _load_npz_safe(os.path.join(exp_cache, "q_test_to_train.npz"))
     if not tt_q_npz and os.path.isdir(exp_cache):
         for f in sorted(os.listdir(exp_cache)):
             if f.startswith("q_test_to_train") and f.endswith(".npz"):

@@ -4,6 +4,7 @@ Train a single DistMap (ChromVAE_Conv) with given config.
 from __future__ import annotations
 
 import os
+from typing import Callable
 import shutil
 import time
 import torch
@@ -35,6 +36,8 @@ def train_distmap(
     is_last_segment: bool = False,
     memory_efficient: bool = False,
     display_root: str | None = None,
+    calibration_memory_fraction: float | None = None,
+    on_batch_size_resolved: Callable[[int], None] | None = None,
 ) -> tuple[str, bool]:
     """
     Train one DistMap model. When resuming: load from prev run's model_last.pt, carry over best;
@@ -54,6 +57,9 @@ def train_distmap(
     lr = dm_cfg["learning_rate"]
     is_resume = resume_from_path is not None and additional_epochs is not None
 
+    model_dir = os.path.join(output_dir, "model")
+    os.makedirs(model_dir, exist_ok=True)
+
     if is_resume:
         epochs = additional_epochs
         model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=latent_dim).to(device)
@@ -61,6 +67,24 @@ def train_distmap(
     else:
         epochs = dm_cfg["epochs"]
         model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=latent_dim).to(device)
+
+    if batch_size is None:
+        run_cfg = load_run_config(model_dir)
+        if run_cfg and isinstance(run_cfg.get("distmap", {}).get("batch_size"), int):
+            batch_size = run_cfg["distmap"]["batch_size"]
+        else:
+            from .calibrate import calibrate_distmap_batch_size
+            threshold = calibration_memory_fraction if calibration_memory_fraction is not None else 0.85
+            batch_size = calibrate_distmap_batch_size(
+                model, dm_cfg, coords, device, threshold=threshold,
+                training_split=training_split, split_seed=split_seed,
+            )
+            dm_cfg = {**dm_cfg, "batch_size": batch_size}
+            print(f"  Auto-calibrated batch_size: {batch_size}")
+            if on_batch_size_resolved is not None:
+                on_batch_size_resolved(batch_size)
+    else:
+        batch_size = dm_cfg["batch_size"]
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -77,8 +101,6 @@ def train_distmap(
     best_epoch = None
     start_epoch_offset = 0
 
-    model_dir = os.path.join(output_dir, "model")
-    os.makedirs(model_dir, exist_ok=True)
     if is_resume and prev_run_dir is not None:
         prev_model_dir = os.path.join(prev_run_dir, "model")
         prev_cfg = load_run_config(prev_model_dir)

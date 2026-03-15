@@ -99,16 +99,17 @@ def get_or_compute_test_to_train_q(
     training_split: float,
     split_seed: int,
     cache_path: str,
-    max_train: int,
-    max_test: int,
     delta: float,
     query_batch_size: int,
+    max_train: int | None = None,
+    max_test: int | None = None,
     display_root: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load test→train max Q (and train/test coords) from seed-level cache, or compute and save.
-    Returns (test_to_train_max_q, train_coords_np, test_coords_np) with train/test truncated to max_train and max_test.
-    Cache is keyed by (max_train, max_test) via cache_path. Always written when computed (independent of analysis save_data).
+    Returns (test_to_train_max_q, train_coords_np, test_coords_np). max_train/max_test cap reference
+    set sizes (None = use all). Cache is keyed by (max_train, max_test) via cache_path.
+    Always written when computed (independent of analysis save_data).
     """
     if os.path.isfile(cache_path):
         try:
@@ -130,8 +131,12 @@ def get_or_compute_test_to_train_q(
     te_idx = test_ds.indices
     if hasattr(tr_idx, "tolist"):
         tr_idx, te_idx = tr_idx.tolist(), te_idx.tolist()
-    train_coords_np = coords_np[tr_idx][:max_train]
-    test_coords_np = coords_np[te_idx][:max_test]
+    train_coords_np = coords_np[tr_idx]
+    test_coords_np = coords_np[te_idx]
+    if max_train is not None:
+        train_coords_np = train_coords_np[:max_train]
+    if max_test is not None:
+        test_coords_np = test_coords_np[:max_test]
     test_to_train_max_q = max_q_batch(
         test_coords_np, train_coords_np, delta,
         query_batch_size=query_batch_size,

@@ -6,6 +6,8 @@
 # plotting.sample_variance and each analysis.*.sample_variance (rmsd_gen, q_gen, coord_clustering_gen, distmap_clustering_gen) must include 1 (scoring uses gen variance 1 only). All four analysis gen blocks must be enabled.
 
 resume: false   # each trial is a fresh directory; HPO resume (--resume) is the Optuna study, not pipeline resume
+# Target GPU memory fraction for in-run auto-calibration of distmap.batch_size and euclideanizer.batch_size only (0–1). Required when either of those two is null; set null when both are fixed integers. Does not affect gen_decode_batch_size or query_batch_size (plotting/analysis); set those in their sections.
+calibration_memory_fraction: 0.90
 
 data:
   path: null   # set by HPO (data_path)
@@ -20,7 +22,7 @@ distmap:
   latent_dim: null   # filled by Optuna
   beta_kl: null   # filled by Optuna
   epochs: 500   # overridden by HPO epoch_cap when set
-  batch_size: 128
+  batch_size: null
   learning_rate: 1.0e-4
   lambda_mse: null   # filled by Optuna
   lambda_w_recon: null   # filled by Optuna
@@ -32,7 +34,7 @@ distmap:
 
 euclideanizer:
   epochs: 500   # overridden by HPO epoch_cap when set
-  batch_size: 256
+  batch_size: null
   learning_rate: 1.0e-4
   lambda_mse: null   # filled by Optuna
   lambda_w_recon: null   # filled by Optuna
@@ -65,7 +67,7 @@ plotting:
   avg_gen_vs_exp: true
   bond_length_by_genomic_distance: true
   num_samples: 5000   # match max_test for gen plots
-  gen_decode_batch_size: 256
+  gen_decode_batch_size: null
   sample_variance: [1]   # scoring uses variance 1 only
   num_reconstruction_samples: 5
   max_train: 5000
@@ -91,8 +93,9 @@ analysis:
     overwrite_existing: false
     num_samples: [5000]
     sample_variance: [1]
-    query_batch_size: 128
-    gen_decode_batch_size: 256
+    query_batch_size: 
+    query_batch_size: null
+    gen_decode_batch_size: null
     save_data: true
     save_pdf_copy: false
     save_structures_gro: false
@@ -109,8 +112,8 @@ analysis:
     num_samples: [500]
     sample_variance: [1]
     delta: 0.7071
-    query_batch_size: 64
-    gen_decode_batch_size: 256
+    query_batch_size: null
+    gen_decode_batch_size: null
     save_data: true
     save_pdf_copy: false
     save_structures_gro: false
@@ -130,7 +133,7 @@ analysis:
     n_subsample: 5000
     k_mixing: 10
     linkage_method: "average"
-    gen_decode_batch_size: 256
+    gen_decode_batch_size: null
     save_data: true
     save_pdf_copy: false
   coord_clustering_recon:
@@ -151,7 +154,7 @@ analysis:
     n_subsample: 5000
     k_mixing: 10
     linkage_method: "average"
-    gen_decode_batch_size: 256
+    gen_decode_batch_size: null
     feats_batch_size: 64
     save_data: true
     save_pdf_copy: false

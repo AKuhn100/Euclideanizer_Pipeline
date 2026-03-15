@@ -1025,10 +1025,10 @@ def test_delete_reference_size_caches_removes_rmsd_and_q_files(tmp_path):
     cache_dir = os.path.join(base, "seed_0", EXP_STATS_CACHE_DIR)
     os.makedirs(cache_dir, exist_ok=True)
     (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "test_to_train_rmsd.npz").write_bytes(b"x")
-    (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "q_test_to_train_500_200.npz").write_bytes(b"x")
+    (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "q_test_to_train.npz").write_bytes(b"x")
     _delete_reference_size_caches(base, [0], {"rmsd", "q"})
     assert not os.path.isfile(os.path.join(cache_dir, "test_to_train_rmsd.npz"))
-    assert not os.path.isfile(os.path.join(cache_dir, "q_test_to_train_500_200.npz"))
+    assert not os.path.isfile(os.path.join(cache_dir, "q_test_to_train.npz"))
 
 
 # ---------------------------------------------------------------------------

@@ -84,13 +84,29 @@ def test_expand_euclideanizer_grid_num_diags():
     assert 50 in num_diags_vals and 100 in num_diags_vals
 
 
-def test_batch_size_single_value_only():
-    """distmap.batch_size and euclideanizer.batch_size must be single value; list raises ValueError."""
+def test_batch_size_list_raises():
+    """distmap.batch_size and euclideanizer.batch_size must be single integer or null; list raises ValueError."""
     cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
-    with pytest.raises(ValueError, match="distmap.batch_size must be a single integer"):
+    with pytest.raises(ValueError, match="distmap.batch_size must be a single integer or null"):
         load_config(cfg_path, {"distmap": {"batch_size": [8, 16]}})
-    with pytest.raises(ValueError, match="euclideanizer.batch_size must be a single integer"):
+    with pytest.raises(ValueError, match="euclideanizer.batch_size must be a single integer or null"):
         load_config(cfg_path, {"euclideanizer": {"batch_size": [8, 16]}})
+
+
+def test_batch_size_null_passes():
+    """batch_size: null passes validation when calibration_memory_fraction is set."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    cfg = load_config(cfg_path, {"distmap": {"batch_size": None}, "euclideanizer": {"batch_size": None}, "calibration_memory_fraction": 0.85})
+    assert cfg["distmap"]["batch_size"] is None
+    assert cfg["euclideanizer"]["batch_size"] is None
+    assert cfg["calibration_memory_fraction"] == 0.85
+
+
+def test_batch_size_zero_raises():
+    """batch_size: 0 raises ValueError (must be positive integer or null)."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    with pytest.raises(ValueError, match="batch_size must be null \\(auto-calibrate\\) or a positive integer"):
+        load_config(cfg_path, {"distmap": {"batch_size": 0}})
 
 
 def test_configs_match_exactly_equal():

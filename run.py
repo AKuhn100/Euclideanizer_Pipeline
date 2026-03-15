@@ -502,6 +502,12 @@ def _delete_reference_size_caches(base_output_dir: str, seeds: list, components:
                 except OSError:
                     pass
         if "q" in components:
+            q_all = os.path.join(cache_dir, "q_test_to_train.npz")
+            if os.path.isfile(q_all):
+                try:
+                    os.remove(q_all)
+                except OSError:
+                    pass
             for path in _glob.glob(os.path.join(cache_dir, "q_test_to_train_*.npz")):
                 try:
                     os.remove(path)
@@ -681,6 +687,26 @@ def _log(msg: str, since_start: float | None = None, since_phase: float | None =
         finally:
             if _LOG_LOCK is not None:
                 _LOG_LOCK.release()
+
+
+def _warn_calibration_reserve_if_low(cfg: dict, pipeline_start: float) -> None:
+    """If calibration_memory_fraction is set and CUDA is available, warn when (1 - fraction) * VRAM < 15 GB on any GPU."""
+    frac = cfg.get("calibration_memory_fraction")
+    if frac is None or not torch.cuda.is_available():
+        return
+    try:
+        for i in range(torch.cuda.device_count()):
+            props = torch.cuda.get_device_properties(i)
+            total_gb = props.total_memory / 1e9
+            reserve_gb = (1.0 - frac) * total_gb
+            if reserve_gb < 15:
+                _log(
+                    f"Warning: GPU {i} ({total_gb:.1f} GB VRAM) has only {reserve_gb:.1f} GB reserve at calibration_memory_fraction={frac}. Recommended reserve ≥15 GB for stability.",
+                    since_start=time.time() - pipeline_start,
+                    style="warning",
+                )
+    except Exception:
+        pass
 
 
 def _log_raw(line: str, style: str | None = None) -> None:
@@ -1764,10 +1790,11 @@ def run_one_hpo_trial(
     train_stats,
     test_stats,
     data_path: str,
+    dm_epochs_max: int,
 ) -> float:
     """Run one HPO trial in-process: train one DistMap, one Euclideanizer, plot, analyze, score.
     Reports validation loss each epoch to optuna_trial and raises optuna.TrialPruned if the pruner says so.
-    Returns overall_score from scoring. Caller must load data and compute exp_stats/train_stats/test_stats.
+    dm_epochs_max is the maximum DistMap epochs across all trials (caller computes it); Euclideanizer reports use step = dm_epochs_max + epoch so steps do not overlap with DistMap. Returns overall_score from scoring. Caller must load data and compute exp_stats/train_stats/test_stats.
     """
     import optuna
 
@@ -1830,11 +1857,13 @@ def run_one_hpo_trial(
     do_distmap_clustering_gen = analysis_cfg["distmap_clustering_gen"]["enabled"]
     do_distmap_clustering_recon_cfg = analysis_cfg["distmap_clustering_recon"]["enabled"]
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
+    _warn_calibration_reserve_if_low(cfg, pipeline_start)
     _log(f"config: (HPO trial)  output: {base_output_dir}  seeds: [{seed}]", since_start=time.time() - pipeline_start, style="info")
     _log(f"DistMap runs: 1  Euclideanizer: 1  resume=False  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     dm_epochs = int(dm_cfg["epochs"])
-    # Report with step=epoch in each phase so the pruner compares like-with-like: DistMap epoch 50 vs DistMap epoch 50, Euclideanizer epoch 50 vs Euclideanizer epoch 50. Using a global step (dm_epochs+epoch for Eu) would misalign when dm_epochs varies (early stopping or different epoch_cap), so we use step=epoch for both phases and accept that the pruner only compares meaningfully within one phase at a time.
+    # DistMap reports step=epoch (1..dm_epochs). Euclideanizer reports step=dm_epochs_max+epoch so its range never overlaps and the pruner can compare like-with-like across trials (same step range for all Euclideanizer runs). dm_epochs_max is passed by the HPO caller.
+
     def _report_and_prune_dm(epoch, model, train_hist, val_hist, run_dirs=None):
         val = float(val_hist[-1]) if val_hist else float("inf")
         optuna_trial.report(val, step=epoch)
@@ -1843,7 +1872,7 @@ def run_one_hpo_trial(
 
     def _report_and_prune_eu(epoch, embed, train_hist, val_hist, run_dirs=None):
         val = float(val_hist[-1]) if val_hist else float("inf")
-        optuna_trial.report(val, step=epoch)
+        optuna_trial.report(val, step=dm_epochs_max + epoch)
         if optuna_trial.should_prune():
             raise optuna.TrialPruned()
 
@@ -1878,6 +1907,8 @@ def run_one_hpo_trial(
             memory_efficient=dm_cfg["memory_efficient"],
             is_last_segment=True,
             display_root=base_output_dir,
+            calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+            on_batch_size_resolved=lambda bs: _log(f"DistMap run 0: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
         )
         _log(f"DistMap 0: training done in {(time.time() - phase_start_dm) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     finally:
@@ -1964,6 +1995,8 @@ def run_one_hpo_trial(
             memory_efficient=eu_cfg["memory_efficient"],
             is_last_segment=True,
             display_root=base_output_dir,
+            calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+            on_batch_size_resolved=lambda bs: _log(f"Euclideanizer run 0 (DistMap 0): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
         )
         _log(f"Euclideanizer 0 (DistMap 0): training done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
     finally:
@@ -1983,6 +2016,11 @@ def run_one_hpo_trial(
         frozen_vae = load_frozen_vae(dm_path, num_atoms, dm_cfg["latent_dim"], device)
         embed = Euclideanizer(num_atoms=num_atoms).to(device)
         embed.load_state_dict(torch.load(eu_path, map_location=device))
+        eu_model_dir = os.path.join(run_dir_eu, "model")
+        if gen_decode_batch_size is None or _any_inference_batch_null(cfg):
+            _g, _q = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device)
+            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, _q, plot_cfg, analysis_cfg)
+            gen_decode_batch_size = _g
         if do_recon_plot and coords is not None:
             p = _plot_path(run_dir_eu, "reconstruction")
             plot_euclideanizer_reconstruction(
@@ -2210,6 +2248,80 @@ def _force_gpu_cleanup(device: torch.device) -> None:
         torch.cuda.empty_cache()
 
 
+def _any_inference_batch_null(cfg: dict) -> bool:
+    """True if plotting.gen_decode_batch_size or any analysis block query_batch_size/gen_decode_batch_size is null."""
+    plot_cfg = cfg.get("plotting") or {}
+    if isinstance(plot_cfg, dict) and plot_cfg.get("gen_decode_batch_size") is None:
+        return True
+    from src.config import REQUIRED_ANALYSIS_SUBKEYS
+    for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
+        block = (cfg.get("analysis") or {}).get(block_name)
+        if not isinstance(block, dict):
+            continue
+        if "query_batch_size" in sub_keys and block.get("query_batch_size") is None:
+            return True
+        if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
+            return True
+    return False
+
+
+def _resolve_inference_batch_sizes(
+    cfg: dict,
+    eu_model_dir: str,
+    frozen_vae,
+    embed,
+    device,
+) -> tuple[int, int]:
+    """Resolve gen_decode_batch_size and query_batch_size (same value). Load from run_config or calibrate and save. Returns (gen_decode_batch_size, query_batch_size)."""
+    run_cfg = load_run_config(eu_model_dir)
+    if run_cfg is not None and run_cfg.get("gen_decode_batch_size") is not None and run_cfg.get("query_batch_size") is not None:
+        return (int(run_cfg["gen_decode_batch_size"]), int(run_cfg["query_batch_size"]))
+    from src.calibrate import calibrate_gen_decode_batch_size
+    threshold = cfg.get("calibration_memory_fraction")
+    if threshold is None:
+        threshold = 0.85
+    resolved = calibrate_gen_decode_batch_size(
+        frozen_vae, embed, device, threshold=threshold,
+        latent_dim=getattr(frozen_vae, "_latent_space_dim", None),
+    )
+    run_cfg = load_run_config(eu_model_dir) or {}
+    run_cfg = {**run_cfg, "gen_decode_batch_size": resolved, "query_batch_size": resolved}
+    save_run_config(
+        run_cfg, eu_model_dir,
+        last_epoch_trained=run_cfg.get("last_epoch_trained"),
+        best_epoch=run_cfg.get("best_epoch"),
+        best_val=run_cfg.get("best_val"),
+        early_stopped=run_cfg.get("early_stopped", False),
+    )
+    print(f"  Auto-calibrated gen_decode_batch_size / query_batch_size: {resolved}")
+    return (resolved, resolved)
+
+
+def _apply_resolved_inference_batch_sizes(
+    gen_decode: int,
+    query_batch: int,
+    plot_cfg: dict,
+    analysis_cfg: dict,
+) -> tuple[dict, dict]:
+    """Return (effective_plot_cfg, effective_analysis_cfg) with null gen_decode_batch_size and query_batch_size filled."""
+    import copy
+    from src.config import REQUIRED_ANALYSIS_SUBKEYS
+    effective_plot = {**plot_cfg, "gen_decode_batch_size": gen_decode}
+    effective_analysis = copy.deepcopy(analysis_cfg)
+    for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
+        block = effective_analysis.get(block_name)
+        if not isinstance(block, dict):
+            continue
+        updates = {}
+        if "query_batch_size" in sub_keys and block.get("query_batch_size") is None:
+            updates["query_batch_size"] = query_batch
+        if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
+            updates["gen_decode_batch_size"] = gen_decode
+        if updates:
+            effective_analysis[block_name] = {**block, **updates}
+    return (effective_plot, effective_analysis)
+
+
 def _run_one_distmap_group(
     seed: int,
     gidx: int,
@@ -2238,7 +2350,7 @@ def _run_one_distmap_group(
     resume: bool,
     sample_variances: list,
     gen_num_samples: int,
-    gen_decode_batch_size: int,
+    gen_decode_batch_size: int | None,
     need_plot_or_rmsd: bool,
     save_structures_gro_plot: bool,
     analysis_save_data: bool,
@@ -2327,6 +2439,8 @@ def _run_one_distmap_group(
                     memory_efficient=dm_cfg["memory_efficient"],
                     is_last_segment=dm_last_segment,
                     display_root=base_output_dir,
+                    calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                    on_batch_size_resolved=lambda bs, _ri=ri: _log(f"DistMap run {_ri}: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                 )
             elif dm_act["action"] == "resume_from_best":
                 _log(f"DistMap run {ri} (seed {seed}): resuming from best (epoch {dm_act['best_epoch']}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
@@ -2346,6 +2460,8 @@ def _run_one_distmap_group(
                     is_last_segment=dm_last_segment,
                     memory_efficient=dm_cfg["memory_efficient"],
                     display_root=base_output_dir,
+                    calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                    on_batch_size_resolved=lambda bs, _ri=ri: _log(f"DistMap run {_ri}: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                 )
             else:
                 _log(f"DistMap run {ri} (seed {seed}): resuming from run (epochs={prev_dm_ev}), training {dm_act['additional_epochs']} more → {ev} total...", since_start=time.time() - pipeline_start, style="info")
@@ -2365,6 +2481,8 @@ def _run_one_distmap_group(
                     is_last_segment=dm_last_segment,
                     memory_efficient=dm_cfg["memory_efficient"],
                     display_root=base_output_dir,
+                    calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                    on_batch_size_resolved=lambda bs, _ri=ri: _log(f"DistMap run {_ri}: auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                 )
             prev_dm_path = dm_path
             prev_dm_ev = ev
@@ -2499,6 +2617,8 @@ def _run_one_distmap_group(
                             memory_efficient=eu_cfg_seg["memory_efficient"],
                             is_last_segment=eu_last_segment,
                             display_root=base_output_dir,
+                            calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                            on_batch_size_resolved=lambda bs, _euri=euri, _ri=ri: _log(f"Euclideanizer run {_euri} (DistMap {_ri}): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                         )
                     elif eu_act["action"] == "resume_from_best":
                         _log(f"Euclideanizer run {euri} (DistMap {ri}): resuming from best (epoch {eu_act['best_epoch']}), training {eu_act['additional_epochs']} more → {eu_ev} total...", since_start=time.time() - pipeline_start, style="info")
@@ -2519,6 +2639,8 @@ def _run_one_distmap_group(
                             is_last_segment=eu_last_segment,
                             memory_efficient=eu_cfg_seg["memory_efficient"],
                             display_root=base_output_dir,
+                            calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                            on_batch_size_resolved=lambda bs, _euri=euri, _ri=ri: _log(f"Euclideanizer run {_euri} (DistMap {_ri}): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                         )
                     else:
                         _log(f"Euclideanizer run {euri} (DistMap {ri}): resuming from {prev_eu_ev} epochs, training {eu_act['additional_epochs']} more → {eu_ev} total...", since_start=time.time() - pipeline_start, style="info")
@@ -2539,6 +2661,8 @@ def _run_one_distmap_group(
                             is_last_segment=eu_last_segment,
                             memory_efficient=eu_cfg_seg["memory_efficient"],
                             display_root=base_output_dir,
+                            calibration_memory_fraction=cfg.get("calibration_memory_fraction"),
+                            on_batch_size_resolved=lambda bs, _euri=euri, _ri=ri: _log(f"Euclideanizer run {_euri} (DistMap {_ri}): auto-calibrated batch_size={bs}", since_start=time.time() - pipeline_start, style="info"),
                         )
                     prev_eu_path = eu_path_seg
                     prev_eu_ev = eu_ev
@@ -2573,7 +2697,12 @@ def _run_one_distmap_group(
                         frozen_vae = load_frozen_vae(dm_path, num_atoms, dm_cfg["latent_dim"], device)
                         embed = Euclideanizer(num_atoms=num_atoms).to(device)
                         embed.load_state_dict(torch.load(eu_path, map_location=device))
-    
+                        eu_model_dir = os.path.join(run_dir_eu, "model")
+                        if gen_decode_batch_size is None or _any_inference_batch_null(cfg):
+                            _g, _q = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device)
+                            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, _q, plot_cfg, analysis_cfg)
+                            gen_decode_batch_size = _g
+
                         if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
                             plot_phase_start = time.time()
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting (diagnostics)...", since_start=time.time() - pipeline_start, style="info")
@@ -2850,7 +2979,7 @@ def _run_one_seed(
     resume: bool,
     sample_variances: list,
     gen_num_samples: int,
-    gen_decode_batch_size: int,
+    gen_decode_batch_size: int | None,
     need_plot_or_rmsd: bool,
     save_structures_gro_plot: bool,
     analysis_save_data: bool,
@@ -3134,7 +3263,7 @@ def _run_multi_gpu_tasks(
     resume: bool,
     sample_variances: list,
     gen_num_samples: int,
-    gen_decode_batch_size: int,
+    gen_decode_batch_size: int | None,
     need_plot_or_rmsd: bool,
     save_structures_gro_plot: bool,
     analysis_save_data: bool,
@@ -3382,6 +3511,7 @@ def main():
         sys.exit(1)
 
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
+    _warn_calibration_reserve_if_low(cfg, pipeline_start)
     _log(f"config: {config_path}  output: {base_output_dir}  seeds: {seeds}", since_start=time.time() - pipeline_start, style="info")
     _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
