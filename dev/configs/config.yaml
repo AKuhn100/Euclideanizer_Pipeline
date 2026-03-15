@@ -12,7 +12,7 @@ data:
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_new_diagonal_recon_test"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
@@ -68,7 +68,7 @@ plotting:
   avg_gen_vs_exp: true
   bond_length_by_genomic_distance: true
   num_samples: 1000              # samples per variance for gen plots
-  gen_decode_batch_size: null   # null = auto-calibrate (same value as query_batch_size for analysis)
+  gen_decode_batch_size: null   # null = auto-calibrate from VRAM (decode for plots/analysis)
   sample_variance: [1]         # list -> one plot set per value
   num_reconstruction_samples: 5
   plot_dpi: 150
@@ -97,7 +97,7 @@ analysis:
     overwrite_existing: false   # if true, prompt then remove existing rmsd gen outputs before re-running
     num_samples: [1000]
     sample_variance: [1]
-    query_batch_size: null   # null = auto-calibrate (same value as plotting.gen_decode_batch_size)
+    query_batch_size: 256   # batch size for RMSD query (CPU RAM; set based on system memory)
     gen_decode_batch_size: null
     save_data: false
     save_pdf_copy: false   # if true, save a PDF copy of RMSD (gen) figures in a pdf/ subdir
@@ -115,7 +115,7 @@ analysis:
     num_samples: [500]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
-    query_batch_size: null   # null = auto-calibrate (same value as plotting.gen_decode_batch_size)
+    query_batch_size: 256   # batch size for Q computation (CPU RAM; set based on system memory)
     gen_decode_batch_size: null
     save_data: false
     save_pdf_copy: false

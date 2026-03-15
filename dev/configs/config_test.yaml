@@ -97,7 +97,7 @@ analysis:
     overwrite_existing: true   # if true, prompt then remove existing rmsd gen outputs before re-running
     num_samples: [1000]
     sample_variance: [1]
-    query_batch_size: 128
+    query_batch_size: 256
     gen_decode_batch_size: 256
     save_data: false
     save_pdf_copy: false   # if true, save a PDF copy of RMSD (gen) figures in a pdf/ subdir
@@ -115,7 +115,7 @@ analysis:
     num_samples: [1000]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
-    query_batch_size: 64
+    query_batch_size: 256
     gen_decode_batch_size: 256
     save_data: false
     save_pdf_copy: false

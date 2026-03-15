@@ -95,7 +95,7 @@ analysis:
     overwrite_existing: false
     num_samples: [1]
     sample_variance: [1.0]
-    query_batch_size: 8
+    query_batch_size: 256
     gen_decode_batch_size: 8
     save_data: false
     save_pdf_copy: false
@@ -113,7 +113,7 @@ analysis:
     num_samples: [500]
     sample_variance: [1]
     delta: 0.7071
-    query_batch_size: 64
+    query_batch_size: 256
     gen_decode_batch_size: 8
     save_data: false
     save_pdf_copy: false

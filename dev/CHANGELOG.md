@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-03-15
+
+- **Pipeline:** Fixed `shutil.SameFileError` when resuming an interrupted DistMap run from its own best checkpoint. Skip copying `model.pt` when source and destination are the same (same-run resume). (`Pipeline/src/train_distmap.py`)
+
+## (Decouple gen_decode_batch_size from query_batch_size: VRAM vs CPU RAM)
+
+- **Behavior:** Only **gen_decode_batch_size** is auto-calibrated (decode path; VRAM). **query_batch_size** (analysis blocks) must be set in config and is **not** calibrated; it limits CPU RAM for analysis (e.g. RMSD nearest-neighbour, Q matrix batch). This avoids OOM when a VRAM-optimized decode batch size is reused for CPU-side analysis (e.g. Q with large structures).
+- **Config:** `analysis.*.query_batch_size` is now required to be a positive integer (no `null`). `gen_decode_batch_size` (plotting and analysis) remains nullable for in-run VRAM calibration. Validation: `src/config.py` (_validate_query_batch_size_key vs _validate_gen_decode_batch_key).
+- **run.py:** `_resolve_inference_batch_sizes` returns a single int (gen_decode); no longer reads or writes `query_batch_size` in run_config. `_apply_resolved_inference_batch_sizes(gen_decode, plot_cfg, analysis_cfg)` only fills null `gen_decode_batch_size`; query_batch_size always from config. DistMap-only calibration path saves only `gen_decode_batch_size` to run_config. `_any_inference_batch_null` checks only gen_decode_batch_size.
+- **calibrate.py:** Module and function docstrings updated: calibration is for gen_decode_batch_size (VRAM) only; query_batch_size is set in config (CPU RAM).
+- **Samples:** `samples/config_sample.yaml` comments updated. `samples/config_sample_hpo.yaml` and `dev/configs/config.yaml`: replaced null query_batch_size with explicit values (128 for rmsd_gen, 64 for q_gen).
+- **Docs:** README and STYLE_GUIDE §3.2: gen_decode_batch_size = VRAM (null = calibrate); query_batch_size = CPU RAM (must set; not calibrated).
+- **Test:** `test_pipeline_behavior.test_validate_config_rejects_null_query_batch_size` asserts that validate_config raises when analysis.rmsd_gen.query_batch_size is None.
+
 ## (README: Benchmark and calibration section; benchmark single-config + warning)
 
 - **README:** New section **Benchmark and calibration** covering: (1) Calibration—in-run, model-specific (DistMap vs Euclideanizer vs inference), training vs inference independent; (2) Batch-size benchmark—rough optimal for given config and dataset, somewhat crude (fixed epochs, no full pipeline); (3) Config for benchmark—single combination only (first value for any list), with firm warning when config has lists; user should use single-value config to optimize for a different combination. Replaced long batch-size benchmark paragraph with a pointer to this section.

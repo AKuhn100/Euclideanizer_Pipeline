@@ -6,7 +6,7 @@
 # plotting.sample_variance and each analysis.*.sample_variance (rmsd_gen, q_gen, coord_clustering_gen, distmap_clustering_gen) must include 1 (scoring uses gen variance 1 only). All four analysis gen blocks must be enabled.
 
 resume: True   # each trial is a fresh directory; HPO resume (--resume) is the Optuna study, not pipeline resume
-# Target GPU memory fraction for in-run auto-calibration (0–1). Used when any of distmap.batch_size, euclideanizer.batch_size, plotting.gen_decode_batch_size, or analysis *.*.query_batch_size/gen_decode_batch_size is null. Required when any of those are null; set null only when all are fixed integers.
+# Target GPU memory fraction for in-run auto-calibration (0–1). Used when any of distmap.batch_size, euclideanizer.batch_size, plotting.gen_decode_batch_size, or analysis *.*.gen_decode_batch_size is null. query_batch_size must be set in config (CPU RAM). Required when any decode/training batch is null; set null only when all are fixed integers.
 calibration_safety_margin_gb: 15.0
 calibration_binary_search_steps: 5
 calibration_training_batch_cap: 4096
@@ -96,8 +96,7 @@ analysis:
     overwrite_existing: false
     num_samples: [5000]
     sample_variance: [1]
-    query_batch_size: 
-    query_batch_size: null
+    query_batch_size: 256   # CPU RAM; set based on system memory (not calibrated)
     gen_decode_batch_size: null
     save_data: true
     save_pdf_copy: false
@@ -115,7 +114,7 @@ analysis:
     num_samples: [500]
     sample_variance: [1]
     delta: 0.7071
-    query_batch_size: null
+    query_batch_size: 256   # CPU RAM; set based on system memory (not calibrated)
     gen_decode_batch_size: null
     save_data: true
     save_pdf_copy: false

@@ -2,8 +2,9 @@
 Auto-calibration of batch sizes to stay under a GPU memory limit.
 
 - Training: distmap.batch_size, euclideanizer.batch_size (when null in config).
-- Inference: gen_decode_batch_size and query_batch_size (decode-only path; when null,
-  one value is used for both). Used for plotting and analysis.
+- Inference: gen_decode_batch_size only (decode path; when null, calibrated from VRAM).
+  Used for plotting and for decoding generated structures in analysis. query_batch_size
+  is set in config (CPU RAM limit for analysis steps like RMSD/Q) and is not calibrated.
 
 Uses fixed GB safety margin + min fraction reserved; true binary search refinement
 and final verification.
@@ -476,7 +477,8 @@ def calibrate_gen_decode_batch_size(
 ) -> int:
     """
     Find the largest decode batch size (inference: z -> VAE decode -> embed -> coords) under the
-    computed GPU memory limit. Used for gen_decode_batch_size and query_batch_size (same profile).
+    computed GPU memory limit. Used for gen_decode_batch_size only (VRAM). query_batch_size
+    is set in config (CPU RAM) and is not calibrated here.
     """
     if not torch.cuda.is_available() or device.type != "cuda":
         warnings.warn(
