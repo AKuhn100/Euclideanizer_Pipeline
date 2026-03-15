@@ -4,9 +4,10 @@
 # The project does not bundle large data; use tests/test_data/spheres.gro (generate with tests/test_data/generate_spheres.py) or your own .gro path.
 
 resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
-# Target GPU memory fraction for in-run auto-calibration (0–1). Used when any of distmap.batch_size, euclideanizer.batch_size, plotting.gen_decode_batch_size, or analysis *.*.query_batch_size/gen_decode_batch_size is null. Required when any of those are null; set null only when all are fixed integers.
-calibration_memory_fraction: 0.85
-# Upper bounds for calibration binary search (no code-side defaults). training = cap for distmap/euclideanizer batch_size; decode = cap for gen_decode_batch_size / query_batch_size.
+# Calibration: fixed GB reserved regardless of GPU size; max halving steps after OOM.
+calibration_safety_margin_gb: 2.0
+calibration_binary_search_steps: 5
+# Upper bounds for calibration. training = cap for distmap/euclideanizer batch_size; decode = cap for gen_decode_batch_size / query_batch_size.
 calibration_training_batch_cap: 512
 calibration_decode_batch_cap: 4096
 

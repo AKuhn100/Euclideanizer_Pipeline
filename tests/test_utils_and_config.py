@@ -94,12 +94,12 @@ def test_batch_size_list_raises():
 
 
 def test_batch_size_null_passes():
-    """batch_size: null passes validation when calibration_memory_fraction is set."""
+    """batch_size: null passes validation when calibration keys (safety_margin_gb, min_fraction_reserved, etc.) are set."""
     cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
-    cfg = load_config(cfg_path, {"distmap": {"batch_size": None}, "euclideanizer": {"batch_size": None}, "calibration_memory_fraction": 0.85})
+    cfg = load_config(cfg_path, {"distmap": {"batch_size": None}, "euclideanizer": {"batch_size": None}})
     assert cfg["distmap"]["batch_size"] is None
     assert cfg["euclideanizer"]["batch_size"] is None
-    assert cfg["calibration_memory_fraction"] == 0.85
+    assert cfg["calibration_safety_margin_gb"] == 2.0
 
 
 def test_batch_size_zero_raises():

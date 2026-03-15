@@ -61,7 +61,7 @@ python run.py --config samples/config_sample.yaml --data /path/to/coordinates.gr
 
 Training requires a dataset path: set it with `--data` or in the config under `data.path`. All other options (output dir, hyperparameters, plotting, etc.) come from the config and can be overridden with CLI flags.
 
-**Batch-size calibration:** Set `distmap.batch_size` and/or `euclideanizer.batch_size` to `null` in the config to auto-calibrate at run time (binary search under `calibration_memory_fraction` of GPU memory). Set `plotting.gen_decode_batch_size` and analysis blocks' `query_batch_size` / `gen_decode_batch_size` to `null` to calibrate inference batch sizes after training (one value is used for both). Resolved values are written to `run_config.yaml` and reused on resume. Set top-level `calibration_memory_fraction` (e.g. `0.85`) when any of these are null.
+**Batch-size calibration:** Set `distmap.batch_size` and/or `euclideanizer.batch_size` to `null` to auto-calibrate at run time. Set `plotting.gen_decode_batch_size` and analysis blocks' `query_batch_size` / `gen_decode_batch_size` to `null` to calibrate inference batch sizes after training (one value for both). Calibration uses a fixed GB safety margin (`calibration_safety_margin_gb`) and a configurable number of binary-search refinement steps (`calibration_binary_search_steps`). Resolved values are written to `run_config.yaml` and reused on resume.
 
 **Common options:**
 
@@ -137,6 +137,20 @@ A single end-to-end smoke test runs the pipeline with a minimal config using `te
 
 The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/test_data/generate_spheres.py`).
 
+**Batch-size benchmark (efficiency vs efficacy)**
+
+A standalone script `tests/benchmark_batch_size.py` sweeps over batch sizes and reports wall-clock time per epoch, samples per second, final validation loss, and peak reserved VRAM for DistMap and/or Euclideanizer. Use it to choose a batch size that balances throughput and memory.
+
+- **Requires:** A pipeline YAML config (all required keys, including calibration), a GRO dataset, and a GPU (recommended).
+- **Run from the pipeline directory:**
+
+```bash
+python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro
+```
+
+- **Options:** `--batch-sizes 32 64 128 256 512` (default: 8 16 32 64 128 256 512), `--epochs 20`, `--model distmap|euclideanizer|both` (default: both), `--dm-checkpoint /path/to/ckpt.pt` (for Euclideanizer; if omitted and model is euclideanizer or both, a DistMap is trained for 5 epochs first), `--split-seed 0`, `--output benchmark_results.json`, `--device cuda:0`.
+- **Output:** Printed tables per model and a JSON file (default `benchmark_results.json`) with one record per (model, batch_size) run.
+
 ---
 
 ## Configuration
@@ -165,7 +179,7 @@ The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/t
 
 ### Scoring
 
-When `**scoring.enabled`** is true, the pipeline runs **scoring after each block** (after plotting, after latent, and after each analysis metric—RMSD, Q, coord clustering, distmap clustering). Each run’s `**scoring/`** directory is updated with `**scores.json**` and a **spider/radar plot** (`scores_spider.png`; optional PDF when `**scoring.save_pdf_copy`** is true). Scores are computed from NPZ produced by plotting and analysis; the scheme is in `Pipeline/SCORING_SPEC.md` (z-score normalization, MAE/Wasserstein, geometric mean). The dashboard copies the spider image from `scoring/` into `dashboard/assets/` and shows it (and overall score) in the Detail view.
+When `**scoring.enabled`** is true, the pipeline runs **scoring after each block** (after plotting, after latent, and after each analysis metric—RMSD, Q, coord clustering, distmap clustering). Each run’s `**scoring/`** directory is updated with `**scores.json**` and a **spider/radar plot** (`scores_spider.png`; optional PDF when `**scoring.save_pdf_copy`** is true). Scores are computed from NPZ produced by plotting and analysis; the scheme is in `specs/SCORING_SPEC.md` (z-score normalization, MAE/Wasserstein, geometric mean). The dashboard copies the spider image from `scoring/` into `dashboard/assets/` and shows it (and overall score) in the Detail view.
 
 **Save-then-delete when scoring is on:** For scoring to run, the pipeline needs the NPZ that plotting/analysis write. If a block (e.g. plotting, or an analysis metric) has `**save_data: false`**, the pipeline still writes that block’s NPZ when scoring is enabled, so that scoring can read them. **After** scoring has run, the pipeline deletes each block’s NPZ according to that block’s own `save_data`: if `save_data` is false, that block’s data directory is removed. So you get one-time NPZ for scoring without keeping them when you don’t want saved data.
 
@@ -495,6 +509,7 @@ Euclideanizer_Pipeline/
     test_pipeline_behavior.py  # Behavior tests (run completion, need_data, resume, config)
     test_utils_and_config.py  # Config, utils, metrics, rmsd, plot paths
     test_smoke.py             # Full pipeline smoke run (slow; requires tests/test_data/spheres.gro)
+    benchmark_batch_size.py   # Batch-size sweep: efficiency and efficacy vs batch size (standalone script)
     conftest.py               # Pytest markers (e.g. slow)
     config_test.yaml          # Minimal config for behavior tests (no dataset required)
     config_smoke.yaml         # Minimal config for smoke test (2 seeds in config; test uses 1 seed on 1 GPU, 2 on 2+ GPUs)
@@ -598,6 +613,7 @@ All keys below are **required** (no defaults in code). Omit any and the pipeline
 
 - **resume**: `true` (skip complete runs) or `false` (overwrite after confirmation).
 - **data**: `path` (dataset file), `split_seed` (int or list of ints), `training_split` (e.g. 0.8).
+- **calibration**: `calibration_safety_margin_gb` (fixed GB reserved for calibration), `calibration_binary_search_steps` (max halving steps after OOM), `calibration_training_batch_cap`, `calibration_decode_batch_cap` (upper bounds for training and decode batch-size search).
 - **distmap**: `latent_dim`, `beta_kl`, `epochs`, `batch_size`, `learning_rate`, `lambda_mse`, `lambda_w_recon`, `lambda_w_gen`, `memory_efficient`, `save_final_models_per_stretch`.
 - **euclideanizer**: `epochs`, `batch_size`, `learning_rate`, same lambdas plus `lambda_w_diag_recon`, `lambda_w_diag_gen`, `num_diags` (diagonals for diagonal Wasserstein), `memory_efficient`, `save_final_models_per_stretch`.
 - **plotting**: `enabled`, `overwrite_existing`, `reconstruction`, `bond_rg_scaling`, `avg_gen_vs_exp`, `bond_length_by_genomic_distance`, `num_samples`, `gen_decode_batch_size`, `sample_variance`, `num_reconstruction_samples`, `max_train`, `max_test`, `save_data`, `save_pdf_copy`, `save_structures_gro`. (Key order standardized: behavior then save options.) Figure DPI is defined in `src/plot_config.py` (PLOT_DPI), not in config.

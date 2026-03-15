@@ -131,12 +131,12 @@ REQUIRED_ANALYSIS_SUBKEYS["latent"] = [
     "save_data", "save_pdf_copy",
 ]
 # Order: training_visualization before plotting so training-related config is grouped.
-# calibration_memory_fraction: required; null only when both distmap and euclideanizer batch_size are positive integers; else float in (0, 1] for auto-calibration.
-# calibration_training_batch_cap / calibration_decode_batch_cap: required; positive int; upper bound for binary search when calibrating training vs inference batch sizes.
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_memory_fraction", "calibration_training_batch_cap", "calibration_decode_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
+# calibration_safety_margin_gb: fixed GB reserved regardless of GPU size. calibration_binary_search_steps: max halving iterations.
+# calibration_training_batch_cap / calibration_decode_batch_cap: required; positive int; upper bound for calibration.
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "calibration_decode_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
 
 # Sections that must match exactly when resuming (training and training visualization).
-TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_memory_fraction", "calibration_training_batch_cap", "calibration_decode_batch_cap"]
+TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "calibration_decode_batch_cap"]
 # Sections that may differ on resume; if they do, user is prompted and plotting/analysis outputs are removed and re-run.
 PLOTTING_ANALYSIS_KEYS = ["plotting", "analysis", "scoring"]
 
@@ -207,40 +207,18 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
             if key in block:
                 _validate_batch_key(block[key], f"analysis.{block_name}.{key}")
 
-    # calibration_memory_fraction: required when any calibratable batch size is null or 0.
-    frac = cfg.get("calibration_memory_fraction")
-    dm_bs = (cfg.get("distmap") or {}).get("batch_size")
-    eu_bs = (cfg.get("euclideanizer") or {}).get("batch_size")
-    needs_calibration = (dm_bs is None or dm_bs == 0 or eu_bs is None or eu_bs == 0)
-    if not needs_calibration and isinstance(plot_cfg, dict) and plot_cfg.get("gen_decode_batch_size") is None:
-        needs_calibration = True
-    if not needs_calibration:
-        for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
-            block = (cfg.get("analysis") or {}).get(block_name)
-            if not isinstance(block, dict):
-                continue
-            if "query_batch_size" in sub_keys and block.get("query_batch_size") is None:
-                needs_calibration = True
-                break
-            if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
-                needs_calibration = True
-                break
-    if needs_calibration:
-        if frac is None:
-            raise KeyError(
-                "calibration_memory_fraction is required when any of distmap.batch_size, euclideanizer.batch_size, "
-                "plotting.gen_decode_batch_size, or analysis *.*.query_batch_size/gen_decode_batch_size is null or 0. "
-                "Set a float in (0, 1], e.g. 0.85 for 85%% GPU memory target."
-            )
-        if not isinstance(frac, (int, float)) or frac <= 0 or frac > 1:
-            raise ValueError(
-                f"calibration_memory_fraction must be a float in (0, 1] when using auto-calibration, got {frac!r}."
-            )
-    else:
-        if frac is not None and not isinstance(frac, (int, float)):
-            raise ValueError(
-                f"calibration_memory_fraction must be null or a float in (0, 1], got {type(frac).__name__}."
-            )
+    # calibration_safety_margin_gb: positive float (fixed GB reserved).
+    val = cfg.get("calibration_safety_margin_gb")
+    if val is None or not isinstance(val, (int, float)) or val <= 0:
+        raise ValueError(
+            f"calibration_safety_margin_gb must be a positive float (fixed GB reserved), got {val!r}."
+        )
+    # calibration_binary_search_steps: non-negative int (max halving iterations after OOM).
+    val = cfg.get("calibration_binary_search_steps")
+    if val is None or not isinstance(val, int) or val < 0:
+        raise ValueError(
+            f"calibration_binary_search_steps must be a non-negative integer, got {val!r}."
+        )
     for key in ("calibration_training_batch_cap", "calibration_decode_batch_cap"):
         val = cfg.get(key)
         if val is None or not isinstance(val, int) or val < 1:

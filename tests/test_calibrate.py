@@ -45,7 +45,7 @@ def test_cpu_fallback_returns_positive_int():
     }
     model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=latent_dim).to(device)
     with pytest.warns(UserWarning, match="CUDA not available"):
-        out = calibrate_distmap_batch_size(model, dm_cfg, coords, device, threshold=0.85)
+        out = calibrate_distmap_batch_size(model, dm_cfg, coords, device, safety_margin_gb=2.0)
     assert isinstance(out, int) and out > 0
     assert out == FALLBACK_BATCH_SIZE_NO_CUDA
 
@@ -63,12 +63,12 @@ def test_cpu_fallback_returns_positive_int():
         "lambda_kabsch_mse": 0.0,
     }
     with pytest.warns(UserWarning, match="CUDA not available"):
-        out_eu = calibrate_euclideanizer_batch_size(embed, frozen_vae, eu_cfg, coords, device, threshold=0.85)
+        out_eu = calibrate_euclideanizer_batch_size(embed, frozen_vae, eu_cfg, coords, device, safety_margin_gb=2.0)
     assert isinstance(out_eu, int) and out_eu > 0
     assert out_eu == FALLBACK_BATCH_SIZE_NO_CUDA
 
     with pytest.warns(UserWarning, match="CUDA not available for decode"):
-        out_decode = calibrate_gen_decode_batch_size(embed, frozen_vae, device, threshold=0.85)
+        out_decode = calibrate_gen_decode_batch_size(frozen_vae, embed, device, safety_margin_gb=2.0)
     assert isinstance(out_decode, int) and out_decode > 0
     assert out_decode == FALLBACK_BATCH_SIZE_NO_CUDA
 
@@ -113,7 +113,7 @@ def test_binary_search_converges_with_cuda():
         "lambda_w_recon": 1.0,
     }
     model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=latent_dim).to(device)
-    out = calibrate_distmap_batch_size(model, dm_cfg, coords, device, threshold=0.85, training_split=0.8, split_seed=0)
+    out = calibrate_distmap_batch_size(model, dm_cfg, coords, device, safety_margin_gb=2.0, training_split=0.8, split_seed=0)
     assert isinstance(out, int) and out >= 1
     # Train size with 0.8 split of 20 is 16; result should be at most 16
     assert out <= 20
@@ -133,8 +133,6 @@ def test_oom_handled_returns_last_viable():
         "lambda_w_recon": 1.0,
     }
     model = ChromVAE_Conv(num_atoms=4, latent_space_dim=2).to(device)
-    total_mem = torch.cuda.get_device_properties(device).total_memory
-    limit = int(total_mem * 0.85)
     # Record batch sizes seen in _run_distmap_step (batch_dm.shape[0])
     batch_sizes_seen = []
 
@@ -147,13 +145,13 @@ def test_oom_handled_returns_last_viable():
         return real_run(model, batch_dm, opt, device, num_atoms, dm_cfg)
 
     with patch.object(calibrate, "_run_distmap_step", side_effect=mock_run):
-        with patch("torch.cuda.max_memory_allocated") as mock_peak:
-            # bs=1 under limit; bs>=2 over limit -> calibration should return 1
+        with patch("torch.cuda.max_memory_reserved") as mock_peak:
+            # bs=1 under limit (return 0); bs>=2 over limit (return huge) -> calibration should return 1
             def peak_fn():
                 if batch_sizes_seen and batch_sizes_seen[-1] >= 2:
-                    return limit + 1
-                return limit - 1
+                    return 10**18
+                return 0
 
             mock_peak.side_effect = peak_fn
-            out = calibrate_distmap_batch_size(model, dm_cfg, coords, device, threshold=0.85)
+            out = calibrate_distmap_batch_size(model, dm_cfg, coords, device, safety_margin_gb=2.0)
     assert out == 1
