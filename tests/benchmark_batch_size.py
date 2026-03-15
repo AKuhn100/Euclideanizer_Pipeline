@@ -17,6 +17,11 @@ Modes (--mode):
   - both: DistMap grid, then Euclideanizer grid (if no --dm-checkpoint, a
           quick 5-epoch DistMap is trained in a temp dir and purged).
 
+Config: The benchmark does NOT run the full combinatorial grid of distmap/euclideanizer
+options. For any key that is a list in the config, the first value is used. A warning
+is printed when lists are present. To optimize for a different combination, use a
+config with single values for the options you care about.
+
 Usage:
     python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro --mode dm
     python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro --mode eu
@@ -560,23 +565,46 @@ def main():
     num_structures = len(coords_np)
     print(f"Loaded: {num_structures} structures, {num_atoms} atoms")
 
-    dm_cfg = cfg["distmap"]
-    eu_cfg = cfg["euclideanizer"]
+    dm_cfg_raw = cfg["distmap"]
+    eu_cfg_raw = cfg["euclideanizer"]
     training_split = cfg["data"]["training_split"]
     split_seed = args.split_seed
 
-    # Resolve latent_dim: if it's a list, take first value
-    dm_cfg = dict(dm_cfg)
-    for key in ("latent_dim", "beta_kl", "epochs", "learning_rate",
-                "lambda_mse", "lambda_w_recon", "lambda_w_gen"):
-        if isinstance(dm_cfg.get(key), list):
-            dm_cfg[key] = dm_cfg[key][0]
+    # Single combination only: take first value for every key that is a list (benchmark does not run combinatorial grid)
+    dm_cfg = {}
+    dm_list_keys = []
+    for k, v in dm_cfg_raw.items():
+        if isinstance(v, list):
+            dm_cfg[k] = v[0]
+            dm_list_keys.append(k)
+        else:
+            dm_cfg[k] = v
+    eu_cfg = {}
+    eu_list_keys = []
+    for k, v in eu_cfg_raw.items():
+        if isinstance(v, list):
+            eu_cfg[k] = v[0]
+            eu_list_keys.append(k)
+        else:
+            eu_cfg[k] = v
 
-    eu_cfg = dict(eu_cfg)
-    for key in ("epochs", "learning_rate", "lambda_mse", "lambda_w_recon", "lambda_w_gen",
-                "lambda_w_diag_recon", "lambda_w_diag_gen", "num_diags", "lambda_kabsch_mse"):
-        if isinstance(eu_cfg.get(key), list):
-            eu_cfg[key] = eu_cfg[key][0]
+    if dm_list_keys or eu_list_keys:
+        print("\n" + "!" * 72, file=sys.stderr)
+        print("  WARNING: Config has multiple options (lists) for some keys.", file=sys.stderr)
+        print("  The benchmark uses the FIRST value only; it does not run a combinatorial grid.", file=sys.stderr)
+        if dm_list_keys:
+            print(f"  DistMap keys reduced to first: {', '.join(dm_list_keys)}", file=sys.stderr)
+        if eu_list_keys:
+            print(f"  Euclideanizer keys reduced to first: {', '.join(eu_list_keys)}", file=sys.stderr)
+        print("  Results apply only to this single training configuration.", file=sys.stderr)
+        print("  To optimize for a different combination, use a config with single values for those keys.", file=sys.stderr)
+        print("!" * 72 + "\n", file=sys.stderr)
+
+    # Echo training parameters used (fixed; batch_size and learning_rate are swept by the benchmark)
+    print("Training parameters used (fixed; batch_size and learning_rate are swept):")
+    print(f"  DistMap:      latent_dim={dm_cfg.get('latent_dim')}, beta_kl={dm_cfg.get('beta_kl')}, epochs={dm_cfg.get('epochs')}, learning_rate={dm_cfg.get('learning_rate')}, lambda_mse={dm_cfg.get('lambda_mse')}, ...")
+    print(f"  Euclideanizer: epochs={eu_cfg.get('epochs')}, learning_rate={eu_cfg.get('learning_rate')}, lambda_mse={eu_cfg.get('lambda_mse')}, ...")
+    print()
 
     batch_sizes = sorted(set(args.batch_sizes))
     n_epochs = args.epochs

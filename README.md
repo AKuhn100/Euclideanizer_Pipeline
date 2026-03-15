@@ -139,19 +139,35 @@ A single end-to-end smoke test runs the pipeline with a minimal config using `te
 
 The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/test_data/generate_spheres.py`).
 
-**Batch-size benchmark (efficiency vs efficacy)**
+**Batch-size benchmark:** See **Benchmark and calibration** below for the full picture. Quick run: `python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro`
 
-A standalone script `tests/benchmark_batch_size.py` sweeps over batch sizes and reports wall-clock time per epoch, samples per second, final validation loss, and peak reserved VRAM for DistMap and/or Euclideanizer. Use it to find the optimal *training* batch size for your hardware and data (throughput vs. validation performance); see also the batch-size calibration note above for inference vs. training.
+---
+
+## Benchmark and calibration
+
+This section describes how **in-run calibration** and the **batch-size benchmark script** work together, and how to interpret and configure them.
+
+### Calibration (in-run, model-specific)
+
+When `distmap.batch_size`, `euclideanizer.batch_size`, `plotting.gen_decode_batch_size`, or analysis blocks' `query_batch_size` / `gen_decode_batch_size` are set to `null`, the pipeline **auto-calibrates** at run time so that training or inference stays within GPU memory. Calibration is **model-specific**: DistMap training, Euclideanizer training, and decode-only (inference) are calibrated separately; each uses a short probe (training step or forward pass) and a binary search over batch size. Resolved values are written to `run_config.yaml` and reused on resume.
+
+- **Training vs inference are independent:** You can set fixed training batch sizes and still use `null` for gen_decode/query to calibrate inference only. Calibration uses `calibration_safety_margin_gb` (fixed GB reserved) and `calibration_binary_search_steps`; upper bounds are `calibration_training_batch_cap` and `calibration_decode_batch_cap`.
+- **Rough goal:** Maximize throughput and avoid OOM. It does *not* optimize for validation loss or score; ideal training performance can depend on batch size and learning rate, which is where the benchmark helps.
+
+### Batch-size benchmark (rough optimal for this config and dataset)
+
+The script `tests/benchmark_batch_size.py` sweeps over **batch sizes** and **learning rates** (grid: batch_size × learning_rate) and reports wall-clock time per epoch, samples per second, final validation loss, and peak reserved VRAM for DistMap and/or Euclideanizer. It gives a **rough idea** of optimal training batch size and learning rate for a **given config and dataset**—useful when you want to tune beyond “whatever fits in memory.” The benchmark is **somewhat crude**: it runs a fixed number of epochs per (batch_size, learning_rate) and does not run the full pipeline (no plotting/analysis/scoring); it is intended for quick comparison, not as a substitute for full training.
 
 - **Requires:** A pipeline YAML config (all required keys, including calibration), a GRO dataset, and a GPU (recommended).
-- **Run from the pipeline directory:**
+- **Modes:** `--mode dm|eu|both`. **dm** = DistMap only. **eu** = train a DistMap 50 epochs in a temp dir, run the Euclideanizer benchmark, then purge the temp dir. **both** = DistMap sweep then Euclideanizer sweep (if no `--dm-checkpoint`, a 5-epoch feeder DistMap is trained in a temp dir and purged).
+- **Sweep:** `--batch-sizes 32 64 128 256`, `--learning-rates 1e-4 5e-4 1e-3` (default: one value from config per model), `--epochs 20`, `--dm-checkpoint /path/to/model.pt`, `--output benchmark_results.json`, `--device cuda:0`.
+- **Output:** Printed tables per model and a JSON file with one record per (model, batch_size, learning_rate).
 
-```bash
-python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro
-```
+### Config used by the benchmark: single combination only
 
-- **Options:** `--mode dm|eu|both` (default: both). **dm** = DistMap benchmark only. **eu** = train a DistMap for 50 epochs in a temporary directory, run the Euclideanizer benchmark using that checkpoint, then purge the temp dir. **both** = DistMap sweep then Euclideanizer sweep (if no `--dm-checkpoint`, a 5-epoch DistMap is trained in a temp dir and purged). For each specified batch size the script sweeps the specified learning rates (grid: batch_size × learning_rate). Also: `--batch-sizes 32 64 128 256 512`, `--learning-rates 1e-4 5e-4 1e-3` (default: from config, one value per model), `--epochs 20`, `--dm-checkpoint /path/to/ckpt.pt` (for Euclideanizer; if omitted in eu/both, a feeder DistMap is trained as above), `--split-seed 0`, `--output benchmark_results.json`, `--device cuda:0`.
-- **Output:** Printed tables per model and a JSON file (default `benchmark_results.json`) with one record per (model, batch_size, learning_rate) run.
+The benchmark **does not** run on the full combinatorial grid of distmap/euclideanizer options (e.g. multiple `latent_dim` or `epochs`). It uses **one** training configuration: for every key in `distmap` and `euclideanizer` that is a **list** in the config, the script takes the **first** value only. So you get one DistMap config and one Euclideanizer config; the only grid the script sweeps is batch_size × learning_rate (and only for the values you pass via `--batch-sizes` and `--learning-rates`).
+
+If your config has lists (e.g. `latent_dim: [256, 512]` or `epochs: [100, 300]`), the script will **print a clear warning** that it is using the first combination and that results apply only to that combination. To optimize batch size or learning rate for a *different* set of hyperparameters, use a config where those options are **single values** (e.g. the one combination you care about). That keeps the benchmark simple and unambiguous.
 
 ---
 
