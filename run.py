@@ -2,7 +2,7 @@
 """
 Global orchestration for DistMap + Euclideanizer pipeline.
 
-  python run.py --config path/to/config.yaml [--data /path/to/data.gro] [--no-plots]
+  python run.py --config path/to/config.yaml [--data /path/to/data.npz] [--no-plots]
   python run.py --config path/to/config.yaml --distmap.beta_kl 0.01 0.05 --no-plots
 
 Config file is required (--config). Training requires a dataset path: set --data or data.path in config.
@@ -55,6 +55,7 @@ from src.config import (
     configs_match_sections,
     config_diff,
     run_config_section_matches,
+    run_config_section_matches_allow_calibrated,
     pipeline_config_path,
     TRAINING_CRITICAL_KEYS,
 )
@@ -969,7 +970,7 @@ def _run_completed(
             _log(f"{_log_fail_reason}: last_epoch_trained={last_trained!r} (type {type(last_trained).__name__}) != expected_epochs={expected_epochs!r} (type {type(expected_epochs).__name__})", since_start=None, style="skip")
         return False
     if section_key is not None and expected_section is not None:
-        if not run_config_section_matches(run_cfg, section_key, expected_section):
+        if not run_config_section_matches_allow_calibrated(run_cfg, section_key, expected_section):
             if _log_fail_reason:
                 diffs = config_diff(run_cfg.get(section_key) or {}, expected_section, section_key)
                 _log(f"{_log_fail_reason}: section match failed: {diffs}", since_start=None, style="skip")
@@ -1950,7 +1951,7 @@ def run_one_hpo_trial(
                     binary_search_steps=cfg["calibration_binary_search_steps"],
                 )
                 _run_cfg = load_run_config(dm_model_dir) or {}
-                _run_cfg = {**_run_cfg, "gen_decode_batch_size": gen_decode_batch_size, "query_batch_size": gen_decode_batch_size}
+                _run_cfg = {**_run_cfg, "gen_decode_batch_size": gen_decode_batch_size}
                 save_run_config(
                     _run_cfg, dm_model_dir,
                     last_epoch_trained=_run_cfg.get("last_epoch_trained"),
@@ -1958,7 +1959,7 @@ def run_one_hpo_trial(
                     best_val=_run_cfg.get("best_val"),
                     early_stopped=_run_cfg.get("early_stopped", False),
                 )
-                print(f"  Auto-calibrated gen_decode_batch_size / query_batch_size: {gen_decode_batch_size}")
+                print(f"  Auto-calibrated gen_decode_batch_size: {gen_decode_batch_size}")
         if do_recon_plot and coords is not None:
             p = _plot_path(run_dir_dm, "reconstruction")
             plot_distmap_reconstruction(
@@ -2058,8 +2059,8 @@ def run_one_hpo_trial(
         embed = Euclideanizer(num_atoms=num_atoms).to(device)
         embed.load_state_dict(torch.load(eu_path, map_location=device))
         if gen_decode_batch_size is None or _any_inference_batch_null(cfg):
-            _g, _q = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device, fallback_run_config_dir=dm_model_dir)
-            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, _q, plot_cfg, analysis_cfg)
+            _g = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device, fallback_run_config_dir=dm_model_dir)
+            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, plot_cfg, analysis_cfg)
             gen_decode_batch_size = _g
         if do_recon_plot and coords is not None:
             p = _plot_path(run_dir_eu, "reconstruction")
@@ -2291,7 +2292,7 @@ def _force_gpu_cleanup(device: torch.device) -> None:
 
 
 def _any_inference_batch_null(cfg: dict) -> bool:
-    """True if plotting.gen_decode_batch_size or any analysis block query_batch_size/gen_decode_batch_size is null."""
+    """True if plotting.gen_decode_batch_size or any analysis block gen_decode_batch_size is null (VRAM calibration needed)."""
     plot_cfg = cfg.get("plotting") or {}
     if isinstance(plot_cfg, dict) and plot_cfg.get("gen_decode_batch_size") is None:
         return True
@@ -2300,8 +2301,6 @@ def _any_inference_batch_null(cfg: dict) -> bool:
         block = (cfg.get("analysis") or {}).get(block_name)
         if not isinstance(block, dict):
             continue
-        if "query_batch_size" in sub_keys and block.get("query_batch_size") is None:
-            return True
         if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
             return True
     return False
@@ -2314,17 +2313,17 @@ def _resolve_inference_batch_sizes(
     embed,
     device,
     fallback_run_config_dir: str | None = None,
-) -> tuple[int, int]:
-    """Resolve gen_decode_batch_size and query_batch_size (same value). Load from run_config or calibrate and save. Returns (gen_decode_batch_size, query_batch_size)."""
+) -> int:
+    """Resolve gen_decode_batch_size (VRAM). Load from run_config or calibrate and save. Returns gen_decode_batch_size. query_batch_size is set in config (CPU RAM)."""
     run_cfg = load_run_config(eu_model_dir)
-    if run_cfg is not None and run_cfg.get("gen_decode_batch_size") is not None and run_cfg.get("query_batch_size") is not None:
-        return (int(run_cfg["gen_decode_batch_size"]), int(run_cfg["query_batch_size"]))
+    if run_cfg is not None and run_cfg.get("gen_decode_batch_size") is not None:
+        return int(run_cfg["gen_decode_batch_size"])
     if fallback_run_config_dir is not None:
         fallback_cfg = load_run_config(fallback_run_config_dir)
         if fallback_cfg is not None and fallback_cfg.get("gen_decode_batch_size") is not None:
             resolved = int(fallback_cfg["gen_decode_batch_size"])
             run_cfg = load_run_config(eu_model_dir) or {}
-            run_cfg = {**run_cfg, "gen_decode_batch_size": resolved, "query_batch_size": resolved}
+            run_cfg = {**run_cfg, "gen_decode_batch_size": resolved}
             save_run_config(
                 run_cfg, eu_model_dir,
                 last_epoch_trained=run_cfg.get("last_epoch_trained"),
@@ -2332,7 +2331,7 @@ def _resolve_inference_batch_sizes(
                 best_val=run_cfg.get("best_val"),
                 early_stopped=run_cfg.get("early_stopped", False),
             )
-            return (resolved, resolved)
+            return resolved
     from src.calibrate import calibrate_gen_decode_batch_size
     resolved = calibrate_gen_decode_batch_size(
         frozen_vae, embed, device,
@@ -2342,7 +2341,7 @@ def _resolve_inference_batch_sizes(
         binary_search_steps=cfg["calibration_binary_search_steps"],
     )
     run_cfg = load_run_config(eu_model_dir) or {}
-    run_cfg = {**run_cfg, "gen_decode_batch_size": resolved, "query_batch_size": resolved}
+    run_cfg = {**run_cfg, "gen_decode_batch_size": resolved}
     save_run_config(
         run_cfg, eu_model_dir,
         last_epoch_trained=run_cfg.get("last_epoch_trained"),
@@ -2350,17 +2349,16 @@ def _resolve_inference_batch_sizes(
         best_val=run_cfg.get("best_val"),
         early_stopped=run_cfg.get("early_stopped", False),
     )
-    print(f"  Auto-calibrated gen_decode_batch_size / query_batch_size: {resolved}")
-    return (resolved, resolved)
+    print(f"  Auto-calibrated gen_decode_batch_size: {resolved}")
+    return resolved
 
 
 def _apply_resolved_inference_batch_sizes(
     gen_decode: int,
-    query_batch: int,
     plot_cfg: dict,
     analysis_cfg: dict,
 ) -> tuple[dict, dict]:
-    """Return (effective_plot_cfg, effective_analysis_cfg) with null gen_decode_batch_size and query_batch_size filled."""
+    """Return (effective_plot_cfg, effective_analysis_cfg) with null gen_decode_batch_size filled from calibration. query_batch_size comes from config (CPU RAM)."""
     import copy
     from src.config import REQUIRED_ANALYSIS_SUBKEYS
     effective_plot = {**plot_cfg, "gen_decode_batch_size": gen_decode}
@@ -2369,13 +2367,8 @@ def _apply_resolved_inference_batch_sizes(
         block = effective_analysis.get(block_name)
         if not isinstance(block, dict):
             continue
-        updates = {}
-        if "query_batch_size" in sub_keys and block.get("query_batch_size") is None:
-            updates["query_batch_size"] = query_batch
         if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
-            updates["gen_decode_batch_size"] = gen_decode
-        if updates:
-            effective_analysis[block_name] = {**block, **updates}
+            effective_analysis[block_name] = {**block, "gen_decode_batch_size": gen_decode}
     return (effective_plot, effective_analysis)
 
 
@@ -2601,7 +2594,7 @@ def _run_one_distmap_group(
                         gen_decode_batch_size_holder[0] = resolved
                         gen_decode_batch_size = resolved
                         _run_cfg = load_run_config(dm_model_dir) or {}
-                        _run_cfg = {**_run_cfg, "gen_decode_batch_size": resolved, "query_batch_size": resolved}
+                        _run_cfg = {**_run_cfg, "gen_decode_batch_size": resolved}
                         save_run_config(
                             _run_cfg, dm_model_dir,
                             last_epoch_trained=_run_cfg.get("last_epoch_trained"),
@@ -2609,7 +2602,7 @@ def _run_one_distmap_group(
                             best_val=_run_cfg.get("best_val"),
                             early_stopped=_run_cfg.get("early_stopped", False),
                         )
-                        print(f"  Auto-calibrated gen_decode_batch_size / query_batch_size: {resolved}")
+                        print(f"  Auto-calibrated gen_decode_batch_size: {resolved}")
                 if do_recon_plot and coords is not None:
                     p = _plot_path(run_dir_dm, "reconstruction")
                     if not (resume and os.path.isfile(p)):
@@ -2809,8 +2802,8 @@ def _run_one_distmap_group(
                             eu_cfg = {**eu_cfg, "batch_size": 256}
                         if gen_decode_batch_size is None or _any_inference_batch_null(cfg):
                             dm_model_dir_fallback = os.path.join(run_dir_dm, "model")
-                            _g, _q = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device, fallback_run_config_dir=dm_model_dir_fallback)
-                            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, _q, plot_cfg, analysis_cfg)
+                            _g = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device, fallback_run_config_dir=dm_model_dir_fallback)
+                            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, plot_cfg, analysis_cfg)
                             gen_decode_batch_size = _g
                             gen_decode_batch_size_holder[0] = _g
 

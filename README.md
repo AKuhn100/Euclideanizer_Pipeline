@@ -37,13 +37,29 @@ No package install step for the pipeline itself; run the script from a working d
 
 ## Data format
 
-The pipeline expects coordinate data as a **GRO-style text file**: one or more frames, each frame with a title line, an atom count, and then one line per atom (columns must include x, y, z coordinates). The default loader in `src/utils.py` looks for frame title lines starting with `"Chromosome"`; if your data uses a different convention, you will need to point to a compatible file or adapt the loader.
+The pipeline expects coordinate data as a single **NPZ file** with one required key:
 
-- Input: path to a single file (e.g. `data.gro`).
-- Interpreted as: `(n_structures, n_atoms, 3)` array of coordinates.
+- **`coords`** — array of shape `(n_structures, n_atoms, 3)` (float32 or float64; cast to float32 on load). The pipeline does not assume units; keep them consistent in your dataset.
+
+To create a conforming file:
+
+```python
+import numpy as np
+np.savez_compressed("my_data.npz", coords=coords)  # coords: (n_structures, n_atoms, 3)
+```
+
+- Input: path to a single `.npz` file (e.g. `data.npz`).
 - The same train/test split (by `data.split_seed` and `data.training_split`) is used for training, validation, plotting, and analysis.
 
-**Bundled dataset:** The project does not include large chromosome GRO files. All data-dependent use (smoke test, sample config, demos) relies on the **sphere dataset**: run `python tests/test_data/generate_spheres.py` to create `tests/test_data/spheres.gro`, then use it with the sample config or `--data tests/test_data/spheres.gro`. Regenerate or customize with optional args: `--num-structures`, `--beads`, `--output`.
+**Bundled dataset:** The project does not include large data files. All data-dependent use (smoke test, sample config, demos) relies on the **sphere dataset**: run `python tests/test_data/generate_spheres.py` to create `tests/test_data/spheres.npz`, then use it with the sample config or `--data tests/test_data/spheres.npz`. Regenerate or customize with optional args: `--num-structures`, `--beads`, `--output`.
+
+**Setup wizard (raw data → NPZ):** If your data is in another format (e.g. PDB, XYZ, custom text), use the setup wizard to generate a custom converter script. It uses the Claude API to infer the format from a sample and writes a standalone Python script that produces a conforming NPZ file. Requires `ANTHROPIC_API_KEY` in the environment. From the pipeline directory:
+
+```bash
+python run_setup_wizard.py --data /path/to/your/file_or_directory [--output output.npz] [--max-files N] [--sample-lines N] [--confirm-large]
+```
+
+The wizard writes the converter to `setup_wizard_scripts/` and prints getting-started steps. See `specs/SETUP_WIZARD.md` for full behavior and options.
 
 ---
 
@@ -53,15 +69,15 @@ Run the pipeline from a directory that contains (or can see) the `Euclideanizer_
 
 ```bash
 # From project root (replace with your paths)
-python Euclideanizer_Pipeline/run.py --config Euclideanizer_Pipeline/samples/config_sample.yaml --data /path/to/coordinates.gro
+python Euclideanizer_Pipeline/run.py --config Euclideanizer_Pipeline/samples/config_sample.yaml --data /path/to/coordinates.npz
 
 # Or from inside the pipeline directory
-python run.py --config samples/config_sample.yaml --data /path/to/coordinates.gro
+python run.py --config samples/config_sample.yaml --data /path/to/coordinates.npz
 ```
 
 Training requires a dataset path: set it with `--data` or in the config under `data.path`. All other options (output dir, hyperparameters, plotting, etc.) come from the config and can be overridden with CLI flags.
 
-**Batch-size calibration:** Set `distmap.batch_size` and/or `euclideanizer.batch_size` to `null` to auto-calibrate at run time. Set `plotting.gen_decode_batch_size` and analysis blocks' `query_batch_size` / `gen_decode_batch_size` to `null` to calibrate inference batch sizes (one value for both). **Training and inference batch sizes are independent:** you can set fixed training batch sizes (e.g. 32 and 64) and still leave gen_decode/query as `null` to have inference batch sizes auto-calibrated. Calibration uses a fixed GB safety margin (`calibration_safety_margin_gb`) and a configurable number of binary-search refinement steps (`calibration_binary_search_steps`). Resolved values are written to `run_config.yaml` and reused on resume. **Tip:** Maximum throughput and compute efficiency are achieved when using auto-calibration, but ideal *training* performance (e.g. validation loss) can be batch-size dependent. Use the batch-size benchmark (`tests/benchmark_batch_size.py`) to find the best training batch size for your hardware and data.
+**Batch-size calibration:** Set `distmap.batch_size` and/or `euclideanizer.batch_size` to `null` to auto-calibrate at run time. Set `plotting.gen_decode_batch_size` or analysis blocks' **`gen_decode_batch_size`** to `null` to calibrate **decode** batch size from **VRAM** (inference); resolved value is written to `run_config.yaml` and reused on resume. **`query_batch_size`** in analysis blocks (RMSD, Q, etc.) is **not** calibrated: it must be set explicitly and limits **CPU RAM** use during analysis (e.g. Q matrix batch). Set it based on your system RAM to avoid OOM. **Training and inference batch sizes are independent:** you can set fixed training batch sizes and still leave gen_decode as `null` to calibrate decode only. Calibration uses a fixed GB safety margin (`calibration_safety_margin_gb`) and binary-search refinement steps (`calibration_binary_search_steps`). **Tip:** Maximum throughput and compute efficiency are achieved when using auto-calibration for gen_decode, but ideal *training* performance (e.g. validation loss) can be batch-size dependent. Use the batch-size benchmark (`tests/benchmark_batch_size.py`) to find the best training batch size for your hardware and data.
 
 **Common options:**
 
@@ -82,13 +98,13 @@ Training requires a dataset path: set it with `--data` or in the config under `d
 A separate entry point `**run_hpo.py`** runs Optuna-based joint optimization of DistMap and Euclideanizer parameters; the objective is the pipeline **overall score** (scoring module). Install Optuna (`pip install optuna`), then:
 
 ```bash
-python run_hpo.py --config samples/hpo_config.yaml --data /path/to/coordinates.gro
+python run_hpo.py --config samples/hpo_config.yaml --data /path/to/coordinates.npz
 ```
 
 Each trial runs the full pipeline (train DistMap → train Euclideanizer → plotting → analysis → scoring); validation loss is reported every epoch for pruning. To **resume** and run more trials:
 
 ```bash
-python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.gro --resume --n-trials-add 50
+python run_hpo.py --config samples/hpo_config.yaml --data /path/to/data.npz --resume --n-trials-add 50
 ```
 
 **Resume behavior:** The study is loaded from the existing SQLite DB. Trials that were in progress when the run was stopped (or that failed) are **not** re-run; they remain in the study as incomplete/failed. Resume runs **new** trials until the total number of trials (complete, pruned, failed, or in progress) reaches the previous count plus `n_trials_add`. So you get additional trials, not a retry of interrupted ones.
@@ -131,15 +147,15 @@ No dataset or GPU is required; tests use `tmp_path` and dummy checkpoints.
 
 **Smoke test (full pipeline run)**
 
-A single end-to-end smoke test runs the pipeline with a minimal config using `tests/test_data/spheres.gro` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). It is **included in default pytest runs** (`pytest tests/ -v`). **On one or zero GPUs** the test uses single-task (one seed); **on two or more GPUs** it uses multi-task (two seeds) so both devices are used and the multi-GPU path is exercised. The test is marked slow; to skip it for a quicker run, use `pytest -m "not slow"`.
+A single end-to-end smoke test runs the pipeline with a minimal config using `tests/test_data/spheres.npz` and a temporary output dir, then asserts that key outputs exist (DistMap and Euclideanizer checkpoints, `pipeline.log`). It is **included in default pytest runs** (`pytest tests/ -v`). **On one or zero GPUs** the test uses single-task (one seed); **on two or more GPUs** it uses multi-task (two seeds) so both devices are used and the multi-GPU path is exercised. The test is marked slow; to skip it for a quicker run, use `pytest -m "not slow"`.
 
 - Run **all** tests including smoke (default): `pytest tests/ -v`
 - Run all tests **except** smoke (quicker): `pytest tests/ -v -m "not slow"`
 - Run **only** the smoke test: `pytest tests/test_smoke.py -v`
 
-The smoke test requires `tests/test_data/spheres.gro` (e.g. from `python tests/test_data/generate_spheres.py`).
+The smoke test requires `tests/test_data/spheres.npz` (e.g. from `python tests/test_data/generate_spheres.py`).
 
-**Batch-size benchmark:** See **Benchmark and calibration** below for the full picture. Quick run: `python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro`
+**Batch-size benchmark:** See **Benchmark and calibration** below for the full picture. Quick run: `python tests/benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.npz`
 
 ---
 
@@ -149,9 +165,9 @@ This section describes how **in-run calibration** and the **batch-size benchmark
 
 ### Calibration (in-run, model-specific)
 
-When `distmap.batch_size`, `euclideanizer.batch_size`, `plotting.gen_decode_batch_size`, or analysis blocks' `query_batch_size` / `gen_decode_batch_size` are set to `null`, the pipeline **auto-calibrates** at run time so that training or inference stays within GPU memory. Calibration is **model-specific**: DistMap training, Euclideanizer training, and decode-only (inference) are calibrated separately; each uses a short probe (training step or forward pass) and a binary search over batch size. Resolved values are written to `run_config.yaml` and reused on resume.
+When `distmap.batch_size`, `euclideanizer.batch_size`, `plotting.gen_decode_batch_size`, or analysis blocks' **`gen_decode_batch_size`** are set to `null`, the pipeline **auto-calibrates** at run time so that training or decode stays within **GPU memory (VRAM)**. Calibration is **model-specific**: DistMap training, Euclideanizer training, and decode-only (inference) are calibrated separately; each uses a short probe (training step or forward pass) and a binary search over batch size. Resolved **gen_decode_batch_size** is written to `run_config.yaml` and reused on resume. **`query_batch_size`** (analysis) is **not** calibrated; set it in config based on **CPU RAM** so analysis steps (e.g. RMSD, Q) do not OOM.
 
-- **Training vs inference are independent:** You can set fixed training batch sizes and still use `null` for gen_decode/query to calibrate inference only. Calibration uses `calibration_safety_margin_gb` (fixed GB reserved) and `calibration_binary_search_steps`; upper bounds are `calibration_training_batch_cap` and `calibration_decode_batch_cap`.
+- **Training vs inference are independent:** You can set fixed training batch sizes and still use `null` for gen_decode to calibrate decode only. Calibration uses `calibration_safety_margin_gb` (fixed GB reserved) and `calibration_binary_search_steps`; upper bounds are `calibration_training_batch_cap` and `calibration_decode_batch_cap`.
 - **Rough goal:** Maximize throughput and avoid OOM. It does *not* optimize for validation loss or score; ideal training performance can depend on batch size and learning rate, which is where the benchmark helps.
 
 ### Batch-size benchmark (rough optimal for this config and dataset)
@@ -395,7 +411,7 @@ A run is skipped only if (1) the best checkpoint file exists, (2) the saved run 
 
 **Reference-size (max_train/max_test) change:** If you change the number of train or test structures used for reference stats (e.g. `plotting.max_train`, `analysis.rmsd_max_train`, `q_max_train`, `coord_clustering_max_train`, `distmap_clustering_max_train`, or the corresponding `max_test` keys), and the run will use that component (plotting or that analysis), the pipeline **prompts** (same phrase as overwrite) and **removes the cached data** that depends on those values (per-seed train/test stats for plotting; test→train RMSD, Q, or clustering caches for analysis). Caches are then recomputed with the new limits so results stay correct. Use `--yes-overwrite` to skip the prompt. If `max_train` or `max_test` is larger than the number of available train or test structures, the pipeline uses all available (no error).
 
-**Resume and data loading:** For replot-only runs (e.g. after config diff or overwrite_existing), the pipeline assumes the same inputs as for a full run: the **root dataset file** (`data.path` / `--data`, e.g. the .gro) when any step needs coordinates, and the **experimental_statistics caches** when it can do a stats-only load (e.g. only gen_variance missing). If the .gro is moved or the caches are missing/invalid, the run can fail when it tries to load. What gets loaded is tied to which outputs are missing:
+**Resume and data loading:** For replot-only runs (e.g. after config diff or overwrite_existing), the pipeline assumes the same inputs as for a full run: the **root dataset file** (`data.path` / `--data`, e.g. the .npz) when any step needs coordinates, and the **experimental_statistics caches** when it can do a stats-only load (e.g. only gen_variance missing). If the .npz is moved or the caches are missing/invalid, the run can fail when it tries to load. What gets loaded is tied to which outputs are missing:
 
 - **Coords only:** When only training, reconstruction plots, recon_statistics, or RMSD analysis are missing, the pipeline loads the coordinate dataset and (if needed) computes or reuses train/test statistics from cache. It does *not* compute or load full experimental statistics (exp_stats) when only those outputs are needed.
 - **Stats only (no coords):** When only gen_variance or bond_length_by_genomic_distance plots are missing and the base experimental-statistics cache plus every seed’s train/test split cache are present and valid, the pipeline loads only those caches (no coordinate file). It then regenerates the missing plots from the saved models. If any cache is missing or invalid, it falls back to a full load.
@@ -517,25 +533,27 @@ base_output_dir/
 ```
 Euclideanizer_Pipeline/
   run.py                 # Single entrypoint: training, plotting, analysis
+  run_setup_wizard.py    # Setup wizard: raw data → NPZ (requires ANTHROPIC_API_KEY; see specs/SETUP_WIZARD.md)
   requirements.txt
   README.md
   LICENSE
+  setup_wizard_scripts/  # Generated converter scripts from setup wizard (created on first run)
   samples/
     run.sh               # Example SLURM job script (template; edit venv and modules for your cluster)
     config_sample.yaml   # Example config (all required keys)
   tests/
     test_pipeline_behavior.py  # Behavior tests (run completion, need_data, resume, config)
     test_utils_and_config.py  # Config, utils, metrics, rmsd, plot paths
-    test_smoke.py             # Full pipeline smoke run (slow; requires tests/test_data/spheres.gro)
+    test_smoke.py             # Full pipeline smoke run (slow; requires tests/test_data/spheres.npz)
     benchmark_batch_size.py   # Batch-size sweep: efficiency and efficacy vs batch size (standalone script)
     conftest.py               # Pytest markers (e.g. slow)
     config_test.yaml          # Minimal config for behavior tests (no dataset required)
     config_smoke.yaml         # Minimal config for smoke test (2 seeds in config; test uses 1 seed on 1 GPU, 2 on 2+ GPUs)
-    test_data/                # Bundled sphere dataset: generate_spheres.py, spheres.gro (after generation)
+    test_data/                # Bundled sphere dataset: generate_spheres.py, spheres.npz (after generation)
   src/
     _worker_main.py      # Multi-GPU worker launcher (used by run.py when 2+ GPUs)
     config.py            # Config load, validation, grid expansion
-    utils.py             # Data loading (GRO-style), device, distance maps, tri/symmetric helpers
+    utils.py             # Data loading (NPZ), device, distance maps, tri/symmetric helpers
     metrics.py           # Experimental statistics (bonds, Rg, scaling)
     plotting.py           # Reconstruction, recon stats, gen analysis, bond-length-by-genomic-distance, loss curves
     train_distmap.py     # One DistMap training run
@@ -544,6 +562,8 @@ Euclideanizer_Pipeline/
     q_analysis.py        # Q / max Q analysis (optional, via analysis.q_gen / q_recon)
     clustering.py        # Coord and distmap clustering / dendrogram analysis (optional, via analysis.coord_clustering_* / distmap_clustering_*)
     gro_io.py            # Write 3D structures to GROMACS GRO format
+    wizard.py            # Setup wizard logic (API, validation, save)
+    wizard_prompts.py    # Setup wizard system and user prompt construction
     training_visualization.py  # Training videos (optional, requires ffmpeg)
     dashboard.py         # Interactive HTML dashboard (Browse, Detail, Compare, Vary aspect, Radar grid)
     distmap/             # DistMap VAE (model, loss, sampling)

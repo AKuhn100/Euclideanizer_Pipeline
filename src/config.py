@@ -189,23 +189,33 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
                 raise ValueError(
                     f"{section}.batch_size must be null (auto-calibrate) or a positive integer, got {bs!r}."
                 )
-    # plotting.gen_decode_batch_size and analysis *.*.query_batch_size / gen_decode_batch_size: no list; if not null, positive int. null = in-run calibrate.
-    def _validate_batch_key(val: Any, path: str) -> None:
+    # plotting.gen_decode_batch_size and analysis *.*.gen_decode_batch_size: no list; null = in-run calibrate (VRAM); else positive int.
+    def _validate_gen_decode_batch_key(val: Any, path: str) -> None:
         if isinstance(val, list):
             raise ValueError(f"{path} must be a single integer or null, not a list.")
         if val is not None and (not isinstance(val, int) or val < 1):
-            raise ValueError(f"{path} must be null (auto-calibrate) or a positive integer, got {val!r}.")
+            raise ValueError(f"{path} must be null (auto-calibrate from VRAM) or a positive integer, got {val!r}.")
+
+    # analysis *.*.query_batch_size: required positive int (CPU RAM limit; no calibration).
+    def _validate_query_batch_size_key(val: Any, path: str) -> None:
+        if isinstance(val, list):
+            raise ValueError(f"{path} must be a single positive integer, not a list.")
+        if val is None or not isinstance(val, int) or val < 1:
+            raise ValueError(
+                f"{path} must be a positive integer (batch size for CPU-side analysis; set based on system RAM), got {val!r}."
+            )
 
     plot_cfg = cfg.get("plotting") or {}
     if isinstance(plot_cfg, dict) and "gen_decode_batch_size" in plot_cfg:
-        _validate_batch_key(plot_cfg["gen_decode_batch_size"], "plotting.gen_decode_batch_size")
+        _validate_gen_decode_batch_key(plot_cfg["gen_decode_batch_size"], "plotting.gen_decode_batch_size")
     for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
         block = (cfg.get("analysis") or {}).get(block_name)
         if not isinstance(block, dict):
             continue
-        for key in ("query_batch_size", "gen_decode_batch_size"):
-            if key in block:
-                _validate_batch_key(block[key], f"analysis.{block_name}.{key}")
+        if "query_batch_size" in sub_keys and "query_batch_size" in block:
+            _validate_query_batch_size_key(block["query_batch_size"], f"analysis.{block_name}.query_batch_size")
+        if "gen_decode_batch_size" in sub_keys and "gen_decode_batch_size" in block:
+            _validate_gen_decode_batch_key(block["gen_decode_batch_size"], f"analysis.{block_name}.gen_decode_batch_size")
 
     # calibration_safety_margin_gb: positive float (fixed GB reserved).
     val = cfg.get("calibration_safety_margin_gb")
@@ -453,6 +463,41 @@ def run_config_section_matches(run_cfg: Optional[Dict[str, Any]], section_key: s
     if run_cfg is None or section_key not in run_cfg:
         return False
     return _config_deep_equal(run_cfg[section_key], expected_section)
+
+
+def _section_equal_allow_none_in_expected(saved: Any, expected: Any) -> bool:
+    """Deep equality but treat None in expected as 'accept any value in saved' (for calibrated-at-runtime keys)."""
+    if expected is None:
+        return True
+    if type(saved) != type(expected):
+        return False
+    if isinstance(saved, dict) and isinstance(expected, dict):
+        for k in set(saved.keys()) | set(expected.keys()):
+            s = saved.get(k)
+            e = expected.get(k)
+            if e is None:
+                continue
+            if s is None and e is not None:
+                return False
+            if not _section_equal_allow_none_in_expected(s, e):
+                return False
+        return True
+    if isinstance(saved, (list, tuple)) and isinstance(expected, (list, tuple)):
+        if len(saved) != len(expected):
+            return False
+        return all(_section_equal_allow_none_in_expected(sv, ev) for sv, ev in zip(saved, expected))
+    return saved == expected
+
+
+def run_config_section_matches_allow_calibrated(
+    run_cfg: Optional[Dict[str, Any]], section_key: str, expected_section: Dict[str, Any]
+) -> bool:
+    """Like run_config_section_matches but None in expected_section is treated as 'accept saved value'.
+    Use for completion check so that null batch_size / gen_decode_batch_size in config (auto-calibrate)
+    does not cause a mismatch with the resolved value written to run_config."""
+    if run_cfg is None or section_key not in run_cfg:
+        return False
+    return _section_equal_allow_none_in_expected(run_cfg[section_key], expected_section)
 
 
 def load_run_config(directory: str, filename: str = "run_config.yaml") -> Optional[Dict[str, Any]]:

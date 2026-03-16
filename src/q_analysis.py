@@ -125,6 +125,8 @@ def get_or_compute_test_to_train_q(
             return out
         except Exception:
             pass
+    if display_root is not None:
+        print("  Computing test→train max Q (seed-level cache)...", flush=True)
     coords = coords_tensor
     train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
     tr_idx = train_ds.indices

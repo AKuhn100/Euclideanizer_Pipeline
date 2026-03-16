@@ -501,7 +501,7 @@ def main():
         description="Batch size efficiency benchmark for DistMap + Euclideanizer."
     )
     parser.add_argument("--config", required=True, help="Path to pipeline YAML config")
-    parser.add_argument("--data", default=None, help="Path to GRO dataset (overrides config data.path)")
+    parser.add_argument("--data", default=None, help="Path to NPZ dataset (overrides config data.path)")
     parser.add_argument(
         "--batch-sizes", type=int, nargs="+",
         default=[8, 16, 32, 64, 128, 256, 512],

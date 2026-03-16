@@ -423,12 +423,23 @@ def main() -> int:
     else:
         pruner_name = optuna_cfg.get("pruner", "MedianPruner")
         pruner_kwargs = optuna_cfg.get("pruner_kwargs") or {}
-        pruner_cls = getattr(optuna.pruners, pruner_name, None)
-        if pruner_cls is None:
-            pruner = optuna.pruners.MedianPruner(**pruner_kwargs)
+        # None or "NopPruner" / "none" / "null" => no pruning (NopPruner)
+        _no_prune = pruner_name is None or (
+            isinstance(pruner_name, str)
+            and str(pruner_name).strip().lower() in ("noppruner", "none", "null")
+        )
+        if _no_prune:
+            pruner = optuna.pruners.NopPruner()
         else:
+            pruner_cls = getattr(optuna.pruners, str(pruner_name), None)
+            if pruner_cls is None:
+                print(
+                    f"optuna.pruner must be null/none/NopPruner to disable pruning, or a valid Optuna pruner class name (e.g. MedianPruner, HyperbandPruner). Got: {pruner_name!r}.",
+                    file=sys.stderr,
+                )
+                return 1
             pruner = pruner_cls(**pruner_kwargs)
-        if optuna_cfg.get("pruner_patient"):
+        if not _no_prune and optuna_cfg.get("pruner_patient"):
             pruner_patience = int(optuna_cfg.get("pruner_patience", 5))
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message=".*PatientPruner.*")

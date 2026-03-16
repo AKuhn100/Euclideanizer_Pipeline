@@ -38,7 +38,8 @@ optuna:
   # Options: TPESampler (default), RandomSampler, CmaEsSampler (no categoricals), NSGAIISampler, QMCSampler, GridSampler, BruteForceSampler (see optuna.samplers).
   sampler: "TPESampler"
   sampler_kwargs: {n_startup_trials: 10}   # e.g. n_startup_trials for TPE; seed added from top-level seed
-  # Pruner: validation loss is reported each epoch, so pruning is active.
+  # Pruner: validation loss is reported each epoch; pruner can stop unpromising trials early.
+  # Set to null (or "NopPruner" / "none") to disable pruning and run every trial to completion.
   # Options: MedianPruner, SuccessiveHalvingPruner, HyperbandPruner, NopPruner, PercentilePruner, ThresholdPruner, WilcoxonPruner (see optuna.pruners). PatientPruner is enabled via pruner_patient below.
   pruner: "HyperbandPruner"
   pruner_kwargs: {min_resource: 50, max_resource: 500, reduction_factor: 3}   # passed to base pruner constructor

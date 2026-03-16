@@ -487,6 +487,7 @@ def render_scores_spider(
         PLOT_DPI,
         FONT_SIZE_TICK,
         FONT_SIZE_SMALL,
+        FONT_SIZE_TINY,
     )
 
     component_scores = scores_data.get("component_scores") or {}
@@ -568,7 +569,7 @@ def render_scores_spider(
         ax.text(
             angle, label_r, raw,
             ha="center", va=va,
-            fontsize=FONT_SIZE_SMALL,
+            fontsize=FONT_SIZE_TINY,
             color=label_color,
             fontweight=label_weight,
             linespacing=1.3,

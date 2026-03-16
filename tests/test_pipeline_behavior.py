@@ -38,6 +38,7 @@ if _PIPELINE_ROOT not in sys.path:
 
 from src.config import (
     load_config,
+    validate_config,
     distmap_training_groups,
     euclideanizer_training_groups,
     save_run_config,
@@ -1029,6 +1030,18 @@ def test_delete_reference_size_caches_removes_rmsd_and_q_files(tmp_path):
     _delete_reference_size_caches(base, [0], {"rmsd", "q"})
     assert not os.path.isfile(os.path.join(cache_dir, "test_to_train_rmsd.npz"))
     assert not os.path.isfile(os.path.join(cache_dir, "q_test_to_train.npz"))
+
+
+def test_validate_config_rejects_null_query_batch_size():
+    """query_batch_size in analysis blocks must be a positive int (CPU RAM); null is rejected."""
+    cfg = load_config(path=os.path.join(_TEST_DIR, "config_test.yaml"))
+    cfg["analysis"] = dict(cfg["analysis"])
+    cfg["analysis"]["rmsd_gen"] = dict(cfg["analysis"]["rmsd_gen"])
+    cfg["analysis"]["rmsd_gen"]["query_batch_size"] = None
+    with pytest.raises(ValueError) as exc_info:
+        validate_config(cfg)
+    assert "query_batch_size" in str(exc_info.value)
+    assert "positive integer" in str(exc_info.value).lower() or "CPU" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------

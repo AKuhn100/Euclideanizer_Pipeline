@@ -4,9 +4,9 @@ Test script: load one structure, rotate it, then align with our Kabsch and with 
 Reports RMSD(ref, our_aligned), RMSD(ref, scipy_aligned), and RMSD(our_aligned, scipy_aligned).
 
 Run from Pipeline root:
-  python tests/test_kabsch_rmsd.py [path/to/structures.gro]
+  python tests/test_kabsch_rmsd.py [path/to/coords.npz]
   pytest tests/test_kabsch_rmsd.py -v
-If no path is given, uses tests/test_data/spheres.gro (generate with
+If no path is given, uses tests/test_data/spheres.npz (generate with
   python tests/test_data/generate_spheres.py).
 """
 from __future__ import annotations
@@ -37,20 +37,20 @@ def rmsd_centered(a: np.ndarray, b: np.ndarray) -> float:
     return np.sqrt(np.mean((a - b) ** 2))
 
 
-def main(gro_path: Optional[str] = None):
+def main(npz_path: Optional[str] = None):
     """Run Kabsch vs scipy comparison. Returns (rmsd_ours, rmsd_scipy, rmsd_ours_vs_scipy)."""
-    if gro_path is None:
+    if npz_path is None:
         if len(sys.argv) > 1:
-            gro_path = os.path.abspath(sys.argv[1])
+            npz_path = os.path.abspath(sys.argv[1])
         else:
-            gro_path = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.gro")
-    if not os.path.isfile(gro_path):
-        print(f"File not found: {gro_path}")
+            npz_path = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.npz")
+    if not os.path.isfile(npz_path):
+        print(f"File not found: {npz_path}")
         print("Generate spheres with: python tests/test_data/generate_spheres.py")
-        print("Or pass a GRO path: python tests/test_kabsch_rmsd.py path/to/structures.gro")
+        print("Or pass an NPZ path: python tests/test_kabsch_rmsd.py path/to/coords.npz")
         sys.exit(1)
 
-    coords = load_data(gro_path)
+    coords = load_data(npz_path)
     ref = coords[0].astype(np.float64)
     n_atoms = ref.shape[0]
 
@@ -78,7 +78,7 @@ def main(gro_path: Optional[str] = None):
     # RMSD between our aligned and scipy aligned (should be ~0)
     rmsd_ours_vs_scipy = rmsd_centered(aligned_ours_np, aligned_scipy)
 
-    print(f"Loaded: {gro_path} (1 frame, {n_atoms} atoms)")
+    print(f"Loaded: {npz_path} (1 frame, {n_atoms} atoms)")
     print()
     print("RMSD(ref_centered, our_Kabsch_aligned(rotated))  = {:.6f}".format(rmsd_ours))
     print("RMSD(ref_centered, scipy_Kabsch_aligned(rotated)) = {:.6f}".format(rmsd_scipy))
@@ -96,14 +96,14 @@ def test_kabsch_matches_scipy_on_rotated_structure():
     """Our Kabsch alignment matches scipy and recovers reference (run with pytest tests/ -v)."""
     import pytest
 
-    gro_path = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.gro")
-    if not os.path.isfile(gro_path):
+    npz_path = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.npz")
+    if not os.path.isfile(npz_path):
         pytest.skip(
-            "spheres.gro not found; run python tests/test_data/generate_spheres.py"
+            "spheres.npz not found; run python tests/test_data/generate_spheres.py"
         )
 
-    # Pass gro_path explicitly so main() does not use pytest's sys.argv
-    rmsd_ours, rmsd_scipy, rmsd_ours_vs_scipy = main(gro_path=gro_path)
+    # Pass npz_path explicitly so main() does not use pytest's sys.argv
+    rmsd_ours, rmsd_scipy, rmsd_ours_vs_scipy = main(npz_path=npz_path)
     assert rmsd_ours < 1e-5, f"our Kabsch RMSD to ref should be ~0, got {rmsd_ours}"
     assert rmsd_scipy < 1e-5, f"scipy Kabsch RMSD to ref should be ~0, got {rmsd_scipy}"
     assert rmsd_ours_vs_scipy < 1e-5, f"our vs scipy aligned should be ~0, got {rmsd_ours_vs_scipy}"

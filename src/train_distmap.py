@@ -116,7 +116,9 @@ def train_distmap(
             best_epoch = prev_cfg["best_epoch"]
             start_epoch_offset = (prev_cfg["best_epoch"] or 0) if resume_from_best else (prev_cfg["last_epoch_trained"] or 0)
         if os.path.isfile(prev_best):
-            shutil.copy2(prev_best, os.path.join(model_dir, "model.pt"))
+            dst_best = os.path.join(model_dir, "model.pt")
+            if os.path.normpath(prev_best) != os.path.normpath(dst_best):
+                shutil.copy2(prev_best, dst_best)
             if not memory_efficient:
                 best_state = {k: v.clone() for k, v in torch.load(prev_best, map_location="cpu").items()}
         save_run_config({"distmap": dm_cfg}, model_dir, last_epoch_trained=0, best_epoch=best_epoch, best_val=best_val)
@@ -170,11 +172,23 @@ def train_distmap(
             best_val = avg_val
             best_epoch = start_epoch_offset + epoch + 1  # 1-indexed global
             epochs_without_improvement = 0
+            current_epoch = start_epoch_offset + epoch + 1
             if memory_efficient:
                 torch.save(model.state_dict(), os.path.join(model_dir, "model.pt"))
-                save_run_config({"distmap": dm_cfg}, model_dir, last_epoch_trained=0, best_epoch=best_epoch, best_val=best_val)
+                # Persist current epoch so an interrupted run has a meaningful last_epoch_trained (not 0)
+                save_run_config(
+                    {"distmap": dm_cfg}, model_dir,
+                    last_epoch_trained=current_epoch,
+                    best_epoch=best_epoch, best_val=best_val,
+                )
             else:
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                # Persist current epoch so an interrupted run has a meaningful last_epoch_trained (not 0)
+                save_run_config(
+                    {"distmap": dm_cfg}, model_dir,
+                    last_epoch_trained=current_epoch,
+                    best_epoch=best_epoch, best_val=best_val,
+                )
         else:
             epochs_without_improvement += 1
         if epoch_callback is not None:
