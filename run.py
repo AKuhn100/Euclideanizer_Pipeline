@@ -2118,6 +2118,7 @@ def run_one_hpo_trial(
                     )
             _force_gpu_cleanup(device)
             for spec in ANALYSIS_METRICS:
+                _force_gpu_cleanup(device)
                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
                 if not (do_gen or do_recon):
@@ -2784,6 +2785,7 @@ def _run_one_distmap_group(
                                     _log("  [skip] latent (all present)", since_start=time.time() - pipeline_start, style="skip")
                             _force_gpu_cleanup(device)
                             for spec in ANALYSIS_METRICS:
+                                _force_gpu_cleanup(device)
                                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
                                 if not (do_gen or do_recon):
