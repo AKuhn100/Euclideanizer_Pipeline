@@ -109,10 +109,10 @@ analysis:
   q_gen:
     enabled: true
     overwrite_existing: false
-    num_samples: [500]
+    num_samples: [100]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
-    query_batch_size: 256
+    query_batch_size: 64
     gen_decode_batch_size: 256
     save_data: false
     save_pdf_copy: true

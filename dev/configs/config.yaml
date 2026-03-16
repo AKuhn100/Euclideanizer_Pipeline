@@ -84,8 +84,8 @@ plotting:
 analysis:
   rmsd_max_train: 1000   # reference cap for rmsd (single value)
   rmsd_max_test: 1000
-  q_max_train: 500
-  q_max_test: 500
+  q_max_train: 100
+  q_max_test: 100
   coord_clustering_max_train: null
   coord_clustering_max_test: null
   distmap_clustering_max_train: null
@@ -112,7 +112,7 @@ analysis:
   q_gen:
     enabled: true
     overwrite_existing: false
-    num_samples: [500]
+    num_samples: [100]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
     query_batch_size: 256   # batch size for Q computation (CPU RAM; set based on system memory)

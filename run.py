@@ -55,6 +55,7 @@ from src.config import (
     configs_match_sections,
     config_diff,
     run_config_section_matches,
+    run_config_section_matches_allow_calibrated,
     pipeline_config_path,
     TRAINING_CRITICAL_KEYS,
 )
@@ -969,7 +970,7 @@ def _run_completed(
             _log(f"{_log_fail_reason}: last_epoch_trained={last_trained!r} (type {type(last_trained).__name__}) != expected_epochs={expected_epochs!r} (type {type(expected_epochs).__name__})", since_start=None, style="skip")
         return False
     if section_key is not None and expected_section is not None:
-        if not run_config_section_matches(run_cfg, section_key, expected_section):
+        if not run_config_section_matches_allow_calibrated(run_cfg, section_key, expected_section):
             if _log_fail_reason:
                 diffs = config_diff(run_cfg.get(section_key) or {}, expected_section, section_key)
                 _log(f"{_log_fail_reason}: section match failed: {diffs}", since_start=None, style="skip")

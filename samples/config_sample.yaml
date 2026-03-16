@@ -86,8 +86,8 @@ plotting:
 analysis:
   rmsd_max_train: null   # cap on train structures for RMSD test→train cache; null = use all
   rmsd_max_test: null   # cap on test structures for RMSD test→train cache; null = use all
-  q_max_train: null   # cap on train structures for Q test→train cache; null = use all
-  q_max_test: null   # cap on test structures for Q test→train cache; null = use all
+  q_max_train: 500   # cap on train structures for Q test→train cache; null = use all
+  q_max_test: 500   # cap on test structures for Q test→train cache; null = use all
   coord_clustering_max_train: null   # cap on train structures for coord-clustering feats cache; null = use all
   coord_clustering_max_test: null   # cap on test structures for coord-clustering feats cache; null = use all
   distmap_clustering_max_train: null   # cap on train structures for distmap-clustering feats cache; null = use all
@@ -117,7 +117,7 @@ analysis:
     num_samples: [500]   # list of sample counts per run name
     sample_variance: [1]   # list of latent variances
     delta: 0.7071   # Q smoothing parameter (1/sqrt(2) → denominator 2*delta^2 = 1)
-    query_batch_size: 256   # batch size for Q computation (CPU RAM; set based on system memory)
+    query_batch_size: 64   # batch size for Q computation (CPU RAM; set based on system memory)
     gen_decode_batch_size: 128   # batch size when decoding latents to structures; null = auto-calibrate from VRAM
     save_data: true   # if true, save Q data as .npz
     save_pdf_copy: true   # if true, save PDF copies of Q figures

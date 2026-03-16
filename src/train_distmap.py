@@ -172,11 +172,23 @@ def train_distmap(
             best_val = avg_val
             best_epoch = start_epoch_offset + epoch + 1  # 1-indexed global
             epochs_without_improvement = 0
+            current_epoch = start_epoch_offset + epoch + 1
             if memory_efficient:
                 torch.save(model.state_dict(), os.path.join(model_dir, "model.pt"))
-                save_run_config({"distmap": dm_cfg}, model_dir, last_epoch_trained=0, best_epoch=best_epoch, best_val=best_val)
+                # Persist current epoch so an interrupted run has a meaningful last_epoch_trained (not 0)
+                save_run_config(
+                    {"distmap": dm_cfg}, model_dir,
+                    last_epoch_trained=current_epoch,
+                    best_epoch=best_epoch, best_val=best_val,
+                )
             else:
                 best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                # Persist current epoch so an interrupted run has a meaningful last_epoch_trained (not 0)
+                save_run_config(
+                    {"distmap": dm_cfg}, model_dir,
+                    last_epoch_trained=current_epoch,
+                    best_epoch=best_epoch, best_val=best_val,
+                )
         else:
             epochs_without_improvement += 1
         if epoch_callback is not None:

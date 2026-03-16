@@ -465,6 +465,41 @@ def run_config_section_matches(run_cfg: Optional[Dict[str, Any]], section_key: s
     return _config_deep_equal(run_cfg[section_key], expected_section)
 
 
+def _section_equal_allow_none_in_expected(saved: Any, expected: Any) -> bool:
+    """Deep equality but treat None in expected as 'accept any value in saved' (for calibrated-at-runtime keys)."""
+    if expected is None:
+        return True
+    if type(saved) != type(expected):
+        return False
+    if isinstance(saved, dict) and isinstance(expected, dict):
+        for k in set(saved.keys()) | set(expected.keys()):
+            s = saved.get(k)
+            e = expected.get(k)
+            if e is None:
+                continue
+            if s is None and e is not None:
+                return False
+            if not _section_equal_allow_none_in_expected(s, e):
+                return False
+        return True
+    if isinstance(saved, (list, tuple)) and isinstance(expected, (list, tuple)):
+        if len(saved) != len(expected):
+            return False
+        return all(_section_equal_allow_none_in_expected(sv, ev) for sv, ev in zip(saved, expected))
+    return saved == expected
+
+
+def run_config_section_matches_allow_calibrated(
+    run_cfg: Optional[Dict[str, Any]], section_key: str, expected_section: Dict[str, Any]
+) -> bool:
+    """Like run_config_section_matches but None in expected_section is treated as 'accept saved value'.
+    Use for completion check so that null batch_size / gen_decode_batch_size in config (auto-calibrate)
+    does not cause a mismatch with the resolved value written to run_config."""
+    if run_cfg is None or section_key not in run_cfg:
+        return False
+    return _section_equal_allow_none_in_expected(run_cfg[section_key], expected_section)
+
+
 def load_run_config(directory: str, filename: str = "run_config.yaml") -> Optional[Dict[str, Any]]:
     """Load run_config from directory/filename. Returns None if file missing or invalid."""
     if yaml is None:
