@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate the pipeline's bundled dataset: a multi-frame GRO file of sphere structures.
+Generate the pipeline's bundled dataset: an NPZ file of sphere structures.
 
 This is the only data shipped with the project. All data-dependent usage (smoke test,
-sample config, demos) uses this sphere data. Large chromosome GRO files are not
+sample config, demos) uses this sphere data. Large chromosome files are not
 included; use your own data path for production runs.
 
 Usage:
   python tests/test_data/generate_spheres.py [--output PATH] [--num-structures N] [--beads B] ...
-  Default: writes tests/test_data/spheres.gro with 10 structures, 100 beads each.
-
-The pipeline loader (utils.load_data) expects frame title lines to start with
-"Chromosome", so this script uses that prefix for compatibility.
+  Default: writes tests/test_data/spheres.npz with 10 structures, 100 beads each.
 """
 from __future__ import annotations
 
@@ -34,25 +31,9 @@ def points_on_sphere(n: int, seed: int = 42) -> np.ndarray:
     return np.stack([x, y, z], axis=1)
 
 
-def write_gro(path: str, coords: np.ndarray, title_prefix: str = "Chromosome") -> None:
-    """Write (n_frames, n_atoms, 3) coords to a multi-frame GRO file."""
-    n_frames, n_atoms, _ = coords.shape
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    with open(path, "w") as f:
-        for i in range(n_frames):
-            f.write(f"{title_prefix} test_data frame {i + 1} (sphere)\n")
-            f.write(f"{n_atoms}\n")
-            for a in range(n_atoms):
-                x, y, z = coords[i, a, 0], coords[i, a, 1], coords[i, a, 2]
-                # GRO: resnum, resname, atomname, atomnum, x, y, z
-                f.write(f"{a + 1:5d}{'STRUC':<5s}{'CA':>5s}{a + 1:5d}{x:8.3f}{y:8.3f}{z:8.3f}\n")
-            f.write(f"{0:10.5f}{0:10.5f}{0:10.5f}\n")
-    print(f"Wrote {n_frames} structures, {n_atoms} beads each -> {path}")
-
-
 def main() -> None:
-    p = argparse.ArgumentParser(description="Generate sphere GRO dataset for pipeline testing and demos.")
-    p.add_argument("--output", "-o", default=None, help="Output GRO path (default: tests/test_data/spheres.gro)")
+    p = argparse.ArgumentParser(description="Generate sphere NPZ dataset for pipeline testing and demos.")
+    p.add_argument("--output", "-o", default=None, help="Output NPZ path (default: tests/test_data/spheres.npz)")
     p.add_argument("--num-structures", "-n", type=int, default=10, help="Number of structures (default: 10)")
     p.add_argument("--beads", "-b", type=int, default=100, help="Beads per structure (default: 100)")
     p.add_argument("--radius-min", type=float, default=1.0, help="Min sphere radius (nm) (default: 1.0)")
@@ -63,7 +44,7 @@ def main() -> None:
     out = args.output
     if out is None:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        out = os.path.join(script_dir, "spheres.gro")
+        out = os.path.join(script_dir, "spheres.npz")
 
     n_structures = args.num_structures
     n_beads = args.beads
@@ -75,7 +56,9 @@ def main() -> None:
     for i in range(n_structures):
         coords[i] = unit * radii[i]
 
-    write_gro(out, coords)
+    os.makedirs(os.path.dirname(os.path.abspath(out)) or ".", exist_ok=True)
+    np.savez_compressed(out, coords=coords.astype(np.float32))
+    print(f"Wrote {n_structures} structures, {n_beads} beads each -> {out}")
     return None
 
 

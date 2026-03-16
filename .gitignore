@@ -5,4 +5,4 @@ __pycache__/
 .pytest_cache/
 
 # Test data (script to generate data is available for user)
-tests/test_data/spheres.gro
+tests/test_data/spheres.npz

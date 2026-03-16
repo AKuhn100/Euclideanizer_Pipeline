@@ -138,37 +138,44 @@ def test_get_upper_tri_upper_tri_to_symmetric_roundtrip():
     torch.testing.assert_close(back, distmaps)
 
 
-def test_load_data_valid_gro(tmp_path):
-    """load_data reads a minimal valid GRO and returns (n_frames, n_atoms, 3)."""
-    gro = tmp_path / "tiny.gro"
-    gro.write_text(
-        "Chromosome frame 0\n"
-        "2\n"
-        "    1STRUC  CA    1   0.1  0.2  0.3\n"
-        "    2STRUC  CA    2   0.4  0.5  0.6\n"
-        "   0.0   0.0   0.0\n"
-    )
-    out = load_data(str(gro))
+def test_load_data_valid_npz(tmp_path):
+    """load_data reads a minimal valid NPZ and returns (n_structures, n_atoms, 3) float32."""
+    npz = tmp_path / "tiny.npz"
+    coords = np.array([[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]], dtype=np.float32)
+    np.savez_compressed(npz, coords=coords)
+    out = load_data(str(npz))
     assert out.shape == (1, 2, 3)
-    assert_exact_or_numerical(out[0, 0], np.array([0.1, 0.2, 0.3]), atol=1e-7, name="parsed xyz row 0")
-    assert_exact_or_numerical(out[0, 1], np.array([0.4, 0.5, 0.6]), atol=1e-7, name="parsed xyz row 1")
+    assert out.dtype == np.float32
+    assert_exact_or_numerical(out[0, 0], np.array([0.1, 0.2, 0.3]), atol=1e-7, name="coords row 0")
+    assert_exact_or_numerical(out[0, 1], np.array([0.4, 0.5, 0.6]), atol=1e-7, name="coords row 1")
 
 
 def test_gro_roundtrip(tmp_path):
-    """write_structures_gro output can be loaded back by load_data."""
+    """write_structures_gro writes canonical GRO file; verify file exists and has expected frame layout."""
     coords = np.random.rand(5, 10, 3).astype(np.float32)
-    write_structures_gro(coords, str(tmp_path), title_prefix="Chromosome test")
-    loaded = load_data(str(tmp_path / "structures.gro"))
-    assert loaded.shape == (5, 10, 3)
-    np.testing.assert_allclose(loaded, coords, atol=1e-3)  # GRO format is 3dp
+    paths = write_structures_gro(coords, str(tmp_path), title="test roundtrip")
+    assert len(paths) == 1
+    gro_path = tmp_path / "structures.gro"
+    assert gro_path.exists()
+    lines = gro_path.read_text().strip().split("\n")
+    # 5 frames: each frame = 1 title + 1 count + 10 atoms + 1 box = 13 lines
+    assert len(lines) >= 5 * 13
+    # Default title when None
+    write_structures_gro(coords[:1], str(tmp_path), filename="single.gro")
+    single = (tmp_path / "single.gro").read_text().split("\n")
+    assert single[0] == "generated frame 0"
 
 
 def test_gro_single_structure(tmp_path):
-    """Single-structure roundtrip."""
+    """write_structures_gro with single structure produces one frame."""
     coords = np.random.rand(1, 20, 3).astype(np.float32)
-    write_structures_gro(coords, str(tmp_path), title_prefix="Chromosome test")
-    loaded = load_data(str(tmp_path / "structures.gro"))
-    assert loaded.shape == (1, 20, 3)
+    write_structures_gro(coords, str(tmp_path), title="single")
+    gro_path = tmp_path / "structures.gro"
+    assert gro_path.exists()
+    lines = gro_path.read_text().strip().split("\n")
+    assert lines[0] == "single"
+    assert lines[1] == "20"
+    assert len(lines) == 1 + 1 + 20 + 1  # title, count, atoms, box
 
 
 def test_compute_exp_statistics_output_keys():
@@ -189,39 +196,60 @@ def test_compute_exp_statistics_output_keys():
     assert len(stats["genomic_distances"]) == 5
 
 
-def test_load_data_raises_atom_line_too_few_columns(tmp_path):
-    """load_data raises ValueError when an atom line has fewer than 6 columns."""
-    gro = tmp_path / "bad.gro"
-    gro.write_text(
-        "Chromosome frame 0\n"
-        "1\n"
-        " 1  a  b\n"  # only 3 columns
-    )
-    with pytest.raises(ValueError, match="at least 6 columns"):
-        load_data(str(gro))
+def test_load_data_raises_missing_coords_key(tmp_path):
+    """load_data raises ValueError when NPZ does not contain 'coords' key."""
+    npz = tmp_path / "bad.npz"
+    np.savez_compressed(npz, other=np.zeros((1, 2, 3)))
+    with pytest.raises(ValueError, match="does not contain required key 'coords'"):
+        load_data(str(npz))
 
 
-def test_load_data_raises_non_numeric_xyz(tmp_path):
-    """load_data raises ValueError when x,y,z columns are not numeric."""
-    gro = tmp_path / "bad.gro"
-    gro.write_text(
-        "Chromosome frame 0\n"
-        "1\n"
-        "    1STRUC  CA    1   x   y   z\n"
-    )
-    with pytest.raises(ValueError, match="numeric"):
-        load_data(str(gro))
+def test_load_data_raises_wrong_ndim(tmp_path):
+    """load_data raises ValueError when coords ndim != 3."""
+    npz = tmp_path / "bad.npz"
+    np.savez_compressed(npz, coords=np.zeros((5, 3)))  # 2D
+    with pytest.raises(ValueError, match="must have 3 dimensions"):
+        load_data(str(npz))
 
 
-def test_load_data_raises_n_atoms_non_positive(tmp_path):
-    """load_data raises ValueError when atom count is 0 or negative."""
-    gro = tmp_path / "bad.gro"
-    gro.write_text(
-        "Chromosome frame 0\n"
-        "0\n"
-    )
-    with pytest.raises(ValueError, match="positive"):
-        load_data(str(gro))
+def test_load_data_raises_wrong_last_dim(tmp_path):
+    """load_data raises ValueError when coords.shape[2] != 3."""
+    npz = tmp_path / "bad.npz"
+    np.savez_compressed(npz, coords=np.zeros((2, 5, 4)))
+    with pytest.raises(ValueError, match="last dimension must be 3"):
+        load_data(str(npz))
+
+
+def test_load_data_raises_zero_structures(tmp_path):
+    """load_data raises ValueError when coords has zero structures."""
+    npz = tmp_path / "bad.npz"
+    np.savez_compressed(npz, coords=np.zeros((0, 5, 3)))
+    with pytest.raises(ValueError, match="at least one structure"):
+        load_data(str(npz))
+
+
+def test_load_data_raises_fewer_than_two_atoms(tmp_path):
+    """load_data raises ValueError when coords has fewer than 2 atoms."""
+    npz = tmp_path / "bad.npz"
+    np.savez_compressed(npz, coords=np.zeros((2, 1, 3)))
+    with pytest.raises(ValueError, match="at least 2 atoms"):
+        load_data(str(npz))
+
+
+def test_load_data_raises_non_finite(tmp_path):
+    """load_data raises ValueError when coords contains NaN or inf."""
+    npz = tmp_path / "bad.npz"
+    coords = np.zeros((2, 5, 3), dtype=np.float32)
+    coords[0, 0, 0] = np.nan
+    np.savez_compressed(npz, coords=coords)
+    with pytest.raises(ValueError, match="non-finite"):
+        load_data(str(npz))
+
+
+def test_load_data_raises_file_not_found():
+    """load_data raises ValueError when file does not exist."""
+    with pytest.raises(ValueError, match="does not exist or cannot be read"):
+        load_data("/nonexistent/path.npz")
 
 
 def test_display_path_with_root():

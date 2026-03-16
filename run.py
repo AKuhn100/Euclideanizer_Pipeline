@@ -2,7 +2,7 @@
 """
 Global orchestration for DistMap + Euclideanizer pipeline.
 
-  python run.py --config path/to/config.yaml [--data /path/to/data.gro] [--no-plots]
+  python run.py --config path/to/config.yaml [--data /path/to/data.npz] [--no-plots]
   python run.py --config path/to/config.yaml --distmap.beta_kl 0.01 0.05 --no-plots
 
 Config file is required (--config). Training requires a dataset path: set --data or data.path in config.

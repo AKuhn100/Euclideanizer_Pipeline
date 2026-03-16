@@ -21,7 +21,7 @@ _PIPELINE_ROOT = os.path.dirname(_TEST_DIR)
 if _PIPELINE_ROOT not in sys.path:
     sys.path.insert(0, _PIPELINE_ROOT)
 
-DATA_GRO = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.gro")
+DATA_NPZ = os.path.join(_PIPELINE_ROOT, "tests", "test_data", "spheres.npz")
 CONFIG_SMOKE = os.path.join(_TEST_DIR, "config_smoke.yaml")
 
 
@@ -37,8 +37,8 @@ def _smoke_test_num_gpus():
 @pytest.mark.slow
 def test_pipeline_smoke_run(tmp_path):
     """Run the full pipeline with minimal config and sphere data; assert DistMap and Euclideanizer outputs exist."""
-    if not os.path.isfile(DATA_GRO):
-        pytest.skip(f"Smoke test requires {DATA_GRO!r} (run from pipeline root with tests/test_data/spheres.gro)")
+    if not os.path.isfile(DATA_NPZ):
+        pytest.skip(f"Smoke test requires {DATA_NPZ!r} (run from pipeline root: python tests/test_data/generate_spheres.py)")
     if not os.path.isfile(CONFIG_SMOKE):
         pytest.skip(f"Smoke config not found: {CONFIG_SMOKE!r}")
 
@@ -48,10 +48,10 @@ def test_pipeline_smoke_run(tmp_path):
     output_dir = os.path.join(tmp_path, "smoke_out")
     if n_gpus >= 2:
         seeds_to_check = (0, 1)
-        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", output_dir, "--no-resume", "--yes-overwrite"]
+        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_NPZ, "--output-dir", output_dir, "--no-resume", "--yes-overwrite"]
     else:
         seeds_to_check = (0,)
-        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_GRO, "--output-dir", output_dir, "--no-resume", "--yes-overwrite", "--data.split_seed", "0"]
+        argv = ["run.py", "--config", CONFIG_SMOKE, "--data", DATA_NPZ, "--output-dir", output_dir, "--no-resume", "--yes-overwrite", "--data.split_seed", "0"]
 
     argv_save = sys.argv
     cwd_save = os.getcwd()

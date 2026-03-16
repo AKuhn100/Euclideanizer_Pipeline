@@ -14,7 +14,7 @@
 
 ## 2. How it works (walkthrough)
 
-1. **Invocation.** Run `python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.gro]`. If multiple GPUs are available (or `n_gpus` in config is > 1), the script automatically spawns one worker per GPU (shared study DB). Otherwise it runs a single process. The script loads the HPO config (output_dir, data_path, seed, **epoch_cap**, pipeline_config, search_space, optuna, n_gpus) and the **base pipeline config** (see below).
+1. **Invocation.** Run `python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.npz]`. If multiple GPUs are available (or `n_gpus` in config is > 1), the script automatically spawns one worker per GPU (shared study DB). Otherwise it runs a single process. The script loads the HPO config (output_dir, data_path, seed, **epoch_cap**, pipeline_config, search_space, optuna, n_gpus) and the **base pipeline config** (see below).
 
 2. **Pipeline config = template.** The `pipeline_config` YAML is the **template** for every trial. It must contain the full pipeline structure (distmap, euclideanizer, plotting, analysis, scoring, data, etc.). For each trial we: (a) deep-copy this template; (b) set `output_dir`, `data.path`, `data.split_seed` from the HPO config; (c) if `epoch_cap` is set in the HPO config, set both `distmap.epochs` and `euclideanizer.epochs` to it (otherwise use the template's epochs, collapsed to a single value); (d) overlay Optuna-suggested values **only** for the keys listed in `search_space`. Everything not in search_space (learning_rate, batch_size, plotting, analysis, memory_efficient, etc.) comes from the template unchanged.
 

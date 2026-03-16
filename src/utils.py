@@ -13,64 +13,43 @@ from torch.utils.data import random_split
 from torch.utils.data.dataset import Subset
 
 
-def load_data(gro_file: str) -> np.ndarray:
-    """Load coordinate frames from a GRO-style file; returns (n_frames, n_atoms, 3) array."""
-    coords_list = []
-    with open(gro_file, "r") as f:
-        lines = f.readlines()
-    i = 0
-    while i < len(lines):
-        title = lines[i].strip()
-        if not title.startswith("Chromosome"):
-            i += 1
-            continue
-        if not title:
-            raise ValueError(
-                f"GRO file {gro_file!r} line {i + 1}: title line is empty after strip. Expected non-empty title."
-            )
-        i += 1
-        if i >= len(lines):
-            break
-        try:
-            n_atoms = int(lines[i].strip())
-        except ValueError as e:
-            raise ValueError(
-                f"GRO file {gro_file!r} line {i + 1}: expected integer atom count, got {lines[i].strip()!r}."
-            ) from e
-        if n_atoms <= 0:
-            raise ValueError(
-                f"GRO file {gro_file!r} line {i + 1}: atom count must be positive, got {n_atoms}."
-            )
-        i += 1
-        frame_coords = np.zeros((n_atoms, 3))
-        for j in range(n_atoms):
-            line_idx = i + j
-            if line_idx >= len(lines):
-                raise ValueError(
-                    f"GRO file {gro_file!r} line {line_idx + 1}: expected {n_atoms} atom lines, got {j}."
-                )
-            parts = lines[line_idx].split()
-            if len(parts) < 6:
-                raise ValueError(
-                    f"GRO file {gro_file!r} line {line_idx + 1}: atom line must have at least 6 columns "
-                    f"(resnum, resname, atomname, atomnum, x, y, z), got {len(parts)}."
-                )
-            try:
-                frame_coords[j] = [float(parts[3]), float(parts[4]), float(parts[5])]
-            except ValueError as e:
-                raise ValueError(
-                    f"GRO file {gro_file!r} line {line_idx + 1}: columns 4–6 must be numeric x,y,z, got "
-                    f"{parts[3]!r}, {parts[4]!r}, {parts[5]!r}."
-                ) from e
-        coords_list.append(frame_coords)
-        i += n_atoms + 1
-    out = np.array(coords_list)
-    if not np.isfinite(out).all():
-        n_bad = np.logical_not(np.isfinite(out)).sum()
+def load_data(npz_path: str) -> np.ndarray:
+    """Load coordinate array from an NPZ file (key 'coords'); returns (n_structures, n_atoms, 3) float32."""
+    if not os.path.isfile(npz_path):
+        raise ValueError(f"Dataset file does not exist or cannot be read: {npz_path!r}.")
+    try:
+        data = np.load(npz_path, allow_pickle=False)
+    except Exception as e:
+        raise ValueError(f"Cannot load NPZ file {npz_path!r}: {e}.") from e
+    try:
+        coords = data["coords"]
+    except KeyError:
         raise ValueError(
-            f"GRO file {gro_file!r} contains non-finite coordinates ({n_bad} NaN/inf values). "
-            "Coordinates must be finite."
+            f"NPZ file {npz_path!r} does not contain required key 'coords'. "
+            "Expected one array with key 'coords' of shape (n_structures, n_atoms, 3)."
         )
+    if coords.ndim != 3:
+        raise ValueError(
+            f"NPZ file {npz_path!r}: 'coords' must have 3 dimensions (n_structures, n_atoms, 3), got ndim={coords.ndim}."
+        )
+    if coords.shape[2] != 3:
+        raise ValueError(
+            f"NPZ file {npz_path!r}: 'coords' last dimension must be 3 (x,y,z), got shape[-1]={coords.shape[2]}."
+        )
+    if coords.shape[0] < 1:
+        raise ValueError(
+            f"NPZ file {npz_path!r}: 'coords' must have at least one structure, got shape[0]={coords.shape[0]}."
+        )
+    if coords.shape[1] < 2:
+        raise ValueError(
+            f"NPZ file {npz_path!r}: 'coords' must have at least 2 atoms (distance map requires 2+), got shape[1]={coords.shape[1]}."
+        )
+    if not np.isfinite(coords).all():
+        n_bad = np.logical_not(np.isfinite(coords)).sum()
+        raise ValueError(
+            f"NPZ file {npz_path!r}: 'coords' contains non-finite values ({n_bad} NaN/inf). Coordinates must be finite."
+        )
+    out = np.asarray(coords, dtype=np.float32)
     return out
 
 
