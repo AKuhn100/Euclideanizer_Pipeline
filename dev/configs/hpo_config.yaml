@@ -1,6 +1,6 @@
 output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs/3-14"
 
-data_path: /scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.gro
+data_path: /scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz
 seed: 10
 
 epoch_cap: 500

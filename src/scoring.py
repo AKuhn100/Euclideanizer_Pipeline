@@ -568,7 +568,7 @@ def render_scores_spider(
         ax.text(
             angle, label_r, raw,
             ha="center", va=va,
-            fontsize=FONT_SIZE_SMALL,
+            fontsize=FONT_SIZE_TINY,
             color=label_color,
             fontweight=label_weight,
             linespacing=1.3,

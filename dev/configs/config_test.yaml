@@ -12,7 +12,7 @@ data:
   exp_stats_chunk_size: 1000   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "./Outputs/Test/RANGE/Spheres_Plotting_Test"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/Test/RANGE/Spheres_Plotting_Test"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:

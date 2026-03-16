@@ -138,7 +138,8 @@ def collect_samples(
 ) -> list[tuple[str, str]]:
     """Collect sample text from input file(s). Handle directory confirmation and binary files."""
     if os.path.isfile(data_path):
-        samples = [_sample_one_file(data_path, os.path.basename(data_path), sample_lines)]
+        name = os.path.basename(data_path)
+        samples = [(name, _sample_one_file(data_path, name, sample_lines))]
         return samples
 
     names = sorted(f for f in os.listdir(data_path) if os.path.isfile(os.path.join(data_path, f)))

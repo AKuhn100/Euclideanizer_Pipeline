@@ -6,20 +6,20 @@ calibration_training_batch_cap: 4096
 calibration_decode_batch_cap: 4096
 
 data:
-  path: "/scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.gro"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data
+  path: "/scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data
   split_seed: [10]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
   training_split: 0.8   # fraction for training; same for both models, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_new_diagonal_recon_test"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_auto-calibrate_test"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
   latent_dim: [512]
   beta_kl: [0.05]
   epochs: [500]
-  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [2.0e-4]
   lambda_mse: [5.0]
   lambda_w_recon: [3.0]
@@ -33,7 +33,7 @@ distmap:
 # Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
 euclideanizer:
   epochs: [500]
-  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [4.0e-4]
   lambda_mse: [10.0]
   lambda_w_recon: [3.0]
