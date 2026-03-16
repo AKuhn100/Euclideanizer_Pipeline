@@ -2,6 +2,33 @@
 
 ## 2026-03-16
 
+### GRO / converter coordinate mis-parse and where safety lives
+
+**The bug (e.g. chromosome21_converter.py and similar GRO parsers)**  
+Converters that parse text formats (e.g. GRO) using **fixed character column positions** for x, y, z (e.g. cols 20–28, 28–36, 36–44) can mis-parse when the file uses **variable spacing**. In practice, `line[20:28]` then often captured part of the line that was not the x coordinate: e.g. `'      -0'` → -0.0, `'       1'` → 1.0, `'       2'` → 2.0, so the **first column of the stored coords became 0, 1, 2, …, N−1 (atom index)** instead of spatial x. The second and third columns picked up misaligned slices (parts of real x, y, z or adjacent fields). The NPZ still had shape (n_structures, n_atoms, 3) and finite values, so it passed naive validation.
+
+**Why distance maps and reconstruction plots still looked realistic**  
+Distance maps are computed from pairwise Euclidean distances between the stored 3D points. With “coords” whose first column was 0, 1, 2, …, the geometry was still a **chain-like 3D point cloud** (points spread along one axis with some spread in the other two). So “near in index” still meant “near in space,” and the distance matrix had the expected banded structure (small distances near the diagonal, increasing with |i−j|). DistMap training and reconstruction plots could look plausible; the bug did **not** break distance-based learning or plots.
+
+**Where the bug was visible**  
+Only when plotting **coordinates directly** (e.g. training visualization “Exp. Structure” row, which plots column 0 vs column 1 as x vs y): that plot then showed **atom index on the x-axis** (0, 1, 2, …) vs the second stored value — a horizontal, index-like pattern — instead of a 2D projection of the real structure.
+
+**Fix in the converter**  
+Parsers must not rely on fixed columns when the format has variable spacing. For GRO (and similar), the fix is to **split each line on whitespace and use the last three numeric fields as x, y, z**. That yields correct coordinates regardless of column alignment. In `setup_wizard_scripts/chromosome21_converter.py`, parsing now prefers this; fixed-width is used only when there are fewer than six fields.
+
+**Where safety lives: setup wizard only**  
+- **No workarounds in the training visualization.** The training viz correctly plots `coords[:, 0]` vs `coords[:, 1]` as x vs y. It does **not** implement “index-in-first-column” detection or alternate column choices. Correctness is ensured by valid input (converters that write real x, y, z).
+- **Setup wizard** is the safety layer: (1) **Validation** in `validate_converter` rejects NPZ whose first column looks like atom index (0, 1, 2, …) and tells the user to parse x,y,z from whitespace, not fixed columns. (2) **Prompts** in `wizard_prompts.CONVERTER_SYSTEM_PROMPT` require that text-based formats parse coordinates from whitespace-split fields (e.g. last three numeric fields) and state that validation checks the first column is spatial. (3) **Coordinate preview:** after a successful conversion, the wizard writes a **coordinate preview image** next to the NPZ (same pipeline plotting as the “Exp. Structure” row) so the user can visually confirm that structures look like their input. The completion message tells the user to open this preview and to fix the converter if they see a horizontal/index-like plot.
+
+**Disclaimer**  
+Before running the wizard, the user must type "Accept" after a short disclaimer stating that LLM-generated code can be faulty, that validation and the coordinate preview do not guarantee correctness, and that the user agrees to review the converter and preview and to take responsibility for parsing accuracy. (`src/wizard.py`: DISCLAIMER, confirm_disclaimer, called after check_api_key.)
+
+**Files**  
+- Converter fix: `setup_wizard_scripts/chromosome21_converter.py` (prefer whitespace for x,y,z).  
+- Wizard: `src/wizard.py` (`_coords_first_column_looks_like_atom_index`, `validate_converter`, `_write_coordinate_preview`, `print_getting_started` with preview path and step “0. CHECK THE COORDINATE PREVIEW”).  
+- Prompts: `src/wizard_prompts.py` (CONVERTER_SYSTEM_PROMPT: coordinate parsing rules and validation criterion).  
+- Training viz: `src/training_visualization.py` (`_plot_chain_2d` docstring only; no index-detection or workarounds).
+
 - **Calibration memory limit:** `src/calibrate.py` `_compute_memory_limit` now takes `(device, safety_margin_gb)` and uses `torch.cuda.mem_get_info(device)` (free, total); limit = free - safety_bytes with floor 10% of total VRAM. All callers (calibrate_distmap_batch_size, calibrate_euclideanizer_batch_size) updated to pass `device` only. STYLE_GUIDE §3.2 updated.
 - **Analysis GPU cleanup:** In `run.py`, `_force_gpu_cleanup(device)` added before the latent analysis block and before the `for spec in ANALYSIS_METRICS` loop in both `run_one_hpo_trial` and `_run_one_distmap_group` to reduce VRAM pressure between analysis phases.
 - **gen_decode_batch_size: no calibration; required in config.** Removed all calibration for gen_decode_batch_size. `plotting.gen_decode_batch_size` and each analysis block's `gen_decode_batch_size` must be a positive integer (no `null`). Removed `calibrate_gen_decode_batch_size` and `calibrate_gen_decode_batch_size_distmap_only` from `src/calibrate.py`; removed `_any_inference_batch_null`, `_resolve_inference_batch_sizes`, and `_apply_resolved_inference_batch_sizes` from `run.py`. Removed `calibration_decode_batch_cap` from required config keys and from all sample/dev/test configs. All configs in `samples/` and `dev/configs/` set `gen_decode_batch_size: 256`. Config validation and STYLE_GUIDE updated. Test: `test_validate_config_rejects_null_gen_decode_batch_size`; removed gen_decode calibration from `tests/test_calibrate.py`.

@@ -17,11 +17,18 @@ No other keys are required. The key name must be exactly `coords`.
 ## Validation criteria the output must satisfy
 
 - ndim == 3
-- shape[2] == 3
+- shape[2] == 3 (last dimension is x, y, z spatial coordinates)
 - shape[0] >= 1
 - shape[1] >= 2
 - All values finite (no NaN, no inf)
 - Dtype must be castable to float32
+- The first column must be spatial x (or equivalent); it must NOT be atom index (0, 1, 2, ...). Validation rejects output where the first column is strongly correlated with 0..n_atoms-1.
+
+## Coordinate parsing (critical)
+
+- The three columns of each structure must be **spatial x, y, z** (in any consistent units). The first column must NOT be atom index, residue number, or any non-spatial field.
+- For text-based formats (GRO, XYZ, PDB, CSV, etc.): **do not parse x,y,z using fixed character column positions**. Many files use variable spacing, so fixed columns mis-parse (e.g. reading atom number or part of a number as x). Instead, split each line on whitespace and take the **last three numeric fields** as x, y, z (or the three fields that are clearly x, y, z). This ensures correct coordinates regardless of column alignment.
+- If the format has a fixed-width spec (e.g. GRO cols 20-27 for x), only use it when you have verified the sample lines actually align; otherwise prefer whitespace splitting for the coordinate fields.
 
 ## Converter script requirements
 

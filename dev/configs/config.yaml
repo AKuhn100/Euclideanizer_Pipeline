@@ -11,7 +11,7 @@ data:
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_auto-calibrate_test"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-16/RANGE/Chrom_21_auto_calibration_test"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
@@ -37,7 +37,7 @@ euclideanizer:
   lambda_mse: [10.0]
   lambda_w_recon: [3.0]
   lambda_w_gen: [3.0]
-  lambda_w_diag_recon: [0.0, 1.0, 2.0, 5.0, 10.0]
+  lambda_w_diag_recon: [5.0]
   lambda_w_diag_gen: [2.0]
   num_diags: [50]   # number of diagonals (genomic separations) used for diagonal Wasserstein loss (1..num_diags)
   lambda_kabsch_mse: [1.0]   # weight for MSE(gt_coords, Kabsch_aligned(recon_coords)); 0 = off

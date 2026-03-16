@@ -155,6 +155,7 @@ def _plot_dm(ax, dm, vmax):
 
 
 def _plot_chain_2d(ax, coords, ref_coords=None, lim=None):
+    """Plot 2D chain: coords (N, 3) with columns x, y, z; plots x vs y. No workarounds."""
     if ref_coords is not None:
         coords = _kabsch(coords, ref_coords)
     x, y = coords[:, 0], coords[:, 1]

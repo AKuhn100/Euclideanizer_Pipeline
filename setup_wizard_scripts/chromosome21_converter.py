@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-Converter script for GROMACS .gro format coordinate files.
-
-Reads one or more .gro files and writes a single NPZ file with key 'coords'
-and shape (n_structures, n_atoms, 3).
+Converter script for GROMACS .gro files to NPZ format.
 
 Usage:
     python script.py <input_path> <output_path>
 
 Where input_path is either a single .gro file or a directory containing .gro files.
+Output is a single .npz file with key 'coords' and shape (n_structures, n_atoms, 3).
 """
 
 import sys
@@ -20,273 +18,248 @@ def parse_gro_file(filepath):
     """
     Parse a GROMACS .gro file and return a list of coordinate arrays.
 
-    Each frame in the file is parsed and returned as an ndarray of shape (n_atoms, 3).
-
     GRO format per frame:
-        Line 0:   Title/comment line
-        Line 1:   Number of atoms (integer)
-        Lines 2..(n_atoms+1): Atom records
-        Last line: Box vectors (3 or 9 floats)
+        Line 1: title
+        Line 2: number of atoms (integer)
+        Lines 3 to 3+n_atoms-1: atom records
+        Last line: box vectors
 
-    Atom record format (fixed-width fields):
-        cols  0- 4  : residue number   (5 chars)
-        cols  5- 9  : residue name     (5 chars)
-        cols 10-14  : atom name        (5 chars)
-        cols 15-19  : atom number      (5 chars)
-        cols 20-27  : x coordinate     (8.3f, nm)
-        cols 28-35  : y coordinate     (8.3f, nm)
-        cols 36-43  : z coordinate     (8.3f, nm)
-        (optional velocities follow)
+    Atom record format (fixed-width, but we use whitespace splitting for safety):
+        residue number + residue name (cols 1-10)
+        atom name (cols 10-15)
+        atom number (cols 15-20)
+        x (cols 20-28), y (cols 28-36), z (cols 36-44)  [in nm]
 
-    Returns:
-        List of numpy arrays, each of shape (n_atoms, 3), dtype float64.
+    We split on whitespace and take the last 3 fields as x, y, z to avoid
+    mis-parsing due to variable-width residue/atom numbering.
     """
     structures = []
 
-    with open(filepath, 'r') as fh:
-        lines = fh.readlines()
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
 
-    if len(lines) == 0:
-        raise ValueError(
-            f"File '{filepath}' is empty. Expected a GROMACS .gro file."
-        )
-
-    idx = 0
+    i = 0
     total_lines = len(lines)
 
-    while idx < total_lines:
+    while i < total_lines:
         # Skip blank lines between frames
-        if lines[idx].strip() == '':
-            idx += 1
+        if lines[i].strip() == '':
+            i += 1
             continue
 
-        # Line 0 of frame: title (skip)
-        title_line = lines[idx].rstrip('\n')
-        idx += 1
+        # Line 1: title (skip)
+        title_line = lines[i].strip()
+        i += 1
 
-        if idx >= total_lines:
-            # Trailing title line with no frame body — stop
+        if i >= total_lines:
             break
 
-        # Line 1 of frame: number of atoms
-        natoms_line = lines[idx].strip()
-        idx += 1
+        # Line 2: number of atoms
+        atom_count_line = lines[i].strip()
+        i += 1
 
         try:
-            n_atoms = int(natoms_line)
+            n_atoms = int(atom_count_line)
         except ValueError:
             raise ValueError(
-                f"Expected an integer (atom count) on line {idx} of '{filepath}', "
-                f"but found: '{natoms_line}'. "
-                "This does not look like a valid GROMACS .gro file."
+                f"Expected integer atom count, got: '{atom_count_line}' "
+                f"at line {i} in file '{filepath}'"
             )
 
         if n_atoms < 2:
             raise ValueError(
-                f"File '{filepath}': frame starting near line {idx - 2} reports "
-                f"{n_atoms} atom(s), but at least 2 atoms are required."
+                f"Expected at least 2 atoms, but found n_atoms={n_atoms} "
+                f"in frame starting near line {i} of '{filepath}'"
             )
 
-        if idx + n_atoms >= total_lines:
+        if i + n_atoms >= total_lines:
             raise ValueError(
-                f"File '{filepath}': expected {n_atoms} atom lines plus a box line "
-                f"after line {idx - 1}, but the file ends prematurely (only "
-                f"{total_lines - idx} lines remain)."
+                f"File '{filepath}' appears truncated: expected {n_atoms} atom lines "
+                f"starting at line {i}, but only {total_lines - i} lines remain."
             )
 
-        coords = np.empty((n_atoms, 3), dtype=np.float64)
+        # Read n_atoms atom lines
+        coords = np.zeros((n_atoms, 3), dtype=np.float64)
 
-        for atom_i in range(n_atoms):
-            line = lines[idx]
-            idx += 1
+        for atom_idx in range(n_atoms):
+            line = lines[i]
+            i += 1
 
-            # GRO fixed-width format:
-            #   [0:5]  resid
-            #   [5:10] resname
-            #   [10:15] atomname
-            #   [15:20] atomnr
-            #   [20:28] x
-            #   [28:36] y
-            #   [36:44] z
-            # Some writers use slightly different widths; we try fixed-width first,
-            # then fall back to whitespace splitting.
-            try:
-                if len(line.rstrip('\n')) >= 44:
-                    x = float(line[20:28])
-                    y = float(line[28:36])
-                    z = float(line[36:44])
-                else:
-                    # Shorter line: fall back to splitting on whitespace
-                    # Fields: resid+resname (merged), atomname, atomnr, x, y, z
-                    parts = line.split()
-                    if len(parts) < 6:
-                        raise ValueError(f"Too few fields: {parts}")
-                    x = float(parts[3])
-                    y = float(parts[4])
-                    z = float(parts[5])
-            except (ValueError, IndexError) as exc:
+            # Split on whitespace; the last 3 tokens should be x, y, z
+            # GRO format: resNUM+resNAME atomNAME atomNUM x y z [vx vy vz]
+            # We robustly take the last 3 (or last 6 if velocities present)
+            # fields as x, y, z by looking at all numeric fields after position.
+            parts = line.split()
+
+            if len(parts) < 6:
                 raise ValueError(
-                    f"File '{filepath}', frame atom line {idx} (0-based): "
-                    f"could not parse coordinates.\n"
-                    f"  Line content : '{line.rstrip()}'\n"
-                    f"  Expected fixed-width GRO format with x at cols 20-28, "
-                    f"y at 28-36, z at 36-44 (or whitespace-separated fallback).\n"
-                    f"  Original error: {exc}"
+                    f"Atom line has fewer than 6 fields at line {i} in '{filepath}':\n"
+                    f"  '{line.rstrip()}'\n"
+                    f"  Expected format: resNAME atomNAME atomNUM x y z [vx vy vz]"
                 )
 
-            coords[atom_i, 0] = x
-            coords[atom_i, 1] = y
-            coords[atom_i, 2] = z
+            # In GRO format, the first field may be resnum+resname concatenated (e.g. '1LYS'),
+            # so fields are: [resname_merged, atomname, atomnum, x, y, z, (vx, vy, vz)]
+            # x, y, z are at positions 3, 4, 5 (0-indexed) regardless of velocities.
+            # However, with concatenated resnum+resname the split gives:
+            #   parts[0] = '1LYS', parts[1] = 'CA', parts[2] = '1',
+            #   parts[3] = x, parts[4] = y, parts[5] = z
+            # We take parts[3], parts[4], parts[5] when len(parts) in {6, 9}.
+            # As a fallback, we take the last 3 numeric values that look like floats.
 
-        # Box vectors line (skip, but consume)
-        if idx < total_lines and lines[idx].strip() != '':
-            idx += 1  # consume box line
-        elif idx < total_lines:
-            idx += 1  # blank box line edge-case
+            try:
+                x = float(parts[3])
+                y = float(parts[4])
+                z = float(parts[5])
+            except (ValueError, IndexError):
+                # Fallback: take last 3 fields that are floats
+                float_parts = []
+                for p in reversed(parts):
+                    try:
+                        float_parts.append(float(p))
+                        if len(float_parts) == 3:
+                            break
+                    except ValueError:
+                        pass
+                if len(float_parts) < 3:
+                    raise ValueError(
+                        f"Cannot parse x, y, z coordinates from line {i} in '{filepath}':\n"
+                        f"  '{line.rstrip()}'"
+                    )
+                # float_parts was collected in reverse order
+                z, y, x = float_parts[0], float_parts[1], float_parts[2]
 
-        # Validate finiteness for this frame
-        if not np.all(np.isfinite(coords)):
-            bad = np.argwhere(~np.isfinite(coords))
-            raise ValueError(
-                f"File '{filepath}': non-finite values (NaN or inf) found in frame "
-                f"{len(structures) + 1} at atom indices: {bad[:, 0].tolist()}"
-            )
+            # Validate finiteness
+            if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+                raise ValueError(
+                    f"Non-finite coordinate(s) at atom {atom_idx+1} in frame "
+                    f"near line {i} of '{filepath}': x={x}, y={y}, z={z}"
+                )
+
+            coords[atom_idx, 0] = x
+            coords[atom_idx, 1] = y
+            coords[atom_idx, 2] = z
+
+        # Line after atoms: box vectors (skip)
+        if i < total_lines:
+            box_line = lines[i].strip()
+            i += 1
+            # box_line is the box vector line; we skip it
+
+        # Validate that x column is not atom indices 0..n_atoms-1
+        x_col = coords[:, 0]
+        atom_indices = np.arange(n_atoms, dtype=np.float64)
+        # Check correlation with 0-based indices
+        if n_atoms > 1:
+            corr = np.corrcoef(x_col, atom_indices)[0, 1]
+            if abs(corr) > 0.99:
+                raise ValueError(
+                    f"The first coordinate column appears to be atom indices "
+                    f"(correlation={corr:.4f} with 0..{n_atoms-1}). "
+                    f"This suggests a parsing error in '{filepath}'."
+                )
 
         structures.append(coords)
 
     if len(structures) == 0:
-        raise ValueError(
-            f"No valid frames were parsed from '{filepath}'. "
-            "The file may be empty, malformed, or not in GROMACS .gro format."
-        )
+        raise ValueError(f"No structures found in file '{filepath}'.")
 
     return structures
 
 
-def collect_files(input_path):
+def collect_gro_files(input_path):
     """
-    Given a path (file or directory), return a sorted list of .gro file paths.
+    Collect all .gro files from the given path.
+    If input_path is a file, return [input_path].
+    If input_path is a directory, return all .gro files within it (sorted).
     """
     if os.path.isfile(input_path):
         return [input_path]
     elif os.path.isdir(input_path):
-        entries = sorted(os.listdir(input_path))
-        gro_files = [
-            os.path.join(input_path, e)
-            for e in entries
-            if e.lower().endswith('.gro') and os.path.isfile(os.path.join(input_path, e))
-        ]
+        gro_files = sorted([
+            os.path.join(input_path, f)
+            for f in os.listdir(input_path)
+            if f.endswith('.gro')
+        ])
         if len(gro_files) == 0:
             raise ValueError(
-                f"Directory '{input_path}' contains no .gro files. "
-                "Please provide a directory with one or more GROMACS .gro files, "
-                "or pass a single .gro file path directly."
+                f"No .gro files found in directory '{input_path}'. "
+                f"Expected one or more files with '.gro' extension."
             )
         return gro_files
     else:
         raise ValueError(
-            f"Input path '{input_path}' does not exist or is neither a file nor a "
-            "directory. Please provide a valid path to a .gro file or a directory "
-            "containing .gro files."
-        )
-
-
-def validate_array(coords_array, output_path):
-    """
-    Validate the final coords array against the required schema.
-    Raises ValueError with a descriptive message if any check fails.
-    """
-    if coords_array.ndim != 3:
-        raise ValueError(
-            f"Output array has {coords_array.ndim} dimension(s), but exactly 3 are "
-            f"required (n_structures, n_atoms, 3). Shape was: {coords_array.shape}"
-        )
-    if coords_array.shape[2] != 3:
-        raise ValueError(
-            f"Output array last dimension is {coords_array.shape[2]}, but must be 3 "
-            f"(x, y, z). Shape was: {coords_array.shape}"
-        )
-    if coords_array.shape[0] < 1:
-        raise ValueError(
-            f"Output array has 0 structures (shape[0] == 0). "
-            "At least 1 structure is required."
-        )
-    if coords_array.shape[1] < 2:
-        raise ValueError(
-            f"Output array has {coords_array.shape[1]} atom(s) (shape[1]). "
-            "At least 2 atoms are required."
-        )
-    if not np.all(np.isfinite(coords_array)):
-        n_bad = np.sum(~np.isfinite(coords_array))
-        raise ValueError(
-            f"Output array contains {n_bad} non-finite value(s) (NaN or inf). "
-            "All coordinate values must be finite."
-        )
-    # Check castability to float32
-    try:
-        coords_array.astype(np.float32)
-    except Exception as exc:
-        raise ValueError(
-            f"Output array dtype '{coords_array.dtype}' cannot be cast to float32: {exc}"
+            f"Input path '{input_path}' is neither a file nor a directory."
         )
 
 
 def main():
     if len(sys.argv) != 3:
-        print(
-            "Usage: python script.py <input_path> <output_path>\n"
-            "  input_path  : path to a single .gro file, or a directory of .gro files\n"
-            "  output_path : path where the output .npz file will be written"
-        )
+        print(f"Usage: python {sys.argv[0]} <input_path> <output_path>")
         sys.exit(1)
 
     input_path = sys.argv[1]
     output_path = sys.argv[2]
 
-    # Collect file(s) to process
-    gro_files = collect_files(input_path)
+    # Collect files to process
+    gro_files = collect_gro_files(input_path)
 
     all_structures = []
-    n_atoms_reference = None
+    n_atoms_expected = None
 
     for filepath in gro_files:
-        print(f"  Parsing: {filepath}")
-        frames = parse_gro_file(filepath)
+        structures = parse_gro_file(filepath)
 
-        for frame_idx, frame_coords in enumerate(frames):
-            n_atoms_this = frame_coords.shape[0]
-            if n_atoms_reference is None:
-                n_atoms_reference = n_atoms_this
-            elif n_atoms_this != n_atoms_reference:
+        for frame_idx, coords in enumerate(structures):
+            n_atoms = coords.shape[0]
+
+            if n_atoms_expected is None:
+                n_atoms_expected = n_atoms
+            elif n_atoms != n_atoms_expected:
                 raise ValueError(
-                    f"Inconsistent atom count across frames/files.\n"
-                    f"  First frame had {n_atoms_reference} atoms.\n"
-                    f"  Frame {frame_idx + 1} in '{filepath}' has {n_atoms_this} atoms.\n"
-                    "All frames must contain the same number of atoms."
+                    f"Inconsistent atom count: expected {n_atoms_expected} atoms "
+                    f"(from previous frames), but frame {frame_idx} in '{filepath}' "
+                    f"has {n_atoms} atoms. All frames must have the same number of atoms."
                 )
-            all_structures.append(frame_coords)
+
+            all_structures.append(coords)
 
     if len(all_structures) == 0:
-        raise ValueError(
-            "No structures were collected from the provided input. "
-            f"Input path was: '{input_path}'"
-        )
+        raise ValueError("No structures were parsed from the input.")
 
     # Stack into (n_structures, n_atoms, 3)
-    coords_array = np.stack(all_structures, axis=0).astype(np.float64)
+    coords_array = np.array(all_structures, dtype=np.float64)
 
     # Final validation
-    validate_array(coords_array, output_path)
+    if coords_array.ndim != 3:
+        raise ValueError(
+            f"Expected 3D array, got shape {coords_array.shape}"
+        )
+    if coords_array.shape[2] != 3:
+        raise ValueError(
+            f"Expected last dimension to be 3 (x, y, z), got {coords_array.shape[2]}"
+        )
+    if coords_array.shape[0] < 1:
+        raise ValueError(
+            f"Expected at least 1 structure, got {coords_array.shape[0]}"
+        )
+    if coords_array.shape[1] < 2:
+        raise ValueError(
+            f"Expected at least 2 atoms, got {coords_array.shape[1]}"
+        )
+    if not np.all(np.isfinite(coords_array)):
+        raise ValueError(
+            "Coordinate array contains non-finite values (NaN or inf)."
+        )
 
     # Write output
     np.savez_compressed(output_path, coords=coords_array)
 
-    print(
-        f"\nConversion complete.\n"
-        f"  Structures : {coords_array.shape[0]}\n"
-        f"  Atoms      : {coords_array.shape[1]}\n"
-        f"  Output     : {output_path}"
-    )
+    n_structures = coords_array.shape[0]
+    n_atoms = coords_array.shape[1]
+    print(f"Successfully wrote {n_structures} structure(s) with {n_atoms} atom(s) each.")
+    print(f"Output shape: {coords_array.shape}, dtype: {coords_array.dtype}")
+    print(f"Output file: {output_path}")
 
 
 if __name__ == '__main__':

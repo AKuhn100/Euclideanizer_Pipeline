@@ -43,6 +43,35 @@ See README.md for full format details.
 
 CONVERTER_SUBPROCESS_TIMEOUT = 120
 
+DISCLAIMER = """
+The setup wizard uses an LLM to generate a converter script from a sample of your data.
+LLM-generated code can contain errors. Validation checks the output NPZ for shape and
+basic sanity (e.g. that coordinates are not plainly wrong), and a coordinate preview
+is written for visual inspection — but correctness of parsing is not guaranteed.
+
+By proceeding, you agree to review the generated converter and the coordinate preview,
+and to take responsibility for verifying that the conversion accurately represents your
+input data before using the NPZ in the pipeline.
+"""
+
+
+def _red(s: str) -> str:
+    """Bold red for TTY (matches run.py styling); plain text when not a TTY."""
+    if sys.stdout.isatty():
+        return f"\033[1;31m{s}\033[0m"
+    return s
+
+
+def confirm_disclaimer() -> None:
+    """Print the disclaimer and require the user to type Accept to continue. Exit otherwise."""
+    for line in DISCLAIMER.strip().split("\n"):
+        print(_red(line))
+    print()
+    reply = input(_red('Type "Accept" to proceed, or anything else to abort: ')).strip()
+    if reply.lower() != "accept":
+        print(_red("Aborted."))
+        sys.exit(0)
+
 
 def main() -> None:
     """Top-level orchestrator. Parses args, runs wizard steps, handles errors."""
@@ -80,6 +109,7 @@ def main() -> None:
 
     output_path = resolve_output_path(data_path, args.output)
     api_key = check_api_key()
+    confirm_disclaimer()
     samples = collect_samples(data_path, args.sample_lines, args.max_files, args.confirm_large)
     user_prompt = build_user_prompt(samples)
 
@@ -118,7 +148,13 @@ def main() -> None:
     with np.load(output_path, allow_pickle=False) as data:
         coords = data["coords"]
         n_structures, n_atoms, _ = coords.shape
-    print_getting_started(data_path, output_path, n_structures, n_atoms, converter_path)
+
+    preview_path = _write_coordinate_preview(output_path)
+    if preview_path:
+        print(f"Coordinate preview saved: {preview_path}")
+        print("  (Inspect that structures look like your input; axes are x vs y from coords.)")
+
+    print_getting_started(data_path, output_path, n_structures, n_atoms, converter_path, preview_path)
 
 
 def check_api_key() -> str:
@@ -166,7 +202,7 @@ def collect_samples(
             "API usage is billed to the account associated with your ANTHROPIC_API_KEY.\n"
         )
         reply = input('Type "yes" to continue or anything else to abort: ').strip()
-        if reply != "yes":
+        if reply.lower() != "yes":
             print("Aborted.")
             sys.exit(0)
 
@@ -220,6 +256,24 @@ def call_claude(api_key: str, system_prompt: str, user_prompt: str) -> str:
         print(text, file=sys.stderr)
         raise ValueError("No Python code block found in API response.")
     return match.group(1).strip()
+
+
+def _coords_first_column_looks_like_atom_index(coords: np.ndarray) -> bool:
+    """True if the first column is strongly index-like (0,1,...,N-1), indicating mis-parse."""
+    n_atoms = coords.shape[1]
+    if n_atoms < 3:
+        return False
+    idx = np.arange(n_atoms, dtype=np.float64)
+    # Check first few structures; if any pass, we flag it
+    n_check = min(3, coords.shape[0])
+    for s in range(n_check):
+        c0 = np.asarray(coords[s, :, 0], dtype=np.float64)
+        if np.allclose(c0, idx, atol=0.6):
+            return True
+        r = np.corrcoef(c0, idx)[0, 1]
+        if np.isfinite(r) and r > 0.995 and np.all(np.diff(c0) > 1e-6):
+            return True
+    return False
 
 
 def validate_converter(script_text: str, input_path: str) -> tuple[bool, str, str | None]:
@@ -288,6 +342,21 @@ def validate_converter(script_text: str, input_path: str) -> tuple[bool, str, st
         data.close()
         os.unlink(temp_npz)
         return (False, "coords dtype is not castable to float32.", None)
+
+    # Reject if first column looks like atom index (0,1,2,...) — indicates fixed-width
+    # parsing on variable-spaced lines (e.g. GRO), which puts atom number in column 0.
+    if _coords_first_column_looks_like_atom_index(coords):
+        data.close()
+        os.unlink(temp_npz)
+        return (
+            False,
+            "The first column of coords appears to be atom index (0, 1, 2, ...) instead of "
+            "spatial x. This usually means the converter used fixed character positions for x,y,z "
+            "on a file with variable spacing (e.g. GRO). Parse x,y,z from the last three "
+            "whitespace-separated numeric fields per line, not fixed columns.",
+            None,
+        )
+
     data.close()
     return (True, "", temp_npz)
 
@@ -319,6 +388,57 @@ def save_converter(script_text: str, input_stem: str, failed: bool) -> str:
         n += 1
 
 
+def _write_coordinate_preview(npz_path: str) -> str | None:
+    """
+    Write a coordinate preview image next to the NPZ using the same pipeline
+    plotting as the training visualization (Exp. Structure row). Lets the user
+    confirm that converted structures look like their input (x,y,z not index).
+    Returns the path of the written image, or None if plotting failed.
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from .training_visualization import _plot_chain_2d, _RC
+    except Exception:
+        return None
+    try:
+        with np.load(npz_path, allow_pickle=False) as data:
+            coords = np.asarray(data["coords"], dtype=np.float32)
+    except Exception:
+        return None
+    n_structures, n_atoms, _ = coords.shape
+    if n_structures < 1 or n_atoms < 2:
+        return None
+    n_probe = min(6, n_structures)
+    if n_structures <= n_probe:
+        indices = list(range(n_structures))
+    else:
+        indices = [int(round(i * (n_structures - 1) / (n_probe - 1))) for i in range(n_probe)]
+    probe = coords[indices].copy()
+    probe -= probe.mean(axis=1, keepdims=True)
+    axis_lim = float(np.abs(probe).max()) * 1.15
+    dirname = os.path.dirname(npz_path)
+    stem = os.path.splitext(os.path.basename(npz_path))[0]
+    out_path = os.path.join(dirname, f"{stem}_coordinate_preview.png")
+    with plt.rc_context(_RC):
+        fig, axes = plt.subplots(
+            1, n_probe, figsize=(2.0 * n_probe, 2.0), facecolor=_RC["figure.facecolor"]
+        )
+        if n_probe == 1:
+            axes = [axes]
+        for j, ax in enumerate(axes):
+            _plot_chain_2d(ax, probe[j], lim=axis_lim)
+        fig.suptitle(
+            "Coordinate preview (x vs y from converted NPZ — check against your input)",
+            fontsize=9, color=_RC["axes.labelcolor"],
+        )
+        plt.tight_layout()
+        fig.savefig(out_path, dpi=150, facecolor=_RC["figure.facecolor"])
+    plt.close(fig)
+    return out_path
+
+
 def resolve_output_path(input_path: str, output_arg: str | None) -> str:
     """Determine final NPZ output path from input path and optional --output. Raise SystemExit if --output given but does not end with .npz."""
     if output_arg and str(output_arg).strip():
@@ -345,7 +465,12 @@ def _input_stem(data_path: str) -> str:
 
 
 def print_getting_started(
-    input_path: str, output_npz: str, n_structures: int, n_atoms: int, converter_path: str
+    input_path: str,
+    output_npz: str,
+    n_structures: int,
+    n_atoms: int,
+    converter_path: str,
+    coordinate_preview_path: str | None = None,
 ) -> None:
     """Print completion summary and getting-started workflow."""
     converter_rel = os.path.basename(converter_path)
@@ -359,6 +484,8 @@ def print_getting_started(
     print(f"Structures:   {n_structures}")
     print(f"Atoms:        {n_atoms}")
     print(f"Converter:    setup_wizard_scripts/{converter_rel}")
+    if coordinate_preview_path:
+        print(f"Preview:      {coordinate_preview_path}")
     print()
     print("To re-run the converter on new data:")
     print(f"    python setup_wizard_scripts/{converter_rel} /path/to/new/data output.npz")
@@ -369,6 +496,13 @@ def print_getting_started(
     print()
     print("Your data is now ready. Here is the recommended workflow:")
     print()
+    if coordinate_preview_path:
+        print("0. CHECK THE COORDINATE PREVIEW")
+        print("   Open the coordinate_preview image next to your NPZ. Confirm that the")
+        print("   plotted structures look like your input (real 3D shapes). If you see")
+        print("   a horizontal line or 'atom index vs value', the converter parsed")
+        print("   coordinates incorrectly; fix the converter and re-run.")
+        print()
     print("1. CONFIGURE")
     print("   Copy samples/config_sample.yaml to your working directory and edit it.")
     print("   Set data.path to your output NPZ file.")
