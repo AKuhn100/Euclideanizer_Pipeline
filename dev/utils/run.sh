@@ -12,4 +12,4 @@ source /scratch/amk19/Euclideanizer/.venv/bin/activate
 
 module load GCCcore/13.3.0 FFmpeg/7.0.2
 
-python /scratch/amk19/Euclideanizer/Pipeline/run.py --config /scratch/amk19/Euclideanizer/config_21.yaml
+python /scratch/amk19/Euclideanizer/Pipeline/run_hpo.py --config /scratch/amk19/Euclideanizer/Pipeline/dev/configs/hpo_config.yaml

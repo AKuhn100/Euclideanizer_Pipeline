@@ -487,6 +487,7 @@ def render_scores_spider(
         PLOT_DPI,
         FONT_SIZE_TICK,
         FONT_SIZE_SMALL,
+        FONT_SIZE_TINY,
     )
 
     component_scores = scores_data.get("component_scores") or {}
