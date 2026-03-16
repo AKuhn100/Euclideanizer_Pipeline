@@ -1739,6 +1739,7 @@ def _run_scoring_for_run(
     if not cfg["scoring"]["enabled"]:
         return
     try:
+        _log("Scoring: loading and computing (may take several minutes)...", since_start=time.time() - pipeline_start, style="info")
         out_path = scoring_module.compute_and_save(run_dir_eu, seed_dir, cfg, scores_filename="scores.json")
         if out_path:
             _log(
@@ -2140,7 +2141,6 @@ def run_one_hpo_trial(
                         train_mu_lat, test_mu_lat, latent_stats_npz,
                         display_root=base_output_dir,
                     )
-            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
             for spec in ANALYSIS_METRICS:
                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
@@ -2258,16 +2258,15 @@ def run_one_hpo_trial(
                                 display_root=base_output_dir, recon_subdir=recon_subdir,
                                 **recon_extra,
                             )
-                _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
-        else:
-            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
         del embed, frozen_vae
         torch.cuda.empty_cache()
+        if cfg["scoring"]["enabled"]:
+            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+            _post_scoring_npz_cleanup(run_dir_eu, cfg)
     else:
-        _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
-
-    if scoring_enabled:
-        _post_scoring_npz_cleanup(run_dir_eu, cfg)
+        if cfg["scoring"]["enabled"]:
+            _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+            _post_scoring_npz_cleanup(run_dir_eu, cfg)
 
     _log("Pipeline complete.", since_start=time.time() - pipeline_start, style="success")
     scores_path = os.path.join(run_dir_eu, "scoring", "scores.json")
@@ -2874,8 +2873,7 @@ def _run_one_distmap_group(
                                 elif resume:
                                     _log("  [skip] bond_length_by_genomic_distance", since_start=time.time() - pipeline_start, style="skip")
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting done in {(time.time() - plot_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-                            _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
-    
+
                         # Analysis: latent first (as one analysis block), then registered metrics (rmsd, q, coord_clustering, distmap_clustering). Score after each block.
                         any_analysis = any(
                             analysis_cfg[spec.gen_key]["enabled"] or analysis_cfg[spec.recon_key]["enabled"]
@@ -2921,7 +2919,6 @@ def _run_one_distmap_group(
                                         )
                                 elif resume:
                                     _log("  [skip] latent (all present)", since_start=time.time() - pipeline_start, style="skip")
-                            _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
                             for spec in ANALYSIS_METRICS:
                                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
@@ -3045,11 +3042,13 @@ def _run_one_distmap_group(
                                                 )
                                             elif resume and n_recon == 1:
                                                 _log(f"  [skip] {spec.id} recon", since_start=time.time() - pipeline_start, style="skip")
-                                _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
-    
+
                         del embed, frozen_vae
                         torch.cuda.empty_cache()
+                        if cfg["scoring"]["enabled"]:
+                            _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
+                            _post_scoring_npz_cleanup(run_dir_eu, cfg)
                         _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
                 if eu_stopped_early:
                     break
@@ -4204,11 +4203,6 @@ def main():
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
         )
-
-    # Post-scoring cleanup: remove NPZ for blocks where save_data is false (scoring runs after each block inside the pipeline)
-    if scoring_enabled:
-        for run_dir_eu, _ in _iter_euclideanizer_runs(base_output_dir):
-            _post_scoring_npz_cleanup(run_dir_eu, cfg)
 
     if do_dashboard:
         from src.dashboard import build_dashboard

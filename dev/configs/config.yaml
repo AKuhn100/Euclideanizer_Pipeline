@@ -12,14 +12,14 @@ data:
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_auto-calibrate_test"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_new_diagonal_recon_test"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
   latent_dim: [512]
   beta_kl: [0.05]
   epochs: [500]
-  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [2.0e-4]
   lambda_mse: [5.0]
   lambda_w_recon: [3.0]
@@ -33,7 +33,7 @@ distmap:
 # Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
 euclideanizer:
   epochs: [500]
-  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [4.0e-4]
   lambda_mse: [10.0]
   lambda_w_recon: [3.0]
@@ -84,8 +84,8 @@ plotting:
 analysis:
   rmsd_max_train: 1000   # reference cap for rmsd (single value)
   rmsd_max_test: 1000
-  q_max_train: 100
-  q_max_test: 100
+  q_max_train: 500
+  q_max_test: 500
   coord_clustering_max_train: null
   coord_clustering_max_test: null
   distmap_clustering_max_train: null
@@ -112,10 +112,10 @@ analysis:
   q_gen:
     enabled: true
     overwrite_existing: false
-    num_samples: [100]
+    num_samples: [500]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
-    query_batch_size: 256   # batch size for Q computation (CPU RAM; set based on system memory)
+    query_batch_size: 64   # batch size for Q computation (CPU RAM; set based on system memory)
     gen_decode_batch_size: null
     save_data: false
     save_pdf_copy: false

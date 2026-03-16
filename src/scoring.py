@@ -678,6 +678,7 @@ def compute_and_save(
     Generation-related scores use only data from sample_variance=1; if variance 1 is not in config for a block, those components are missing.
     Returns path to written file or None if scoring failed (e.g. no data).
     """
+    print("  Scoring: loading data (experimental stats, plots, analysis)...", flush=True)
     data: dict[str, Any] = {}
     variance_lists = _variance_lists_from_config(cfg)
     use_gen_variance_from_plot = any(_variance_equals_scoring(v) for v in variance_lists["plotting"])
@@ -866,6 +867,7 @@ def compute_and_save(
         if key_ratios:
             data["clustering_mixing"] = key_ratios
 
+    print("  Scoring: computing component scores...", flush=True)
     result = compute_scores_from_data(data)
 
     scoring_dir = os.path.join(run_dir, SCORING_DIR)
@@ -883,5 +885,6 @@ def compute_and_save(
             indent=2,
         )
     save_pdf = bool(cfg["scoring"]["save_pdf_copy"])
+    print("  Scoring: rendering spider plot...", flush=True)
     render_scores_spider(result, scoring_dir, save_pdf=save_pdf)
     return out_path

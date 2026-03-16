@@ -187,7 +187,7 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     if gen_sc is not None:
         ax_sc.loglog(gen_ks, gen_sc, lw=1.5, color=ACC_GEN, ls="--", label="Gen", zorder=3)
     ax_sc.set_xlabel("Genomic Sep", fontsize=7, color=FG)
-    ax_sc.set_ylabel("Mean Dist (nm)", fontsize=7, color=FG)
+    ax_sc.set_ylabel("Mean Dist", fontsize=7, color=FG)
     ax_sc.set_title("Genomic Scaling", fontsize=8, color=FG, pad=3)
     ax_sc.legend(fontsize=6.5, framealpha=0.2)
     ax_sc.spines[:].set_color("#30363d")
@@ -203,7 +203,7 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     ax_rg.set_xlim(rg_xlim)
     if rg_ylim is not None:
         ax_rg.set_ylim(rg_ylim)
-    ax_rg.set_xlabel("Rg (nm)", fontsize=7, color=FG)
+    ax_rg.set_xlabel("Rg", fontsize=7, color=FG)
     ax_rg.set_ylabel("Density", fontsize=7, color=FG)
     ax_rg.set_title("Radius of Gyration", fontsize=8, color=FG, pad=3)
     ax_rg.legend(fontsize=6.5, framealpha=0.2)
