@@ -1939,28 +1939,6 @@ def run_one_hpo_trial(
         _force_gpu_cleanup(device)
         model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=dm_cfg["latent_dim"]).to(device)
         model.load_state_dict(torch.load(dm_path, map_location=device))
-        if (do_avg_gen or do_bond_length_by_genomic_distance) and gen_decode_batch_size is None:
-            _dm_run_cfg = load_run_config(dm_model_dir)
-            if _dm_run_cfg is not None and _dm_run_cfg.get("gen_decode_batch_size") is not None:
-                gen_decode_batch_size = int(_dm_run_cfg["gen_decode_batch_size"])
-            else:
-                from src.calibrate import calibrate_gen_decode_batch_size_distmap_only
-                gen_decode_batch_size = calibrate_gen_decode_batch_size_distmap_only(
-                    model, device, latent_dim=dm_cfg["latent_dim"],
-                    safety_margin_gb=cfg["calibration_safety_margin_gb"],
-                    decode_batch_cap=cfg["calibration_decode_batch_cap"],
-                    binary_search_steps=cfg["calibration_binary_search_steps"],
-                )
-                _run_cfg = load_run_config(dm_model_dir) or {}
-                _run_cfg = {**_run_cfg, "gen_decode_batch_size": gen_decode_batch_size}
-                save_run_config(
-                    _run_cfg, dm_model_dir,
-                    last_epoch_trained=_run_cfg.get("last_epoch_trained"),
-                    best_epoch=_run_cfg.get("best_epoch"),
-                    best_val=_run_cfg.get("best_val"),
-                    early_stopped=_run_cfg.get("early_stopped", False),
-                )
-                print(f"  Auto-calibrated gen_decode_batch_size: {gen_decode_batch_size}")
         if do_recon_plot and coords is not None:
             p = _plot_path(run_dir_dm, "reconstruction")
             plot_distmap_reconstruction(
@@ -2059,10 +2037,6 @@ def run_one_hpo_trial(
         frozen_vae = load_frozen_vae(dm_path, num_atoms, dm_cfg["latent_dim"], device)
         embed = Euclideanizer(num_atoms=num_atoms).to(device)
         embed.load_state_dict(torch.load(eu_path, map_location=device))
-        if gen_decode_batch_size is None or _any_inference_batch_null(cfg):
-            _g = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device, fallback_run_config_dir=dm_model_dir)
-            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, plot_cfg, analysis_cfg)
-            gen_decode_batch_size = _g
         if do_recon_plot and coords is not None:
             p = _plot_path(run_dir_eu, "reconstruction")
             plot_euclideanizer_reconstruction(
@@ -2113,6 +2087,7 @@ def run_one_hpo_trial(
         )
         seed_test_to_train_cache = {}
         if any_analysis and coords is not None:
+            _force_gpu_cleanup(device)
             latent_cfg = analysis_cfg["latent"]
             if latent_cfg["enabled"] and coords is not None:
                 latent_dir = os.path.join(run_dir_eu, "analysis", "latent")
@@ -2141,6 +2116,7 @@ def run_one_hpo_trial(
                         train_mu_lat, test_mu_lat, latent_stats_npz,
                         display_root=base_output_dir,
                     )
+            _force_gpu_cleanup(device)
             for spec in ANALYSIS_METRICS:
                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
@@ -2288,87 +2264,6 @@ def _force_gpu_cleanup(device: torch.device) -> None:
     gc.collect()
     if device.type == "cuda":
         torch.cuda.empty_cache()
-
-
-def _any_inference_batch_null(cfg: dict) -> bool:
-    """True if plotting.gen_decode_batch_size or any analysis block gen_decode_batch_size is null (VRAM calibration needed)."""
-    plot_cfg = cfg.get("plotting") or {}
-    if isinstance(plot_cfg, dict) and plot_cfg.get("gen_decode_batch_size") is None:
-        return True
-    from src.config import REQUIRED_ANALYSIS_SUBKEYS
-    for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
-        block = (cfg.get("analysis") or {}).get(block_name)
-        if not isinstance(block, dict):
-            continue
-        if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
-            return True
-    return False
-
-
-def _resolve_inference_batch_sizes(
-    cfg: dict,
-    eu_model_dir: str,
-    frozen_vae,
-    embed,
-    device,
-    fallback_run_config_dir: str | None = None,
-) -> int:
-    """Resolve gen_decode_batch_size (VRAM). Load from run_config or calibrate and save. Returns gen_decode_batch_size. query_batch_size is set in config (CPU RAM)."""
-    run_cfg = load_run_config(eu_model_dir)
-    if run_cfg is not None and run_cfg.get("gen_decode_batch_size") is not None:
-        return int(run_cfg["gen_decode_batch_size"])
-    if fallback_run_config_dir is not None:
-        fallback_cfg = load_run_config(fallback_run_config_dir)
-        if fallback_cfg is not None and fallback_cfg.get("gen_decode_batch_size") is not None:
-            resolved = int(fallback_cfg["gen_decode_batch_size"])
-            run_cfg = load_run_config(eu_model_dir) or {}
-            run_cfg = {**run_cfg, "gen_decode_batch_size": resolved}
-            save_run_config(
-                run_cfg, eu_model_dir,
-                last_epoch_trained=run_cfg.get("last_epoch_trained"),
-                best_epoch=run_cfg.get("best_epoch"),
-                best_val=run_cfg.get("best_val"),
-                early_stopped=run_cfg.get("early_stopped", False),
-            )
-            return resolved
-    from src.calibrate import calibrate_gen_decode_batch_size
-    resolved = calibrate_gen_decode_batch_size(
-        frozen_vae, embed, device,
-        safety_margin_gb=cfg["calibration_safety_margin_gb"],
-        latent_dim=getattr(frozen_vae, "_latent_space_dim", None),
-        decode_batch_cap=cfg["calibration_decode_batch_cap"],
-        binary_search_steps=cfg["calibration_binary_search_steps"],
-    )
-    run_cfg = load_run_config(eu_model_dir) or {}
-    run_cfg = {**run_cfg, "gen_decode_batch_size": resolved}
-    save_run_config(
-        run_cfg, eu_model_dir,
-        last_epoch_trained=run_cfg.get("last_epoch_trained"),
-        best_epoch=run_cfg.get("best_epoch"),
-        best_val=run_cfg.get("best_val"),
-        early_stopped=run_cfg.get("early_stopped", False),
-    )
-    print(f"  Auto-calibrated gen_decode_batch_size: {resolved}")
-    return resolved
-
-
-def _apply_resolved_inference_batch_sizes(
-    gen_decode: int,
-    plot_cfg: dict,
-    analysis_cfg: dict,
-) -> tuple[dict, dict]:
-    """Return (effective_plot_cfg, effective_analysis_cfg) with null gen_decode_batch_size filled from calibration. query_batch_size comes from config (CPU RAM)."""
-    import copy
-    from src.config import REQUIRED_ANALYSIS_SUBKEYS
-    effective_plot = {**plot_cfg, "gen_decode_batch_size": gen_decode}
-    effective_analysis = copy.deepcopy(analysis_cfg)
-    for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
-        block = effective_analysis.get(block_name)
-        if not isinstance(block, dict):
-            continue
-        if "gen_decode_batch_size" in sub_keys and block.get("gen_decode_batch_size") is None:
-            effective_analysis[block_name] = {**block, "gen_decode_batch_size": gen_decode}
-    return (effective_plot, effective_analysis)
 
 
 def _run_one_distmap_group(
@@ -2576,32 +2471,6 @@ def _run_one_distmap_group(
                 _log(f"DistMap {ri}: plotting (recon, stats, gen)...", since_start=time.time() - pipeline_start, style="info")
                 model = ChromVAE_Conv(num_atoms=num_atoms, latent_space_dim=dm_cfg["latent_dim"]).to(device)
                 model.load_state_dict(torch.load(dm_path, map_location=device))
-                if (do_avg_gen or do_bond_length_by_genomic_distance) and gen_decode_batch_size is None:
-                    _dm_run_cfg = load_run_config(dm_model_dir)
-                    if _dm_run_cfg is not None and _dm_run_cfg.get("gen_decode_batch_size") is not None:
-                        resolved = int(_dm_run_cfg["gen_decode_batch_size"])
-                        gen_decode_batch_size_holder[0] = resolved
-                        gen_decode_batch_size = resolved
-                    else:
-                        from src.calibrate import calibrate_gen_decode_batch_size_distmap_only
-                        resolved = calibrate_gen_decode_batch_size_distmap_only(
-                            model, device, latent_dim=dm_cfg["latent_dim"],
-                            safety_margin_gb=cfg["calibration_safety_margin_gb"],
-                            decode_batch_cap=cfg["calibration_decode_batch_cap"],
-                            binary_search_steps=cfg["calibration_binary_search_steps"],
-                        )
-                        gen_decode_batch_size_holder[0] = resolved
-                        gen_decode_batch_size = resolved
-                        _run_cfg = load_run_config(dm_model_dir) or {}
-                        _run_cfg = {**_run_cfg, "gen_decode_batch_size": resolved}
-                        save_run_config(
-                            _run_cfg, dm_model_dir,
-                            last_epoch_trained=_run_cfg.get("last_epoch_trained"),
-                            best_epoch=_run_cfg.get("best_epoch"),
-                            best_val=_run_cfg.get("best_val"),
-                            early_stopped=_run_cfg.get("early_stopped", False),
-                        )
-                        print(f"  Auto-calibrated gen_decode_batch_size: {resolved}")
                 if do_recon_plot and coords is not None:
                     p = _plot_path(run_dir_dm, "reconstruction")
                     if not (resume and os.path.isfile(p)):
@@ -2799,13 +2668,6 @@ def _run_one_distmap_group(
                             eu_cfg = {**eu_cfg, "batch_size": _eu_run_cfg["euclideanizer"]["batch_size"]}
                         elif eu_cfg.get("batch_size") is None:
                             eu_cfg = {**eu_cfg, "batch_size": 256}
-                        if gen_decode_batch_size is None or _any_inference_batch_null(cfg):
-                            dm_model_dir_fallback = os.path.join(run_dir_dm, "model")
-                            _g = _resolve_inference_batch_sizes(cfg, eu_model_dir, frozen_vae, embed, device, fallback_run_config_dir=dm_model_dir_fallback)
-                            plot_cfg, analysis_cfg = _apply_resolved_inference_batch_sizes(_g, plot_cfg, analysis_cfg)
-                            gen_decode_batch_size = _g
-                            gen_decode_batch_size_holder[0] = _g
-
                         if do_plot and exp_stats is not None and (coords is not None or (train_stats is not None and test_stats is not None)):
                             plot_phase_start = time.time()
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): plotting (diagnostics)...", since_start=time.time() - pipeline_start, style="info")
@@ -2885,7 +2747,8 @@ def _run_one_distmap_group(
                             _cache = seed_test_to_train_holder[0]
                             analysis_phase_start = time.time()
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (latent + metrics)...", since_start=time.time() - pipeline_start, style="info")
-                            # Latent block first (analysis block)
+                            # Before latent
+                            _force_gpu_cleanup(device)
                             latent_cfg = analysis_cfg["latent"]
                             do_latent = latent_cfg["enabled"] and coords is not None
                             if do_latent:
@@ -2919,6 +2782,7 @@ def _run_one_distmap_group(
                                         )
                                 elif resume:
                                     _log("  [skip] latent (all present)", since_start=time.time() - pipeline_start, style="skip")
+                            _force_gpu_cleanup(device)
                             for spec in ANALYSIS_METRICS:
                                 do_gen = analysis_cfg[spec.gen_key]["enabled"]
                                 do_recon = analysis_cfg[spec.recon_key]["enabled"]
@@ -3082,7 +2946,7 @@ def _run_one_seed(
     resume: bool,
     sample_variances: list,
     gen_num_samples: int,
-    gen_decode_batch_size: int | None,
+    gen_decode_batch_size: int,
     need_plot_or_rmsd: bool,
     save_structures_gro_plot: bool,
     analysis_save_data: bool,
@@ -3367,7 +3231,7 @@ def _run_multi_gpu_tasks(
     resume: bool,
     sample_variances: list,
     gen_num_samples: int,
-    gen_decode_batch_size: int | None,
+    gen_decode_batch_size: int,
     need_plot_or_rmsd: bool,
     save_structures_gro_plot: bool,
     analysis_save_data: bool,

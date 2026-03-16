@@ -3,7 +3,6 @@ resume: true   # if true, skip runs that already have checkpoints; if false, ove
 calibration_safety_margin_gb: 15.00
 calibration_binary_search_steps: 5
 calibration_training_batch_cap: 4096
-calibration_decode_batch_cap: 4096
 
 data:
   path: "/scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data
@@ -12,14 +11,14 @@ data:
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_new_diagonal_recon_test"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-15/RANGE/Chrom_21_auto-calibrate_test"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
   latent_dim: [512]
   beta_kl: [0.05]
   epochs: [500]
-  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [2.0e-4]
   lambda_mse: [5.0]
   lambda_w_recon: [3.0]
@@ -33,7 +32,7 @@ distmap:
 # Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
 euclideanizer:
   epochs: [500]
-  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [4.0e-4]
   lambda_mse: [10.0]
   lambda_w_recon: [3.0]
@@ -68,7 +67,7 @@ plotting:
   avg_gen_vs_exp: true
   bond_length_by_genomic_distance: true
   num_samples: 1000              # samples per variance for gen plots
-  gen_decode_batch_size: null   # null = auto-calibrate from VRAM (decode for plots/analysis)
+  gen_decode_batch_size: 256   # batch size when decoding for gen plots
   sample_variance: [1]         # list -> one plot set per value
   num_reconstruction_samples: 5
   plot_dpi: 150
@@ -98,7 +97,7 @@ analysis:
     num_samples: [1000]
     sample_variance: [1]
     query_batch_size: 256   # batch size for RMSD query (CPU RAM; set based on system memory)
-    gen_decode_batch_size: null
+    gen_decode_batch_size: 256
     save_data: false
     save_pdf_copy: false   # if true, save a PDF copy of RMSD (gen) figures in a pdf/ subdir
     save_structures_gro: false
@@ -116,7 +115,7 @@ analysis:
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
     query_batch_size: 64   # batch size for Q computation (CPU RAM; set based on system memory)
-    gen_decode_batch_size: null
+    gen_decode_batch_size: 256
     save_data: false
     save_pdf_copy: false
     save_structures_gro: false
@@ -136,7 +135,7 @@ analysis:
     n_subsample: 150
     k_mixing: 10
     linkage_method: "average"
-    gen_decode_batch_size: null   # null = auto-calibrate (same value as plotting.gen_decode_batch_size)
+    gen_decode_batch_size: 256
     save_data: false
     save_pdf_copy: false
   coord_clustering_recon:
@@ -157,7 +156,7 @@ analysis:
     n_subsample: 150
     k_mixing: 10
     linkage_method: "average"
-    gen_decode_batch_size: null   # null = auto-calibrate (same value as plotting.gen_decode_batch_size)
+    gen_decode_batch_size: 256
     feats_batch_size: 64
     save_data: false
     save_pdf_copy: false

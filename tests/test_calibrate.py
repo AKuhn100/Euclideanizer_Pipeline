@@ -16,7 +16,6 @@ from src.calibrate import (
     FALLBACK_BATCH_SIZE_NO_CUDA,
     calibrate_distmap_batch_size,
     calibrate_euclideanizer_batch_size,
-    calibrate_gen_decode_batch_size,
 )
 from src.distmap.model import ChromVAE_Conv
 from src.euclideanizer.model import Euclideanizer, FrozenDistMapVAE
@@ -66,11 +65,6 @@ def test_cpu_fallback_returns_positive_int():
         out_eu = calibrate_euclideanizer_batch_size(embed, frozen_vae, eu_cfg, coords, device, safety_margin_gb=2.0)
     assert isinstance(out_eu, int) and out_eu > 0
     assert out_eu == FALLBACK_BATCH_SIZE_NO_CUDA
-
-    with pytest.warns(UserWarning, match="CUDA not available for decode"):
-        out_decode = calibrate_gen_decode_batch_size(frozen_vae, embed, device, safety_margin_gb=2.0)
-    assert isinstance(out_decode, int) and out_decode > 0
-    assert out_decode == FALLBACK_BATCH_SIZE_NO_CUDA
 
 
 @patch("torch.cuda.empty_cache")

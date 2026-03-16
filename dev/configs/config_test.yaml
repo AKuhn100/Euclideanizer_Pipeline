@@ -3,7 +3,6 @@ resume: false   # if true, skip runs that already have checkpoints; if false, ov
 calibration_safety_margin_gb: 10.0
 calibration_binary_search_steps: 5
 calibration_training_batch_cap: 4096
-calibration_decode_batch_cap: 4096
 
 data:
   path: "/scratch/amk19/Euclideanizer/Pipeline/tests/test_data/spheres.npz"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data

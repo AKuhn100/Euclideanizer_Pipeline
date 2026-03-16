@@ -132,11 +132,11 @@ REQUIRED_ANALYSIS_SUBKEYS["latent"] = [
 ]
 # Order: training_visualization before plotting so training-related config is grouped.
 # calibration_safety_margin_gb: fixed GB reserved regardless of GPU size. calibration_binary_search_steps: max halving iterations.
-# calibration_training_batch_cap / calibration_decode_batch_cap: required; positive int; upper bound for calibration.
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "calibration_decode_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
+# calibration_training_batch_cap: required; positive int; upper bound for training batch-size calibration only.
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
 
 # Sections that must match exactly when resuming (training and training visualization).
-TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "calibration_decode_batch_cap"]
+TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap"]
 # Sections that may differ on resume; if they do, user is prompted and plotting/analysis outputs are removed and re-run.
 PLOTTING_ANALYSIS_KEYS = ["plotting", "analysis", "scoring"]
 
@@ -189,12 +189,14 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
                 raise ValueError(
                     f"{section}.batch_size must be null (auto-calibrate) or a positive integer, got {bs!r}."
                 )
-    # plotting.gen_decode_batch_size and analysis *.*.gen_decode_batch_size: no list; null = in-run calibrate (VRAM); else positive int.
+    # plotting.gen_decode_batch_size and analysis *.*.gen_decode_batch_size: required positive int (set in config; no calibration).
     def _validate_gen_decode_batch_key(val: Any, path: str) -> None:
         if isinstance(val, list):
-            raise ValueError(f"{path} must be a single integer or null, not a list.")
-        if val is not None and (not isinstance(val, int) or val < 1):
-            raise ValueError(f"{path} must be null (auto-calibrate from VRAM) or a positive integer, got {val!r}.")
+            raise ValueError(f"{path} must be a single positive integer, not a list.")
+        if val is None or not isinstance(val, int) or val < 1:
+            raise ValueError(
+                f"{path} must be a positive integer (batch size for decode path; set in config), got {val!r}."
+            )
 
     # analysis *.*.query_batch_size: required positive int (CPU RAM limit; no calibration).
     def _validate_query_batch_size_key(val: Any, path: str) -> None:
@@ -229,12 +231,11 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
         raise ValueError(
             f"calibration_binary_search_steps must be a non-negative integer, got {val!r}."
         )
-    for key in ("calibration_training_batch_cap", "calibration_decode_batch_cap"):
-        val = cfg.get(key)
-        if val is None or not isinstance(val, int) or val < 1:
-            raise ValueError(
-                f"{key} must be a positive integer (upper bound for calibration binary search), got {val!r}."
-            )
+    val = cfg.get("calibration_training_batch_cap")
+    if val is None or not isinstance(val, int) or val < 1:
+        raise ValueError(
+            "calibration_training_batch_cap must be a positive integer (upper bound for training batch-size calibration), got {val!r}.".format(val=val)
+        )
 
 
 def validate_config(cfg: Dict[str, Any]) -> None:
@@ -493,8 +494,8 @@ def run_config_section_matches_allow_calibrated(
     run_cfg: Optional[Dict[str, Any]], section_key: str, expected_section: Dict[str, Any]
 ) -> bool:
     """Like run_config_section_matches but None in expected_section is treated as 'accept saved value'.
-    Use for completion check so that null batch_size / gen_decode_batch_size in config (auto-calibrate)
-    does not cause a mismatch with the resolved value written to run_config."""
+    Use for completion check so that null batch_size in config (auto-calibrate) does not cause a mismatch
+    with the resolved value written to run_config."""
     if run_cfg is None or section_key not in run_cfg:
         return False
     return _section_equal_allow_none_in_expected(run_cfg[section_key], expected_section)

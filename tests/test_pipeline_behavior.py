@@ -1044,6 +1044,17 @@ def test_validate_config_rejects_null_query_batch_size():
     assert "positive integer" in str(exc_info.value).lower() or "CPU" in str(exc_info.value)
 
 
+def test_validate_config_rejects_null_gen_decode_batch_size():
+    """gen_decode_batch_size (plotting and analysis blocks) must be a positive int; null is rejected."""
+    cfg = load_config(path=os.path.join(_TEST_DIR, "config_test.yaml"))
+    cfg["plotting"] = dict(cfg["plotting"])
+    cfg["plotting"]["gen_decode_batch_size"] = None
+    with pytest.raises(ValueError) as exc_info:
+        validate_config(cfg)
+    assert "gen_decode_batch_size" in str(exc_info.value)
+    assert "positive integer" in str(exc_info.value).lower()
+
+
 # ---------------------------------------------------------------------------
 # Scoring (behavior: score file created, missing components reported)
 # ---------------------------------------------------------------------------

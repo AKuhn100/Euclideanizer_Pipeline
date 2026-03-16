@@ -3,7 +3,6 @@ resume: true   # if true, skip runs that already have checkpoints; if false, ove
 calibration_safety_margin_gb: 15.0
 calibration_binary_search_steps: 5
 calibration_training_batch_cap: 512
-calibration_decode_batch_cap: 4096
 
 data:
   path: "/scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data
@@ -109,7 +108,7 @@ analysis:
   q_gen:
     enabled: true
     overwrite_existing: false
-    num_samples: [100]
+    num_samples: [500]
     sample_variance: [1]
     delta: 0.7071   # 1/sqrt(2); default makes denominator 2*delta^2 = 1
     query_batch_size: 64

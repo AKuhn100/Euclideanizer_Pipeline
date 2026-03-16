@@ -3,7 +3,7 @@
 #SBATCH --partition=commons
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=64
-#SBATCH --mem=512G
+#SBATCH --mem=1024G
 #SBATCH --time=24:00:00
 #SBATCH --output=/scratch/amk19/slurm_outputs/%x.%j.out
 #SBATCH --error=/scratch/amk19/slurm_outputs/%x.%j.err

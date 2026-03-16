@@ -393,18 +393,25 @@ def main() -> int:
     if "optuna" not in hpo_cfg or not isinstance(hpo_cfg["optuna"], dict):
         print("HPO config must set optuna (dict with n_trials, sampler, pruner, etc.).", file=sys.stderr)
         return 1
-    output_root = str(Path(hpo_cfg["output_dir"]).resolve())
+    # Resolve output_dir relative to the config file's directory so the same config yields the same path
+    # regardless of cwd (e.g. Slurm vs interactive). Prevents two jobs with different intended output
+    # dirs from sharing the same SQLite DB when they use the same config from different cwds.
+    _output_dir_raw = hpo_cfg["output_dir"].strip() if isinstance(hpo_cfg["output_dir"], str) else str(hpo_cfg["output_dir"])
+    _output_path = Path(_output_dir_raw)
+    if not _output_path.is_absolute():
+        _config_dir = Path(args.config).resolve().parent
+        _output_path = (_config_dir / _output_dir_raw).resolve()
+    output_root = str(_output_path)
     Path(output_root).mkdir(parents=True, exist_ok=True)  # create before Optuna opens SQLite DB in output_root
     n_gpus = _get_n_gpus(hpo_cfg)
 
     # Create or load the study once so the DB is initialized by a single process (avoids race when spawning workers).
+    # SQLite path is not a config option: it is always output_root/hpo_study.db. Only optuna.storage for non-SQLite (e.g. PostgreSQL) is honored.
     seed = int(hpo_cfg.get("seed", 10))
     optuna_cfg = hpo_cfg["optuna"]
     storage_cfg = optuna_cfg.get("storage")
-    if storage_cfg:
-        storage = storage_cfg
-        if storage.startswith("sqlite:///") and not os.path.isabs(storage.replace("sqlite:///", "")):
-            storage = f"sqlite:///{Path(output_root) / storage.replace('sqlite:///', '')}"
+    if storage_cfg and storage_cfg.strip() and not storage_cfg.strip().lower().startswith("sqlite:///"):
+        storage = storage_cfg.strip()
     else:
         storage = f"sqlite:///{Path(output_root) / 'hpo_study.db'}"
     study_name = "hpo"

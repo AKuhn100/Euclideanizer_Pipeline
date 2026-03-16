@@ -1,4 +1,4 @@
-output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs/3-15"
+output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs_Slurm/3-16"
 
 data_path: /scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz
 seed: 10
