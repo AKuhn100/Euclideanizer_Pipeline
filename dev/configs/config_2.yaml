@@ -25,6 +25,8 @@ distmap:
   lambda_w_gen: [3.0]
   memory_efficient: true   # if true, save best model to disk on each new best (no extra copy in memory)
   save_final_models_per_stretch: false   # if true, keep model_last.pt for each epoch segment (e.g. 100, 300); if false, delete previous segment's last after resume
+  early_stopping: true   # if true, stop when validation loss has not improved for patience epochs (no further segments run)
+  patience: 50 
 
 # Euclideanizer. One run per (DistMap run × euclideanizer hyperparameter combination).
 # Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
@@ -41,7 +43,9 @@ euclideanizer:
   lambda_kabsch_mse: [1.0]   # weight for MSE(gt_coords, Kabsch_aligned(recon_coords)); 0 = off
   memory_efficient: true   # if true, save best model to disk on each new best (no extra copy in memory)
   save_final_models_per_stretch: false   # if true, keep euclideanizer_last.pt for each epoch segment; if false, delete previous segment's last after resume
-
+  early_stopping: true   # if true, stop when validation loss has not improved for patience epochs (no further segments run)
+  patience: 50 
+  
 # Training videos: one MP4 per DistMap and per Euclideanizer (generated during/after each training run). Requires ffmpeg.
 training_visualization:
   enabled: true
