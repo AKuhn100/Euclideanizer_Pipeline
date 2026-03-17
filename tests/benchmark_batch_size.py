@@ -23,9 +23,9 @@ is printed when lists are present. To optimize for a different combination, use 
 config with single values for the options you care about.
 
 Usage:
-    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro --mode dm
-    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro --mode eu
-    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.gro \
+    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.npz --mode dm
+    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.npz --mode eu
+    python benchmark_batch_size.py --config samples/config_sample.yaml --data /path/to/data.npz \
         --batch-sizes 32 64 128 --learning-rates 1e-4 5e-4 1e-3 --epochs 20 --mode both
 """
 from __future__ import annotations

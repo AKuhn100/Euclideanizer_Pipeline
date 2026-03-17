@@ -2,7 +2,7 @@
 """
 Optuna-based HPO for DistMap + Euclideanizer. Joint optimization; objective = overall score.
 
-  python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.gro]
+  python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.npz]
   python run_hpo.py --config samples/hpo_config.yaml --resume --n-trials-add 50
 
 Multi-GPU: When multiple GPUs are available, run_hpo.py automatically spawns one worker per GPU

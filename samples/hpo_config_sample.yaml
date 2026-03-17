@@ -1,10 +1,10 @@
 # HPO config: Optuna joint optimization of DistMap + Euclideanizer.
-# Run with: python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.gro]
+# Run with: python run_hpo.py --config samples/hpo_config.yaml [--data /path/to/data.npz]
 # Resume (more trials): same config + --resume --n-trials-add 50. Study is stored in output_dir/hpo_study.db.
 
 output_dir: "./hpo_out"   # root for trial_0/, trial_1/, ...; study DB (hpo_study.db) and HPO dashboard also live here
 
-data_path: null   # path to GRO-style coordinate file; required for training (set here or pass --data)
+data_path: null   # path to NPZ dataset (key 'coords', shape (n_structures, n_atoms, 3)); required for training (set here or pass --data)
 seed: 10   # RNG seed for train/test split and for Optuna sampler (reproducibility; same value for both)
 
 # Max epochs for DistMap and Euclideanizer in every trial. If set, overrides epochs in the pipeline config; if null, use pipeline config (single value or max of list).

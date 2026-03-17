@@ -174,7 +174,7 @@ When `distmap.batch_size`, `euclideanizer.batch_size`, `plotting.gen_decode_batc
 
 The script `tests/benchmark_batch_size.py` sweeps over **batch sizes** and **learning rates** (grid: batch_size × learning_rate) and reports wall-clock time per epoch, samples per second, final validation loss, and peak reserved VRAM for DistMap and/or Euclideanizer. It gives a **rough idea** of optimal training batch size and learning rate for a **given config and dataset**—useful when you want to tune beyond “whatever fits in memory.” The benchmark is **somewhat crude**: it runs a fixed number of epochs per (batch_size, learning_rate) and does not run the full pipeline (no plotting/analysis/scoring); it is intended for quick comparison, not as a substitute for full training.
 
-- **Requires:** A pipeline YAML config (all required keys, including calibration), a GRO dataset, and a GPU (recommended).
+- **Requires:** A pipeline YAML config (all required keys, including calibration), an NPZ dataset, and a GPU (recommended).
 - **Modes:** `--mode dm|eu|both`. **dm** = DistMap only. **eu** = train a DistMap 50 epochs in a temp dir, run the Euclideanizer benchmark, then purge the temp dir. **both** = DistMap sweep then Euclideanizer sweep (if no `--dm-checkpoint`, a 5-epoch feeder DistMap is trained in a temp dir and purged).
 - **Sweep:** `--batch-sizes 32 64 128 256`, `--learning-rates 1e-4 5e-4 1e-3` (default: one value from config per model), `--epochs 20`, `--dm-checkpoint /path/to/model.pt`, `--output benchmark_results.json`, `--device cuda:0`.
 - **Output:** Printed tables per model and a JSON file with one record per (model, batch_size, learning_rate).
