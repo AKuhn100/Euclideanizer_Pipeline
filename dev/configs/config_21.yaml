@@ -11,7 +11,7 @@ data:
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-16/RANGE_SLURM/Chrom_21"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-16/RANGE_SLURM/High_Coord_Loss/Chrom_21"
 
 # DistMap (distance-map VAE). Any key can be single or list; full product is run.
 distmap:
@@ -40,7 +40,7 @@ euclideanizer:
   lambda_w_diag_recon: [2.0]
   lambda_w_diag_gen: [2.0]
   num_diags: [50]   # number of diagonals (genomic separations) used for diagonal Wasserstein loss (1..num_diags)
-  lambda_kabsch_mse: [1.0]   # weight for MSE(gt_coords, Kabsch_aligned(recon_coords)); 0 = off
+  lambda_kabsch_mse: [10.0]   # weight for MSE(gt_coords, Kabsch_aligned(recon_coords)); 0 = off
   memory_efficient: true   # if true, save best model to disk on each new best (no extra copy in memory)
   save_final_models_per_stretch: false   # if true, keep euclideanizer_last.pt for each epoch segment; if false, delete previous segment's last after resume
   early_stopping: true   # if true, stop when validation loss has not improved for patience epochs (no further segments run)
