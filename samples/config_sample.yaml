@@ -12,8 +12,8 @@ calibration_training_batch_cap: 512
 
 data:
   path: "tests/test_data/spheres.npz"   # path to NPZ dataset (key 'coords', shape (n_structures, n_atoms, 3)); required for training (or pass --data)
-  split_seed: [0, 42]   # RNG seed(s) for train/test split; list = one full pipeline per seed (output under base_output_dir/seed_<n>)
-  training_split: 0.8   # fraction of structures used for training; remainder = test; same for DistMap, Euclideanizer, plotting, and analysis
+  split_seed: [0, 42]   # RNG seed(s) for train/test split; list = one full pipeline per seed (output under base_output_dir/seed_<n> or seed_<n>_split_<frac> when multiple splits)
+  training_split: [0.8]   # fraction for training; single float or list of floats in (0,1); list = one full pipeline per value (output under seed_<n>_split_<frac>); same for DistMap, Euclideanizer, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 100   # number of structures to average for avg_exp_map in experimental statistics
 

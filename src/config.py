@@ -236,6 +236,21 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
         raise ValueError(
             "calibration_training_batch_cap must be a positive integer (upper bound for training batch-size calibration), got {val!r}.".format(val=val)
         )
+    # data.training_split: float or list of floats, each in (0, 1).
+    v = (cfg.get("data") or {}).get("training_split")
+    if v is not None:
+        vals = [v] if not isinstance(v, list) else v
+        for i, x in enumerate(vals):
+            try:
+                f = float(x)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"data.training_split must be a float or list of floats in (0, 1), got {x!r} at index {i}."
+                )
+            if not (0 < f < 1):
+                raise ValueError(
+                    f"data.training_split values must be in (0, 1), got {f!r} at index {i}."
+                )
 
 
 def validate_config(cfg: Dict[str, Any]) -> None:
@@ -375,6 +390,12 @@ def get_seeds(cfg: Dict[str, Any]) -> List[int]:
     split_seed = data["split_seed"]
     out = _ensure_list(split_seed)
     return [int(s) for s in out]
+
+
+def get_training_splits(cfg: Dict[str, Any]) -> List[float]:
+    """Return list of training split fractions (1 per full pipeline run). data.training_split can be a single float or a list of floats."""
+    v = cfg["data"]["training_split"]
+    return [float(x) for x in (v if isinstance(v, list) else [v])]
 
 
 # Filename for the full pipeline config saved in output_dir (required for resume).

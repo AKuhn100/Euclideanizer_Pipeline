@@ -141,7 +141,7 @@ def test_run_completed_multi_segment_last_optional_on_final_stretch(tmp_path):
 def test_pipeline_need_data_true_when_seed_dir_missing(tmp_path, cfg):
     """need_data is True when the seed output directory does not exist."""
     dm_groups, eu_groups = _get_dm_eu_groups(cfg)
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=True,
+    assert _pipeline_need_data(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=True,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, do_bond_length_by_genomic_distance=False,
         plot_variances=[1.0], variance_list=[1.0], num_samples_list=[10]) is True
 
@@ -164,7 +164,7 @@ def test_pipeline_need_data_true_when_run_incomplete(tmp_path, cfg):
             save_run_config({"euclideanizer": {"epochs": eu_ev}}, str(d), last_epoch_trained=eu_ev, best_epoch=1, best_val=0.5)
             (d / "euclideanizer.pt").write_bytes(b"x")
             (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False, do_bond_length_by_genomic_distance=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is True
 
@@ -188,7 +188,7 @@ def test_pipeline_need_data_false_when_all_complete_no_plot_rmsd(tmp_path, cfg):
             (d / "euclideanizer.pt").write_bytes(b"x")
             if eu_ev == 1:
                 (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False, do_bond_length_by_genomic_distance=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is False
 
@@ -212,7 +212,7 @@ def test_pipeline_need_data_true_when_plot_missing(tmp_path, cfg):
             (d / "euclideanizer.pt").write_bytes(b"x")
             if eu_ev == 1:
                 (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, do_bond_length_by_genomic_distance=False,
         plot_variances=[1.0], variance_list=[], num_samples_list=[]) is True
 
@@ -255,9 +255,10 @@ def test_pipeline_data_needs_need_any_matches_need_data(tmp_path, cfg):
             (tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model" / "euclideanizer.pt").write_bytes(b"x")
             (tmp_path / "seed_0" / "distmap" / str(ri) / "euclideanizer" / str(euri) / "model" / "euclideanizer_last.pt").write_bytes(b"x")
     base = str(tmp_path)
-    seeds = [0]
+    run_entries = [(0, 0.8)]
+    training_splits = [0.8]
     kwargs = dict(resume=True, do_plot=True, do_rmsd=True, do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, do_bond_length_by_genomic_distance=False, plot_variances=[1.0], variance_list=[1.0], num_samples_list=[10])
-    assert _pipeline_data_needs(base, seeds, dm_groups, eu_groups, **kwargs).need_any() is _pipeline_need_data(base, seeds, dm_groups, eu_groups, **kwargs)
+    assert _pipeline_data_needs(base, run_entries, training_splits, dm_groups, eu_groups, **kwargs).need_any() is _pipeline_need_data(base, run_entries, training_splits, dm_groups, eu_groups, **kwargs)
 
 
 def test_pipeline_data_needs_only_reconstruction_missing(tmp_path, cfg):
@@ -285,7 +286,7 @@ def test_pipeline_data_needs_only_reconstruction_missing(tmp_path, cfg):
     (run_dir_dm_1 / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
     (run_dir_dm_1 / "plots" / "gen_variance").mkdir(parents=True)
     (run_dir_dm_1 / "plots" / "gen_variance" / "gen_variance_1.0.png").write_bytes(b"x")
-    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
+    needs = _pipeline_data_needs(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, do_bond_length_by_genomic_distance=False,
         plot_variances=[1.0], variance_list=[], num_samples_list=[])
     assert needs.need_coords is True
@@ -310,7 +311,7 @@ def test_pipeline_data_needs_only_gen_variance_missing(tmp_path, cfg):
             (eu_run / "plots" / "recon_statistics").mkdir(parents=True)
             (eu_run / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
             (eu_run / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
-    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
+    needs = _pipeline_data_needs(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=True, do_rmsd=False,
         do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, do_bond_length_by_genomic_distance=False,
         plot_variances=[1.0], variance_list=[], num_samples_list=[])
     assert needs.need_coords is False
@@ -343,7 +344,7 @@ def test_pipeline_data_needs_run_incomplete_sets_need_coords(tmp_path, cfg):
         save_run_config({"euclideanizer": {"epochs": 1}}, str(ed), last_epoch_trained=1, best_epoch=1, best_val=0.5)
         (ed / "euclideanizer.pt").write_bytes(b"x")
         (ed / "euclideanizer_last.pt").write_bytes(b"x")
-    needs = _pipeline_data_needs(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
+    needs = _pipeline_data_needs(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False, do_bond_length_by_genomic_distance=False,
         plot_variances=[], variance_list=[], num_samples_list=[])
     assert needs.need_coords is True
@@ -710,27 +711,27 @@ def test_distmap_training_groups_cartesian_different_groups(cfg):
 
 def test_has_any_plotting_output_false_when_empty(tmp_path):
     (tmp_path / "seed_0").mkdir()
-    assert _has_any_plotting_output(str(tmp_path), [0]) is False
+    assert _has_any_plotting_output(str(tmp_path), [(0, 0.8)], [0.8]) is False
 
 
 def test_has_any_plotting_output_true_when_plot_exists(tmp_path):
     p = tmp_path / "seed_0" / "distmap" / "0" / "plots" / "reconstruction"
     p.mkdir(parents=True)
-    assert _has_any_plotting_output(str(tmp_path), [0]) is True
+    assert _has_any_plotting_output(str(tmp_path), [(0, 0.8)], [0.8]) is True
 
 
 def test_has_any_analysis_output_rmsd_gen(tmp_path):
-    assert _has_any_analysis_output(str(tmp_path), [0], "rmsd_gen") is False
+    assert _has_any_analysis_output(str(tmp_path), [(0, 0.8)], [0.8], "rmsd_gen") is False
     p = tmp_path / "seed_0" / "distmap" / "0" / "euclideanizer" / "0" / "analysis" / "rmsd" / "gen"
     p.mkdir(parents=True)
-    assert _has_any_analysis_output(str(tmp_path), [0], "rmsd_gen") is True
+    assert _has_any_analysis_output(str(tmp_path), [(0, 0.8)], [0.8], "rmsd_gen") is True
 
 
 def test_has_any_analysis_output_latent(tmp_path):
-    assert _has_any_analysis_output(str(tmp_path), [0], "latent") is False
+    assert _has_any_analysis_output(str(tmp_path), [(0, 0.8)], [0.8], "latent") is False
     p = tmp_path / "seed_0" / "distmap" / "0" / "euclideanizer" / "0" / "analysis" / "latent"
     p.mkdir(parents=True)
-    assert _has_any_analysis_output(str(tmp_path), [0], "latent") is True
+    assert _has_any_analysis_output(str(tmp_path), [(0, 0.8)], [0.8], "latent") is True
 
 
 def test_euclideanizer_plotting_all_present_requires_resume(tmp_path):
@@ -816,7 +817,7 @@ def test_pipeline_data_needs_need_coords_true_when_q_enabled_and_outputs_missing
     """When do_q is True and Q analysis outputs are missing, need_coords is True."""
     dm_groups, eu_groups = _all_runs_complete_layout(tmp_path, cfg)
     needs = _pipeline_data_needs(
-        str(tmp_path), [0], dm_groups, eu_groups,
+        str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups,
         resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False, do_bond_length_by_genomic_distance=False,
         plot_variances=[], variance_list=[], num_samples_list=[],
@@ -964,7 +965,7 @@ def test_pipeline_need_data_false_only_when_all_runs_and_outputs_present(tmp_pat
             (d / "euclideanizer.pt").write_bytes(b"x")
             if eu_ev == 1:
                 (d / "euclideanizer_last.pt").write_bytes(b"x")
-    assert _pipeline_need_data(str(tmp_path), [0], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
+    assert _pipeline_need_data(str(tmp_path), [(0, 0.8)], [0.8], dm_groups, eu_groups, resume=True, do_plot=False, do_rmsd=False,
         do_recon_plot=False, do_bond_rg_scaling=False, do_avg_gen=False, do_bond_length_by_genomic_distance=False,
         plot_variances=[], variance_list=[], num_samples_list=[]) is False
 
@@ -1014,7 +1015,7 @@ def test_delete_reference_size_caches_removes_plotting_split_files(tmp_path):
         os.makedirs(cache_dir, exist_ok=True)
         for name in (EXP_STATS_SPLIT_META, EXP_STATS_TRAIN_NPZ, EXP_STATS_TEST_NPZ):
             (tmp_path / f"seed_{seed}" / EXP_STATS_CACHE_DIR / name).write_bytes(b"x")
-    _delete_reference_size_caches(base, [0, 1], {"plotting"})
+    _delete_reference_size_caches(base, [(0, 0.8), (1, 0.8)], [0.8], {"plotting"})
     for seed in (0, 1):
         for name in (EXP_STATS_SPLIT_META, EXP_STATS_TRAIN_NPZ, EXP_STATS_TEST_NPZ):
             assert not os.path.isfile(os.path.join(base, f"seed_{seed}", EXP_STATS_CACHE_DIR, name))
@@ -1027,7 +1028,7 @@ def test_delete_reference_size_caches_removes_rmsd_and_q_files(tmp_path):
     os.makedirs(cache_dir, exist_ok=True)
     (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "test_to_train_rmsd.npz").write_bytes(b"x")
     (tmp_path / "seed_0" / EXP_STATS_CACHE_DIR / "q_test_to_train.npz").write_bytes(b"x")
-    _delete_reference_size_caches(base, [0], {"rmsd", "q"})
+    _delete_reference_size_caches(base, [(0, 0.8)], [0.8], {"rmsd", "q"})
     assert not os.path.isfile(os.path.join(cache_dir, "test_to_train_rmsd.npz"))
     assert not os.path.isfile(os.path.join(cache_dir, "q_test_to_train.npz"))
 

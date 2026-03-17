@@ -9,7 +9,7 @@ calibration_training_batch_cap: 512
 data:
   path: null
   split_seed: [0, 1]
-  training_split: 0.8
+  training_split: [0.8]
   exp_stats_chunk_size: 100
   exp_stats_avg_map_sample: 100
 
