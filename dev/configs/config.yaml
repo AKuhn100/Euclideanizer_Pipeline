@@ -18,7 +18,7 @@ distmap:
   latent_dim: [512]
   beta_kl: [0.05]
   epochs: [500]
-  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [2.0e-4]
   lambda_mse: [5.0]
   lambda_w_recon: [3.0]
@@ -32,7 +32,7 @@ distmap:
 # Latent dim is taken from the frozen DistMap; no latent_dim field here. Key order aligned with distmap where shared.
 euclideanizer:
   epochs: [500]
-  batch_size: 128   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
+  batch_size: null   # null = auto-calibrate at start of run (uses calibration_safety_margin_gb etc.)
   learning_rate: [4.0e-4]
   lambda_mse: [10.0]
   lambda_w_recon: [3.0]
