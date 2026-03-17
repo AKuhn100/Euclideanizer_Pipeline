@@ -208,6 +208,9 @@ def _build_trial_config(
     cfg["data"] = dict(cfg.get("data", {}))
     cfg["data"]["path"] = data_path
     cfg["data"]["split_seed"] = seed
+    # HPO runs one trial per (seed, first training_split); ensure scalar for run.py
+    _ts = cfg["data"].get("training_split", 0.8)
+    cfg["data"]["training_split"] = float(_ts[0] if isinstance(_ts, list) else _ts)
     for section in ("distmap", "euclideanizer"):
         if section not in cfg:
             cfg[section] = {}
@@ -283,7 +286,8 @@ def _load_trial_data(
     num_structures = len(coords_np)
     data_cfg = base_cfg.get("data", {})
     plot_cfg = base_cfg.get("plotting", {})
-    training_split = float(data_cfg.get("training_split", 0.8))
+    _ts = data_cfg.get("training_split", 0.8)
+    training_split = float(_ts[0] if isinstance(_ts, list) else _ts)
     chunk_size = data_cfg.get("exp_stats_chunk_size", 500)
     avg_map = data_cfg.get("exp_stats_avg_map_sample", 5000)
     n_atoms_cap = min(num_atoms - 1, 999)
