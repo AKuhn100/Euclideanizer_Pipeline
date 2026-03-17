@@ -1,6 +1,6 @@
 """
 Clustering analysis: dendrograms and mixing for train/generated/test (gen) or train/test/train_recon/test_recon (recon).
-Uses upper-triangle distance-map RMSE, FPS subsampling, and UPGMA linkage. Seed-level cache for train/test feats.
+Distmap clustering: upper-triangle distance-map RMSE, FPS on DM feats, pairwise RMSE. Coord clustering: FPS on DM feats (rotation-invariant), pairwise Kabsch RMSD; v2 cache stores train_coords/test_coords.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from scipy.cluster.hierarchy import linkage, dendrogram, cophenet
-from scipy.spatial.distance import squareform
+from scipy.spatial.distance import squareform, pdist
 from scipy.spatial.transform import Rotation
 from sklearn.decomposition import PCA
 
@@ -127,6 +127,30 @@ def _feats_from_coords_aligned(coords_np: np.ndarray) -> np.ndarray:
     return np.stack(out, axis=0).astype(np.float32)
 
 
+def _pairwise_kabsch_rmsd(coords: np.ndarray) -> np.ndarray:
+    """(N, n_atoms, 3) -> (N, N) RMSD matrix with optimal pairwise alignment."""
+    from .rmsd import _rmsd_matrix_batch
+    return _rmsd_matrix_batch(coords, coords).astype(np.float32)
+
+
+def _coord_to_dm(coord: np.ndarray) -> np.ndarray:
+    """(n_atoms, 3) -> (n_atoms, n_atoms) distance matrix."""
+    return squareform(pdist(coord, "euclidean"))
+
+
+def _fps_subsample_coords(coords_np: np.ndarray, n: int, seed: int) -> np.ndarray:
+    """FPS on distance-map upper-triangle features (rotation-invariant); returns indices into coords_np."""
+    N = len(coords_np)
+    if N <= n:
+        return np.arange(N)
+    n_atoms = coords_np.shape[1]
+    dm_feats = np.array([
+        _coord_to_dm(coords_np[i])[np.triu_indices(n_atoms, k=1)]
+        for i in range(N)
+    ], dtype=np.float32)
+    return _fps_subsample(dm_feats, n, seed)
+
+
 def _fps_subsample(feats: np.ndarray, n: int, seed: int) -> np.ndarray:
     """Farthest-point sampling on PCA-compressed features. Returns indices of length min(n, len(feats))."""
     N = len(feats)
@@ -158,6 +182,11 @@ def _pairwise_rmse(feats: np.ndarray) -> np.ndarray:
 def _compute_linkage_and_cophenetic(feats: np.ndarray, method: str) -> tuple:
     """Return (linkage_matrix, cophenetic_r)."""
     D = _pairwise_rmse(feats)
+    return _compute_linkage_and_cophenetic_from_distmat(D, method)
+
+
+def _compute_linkage_and_cophenetic_from_distmat(D: np.ndarray, method: str) -> tuple:
+    """Return (linkage_matrix, cophenetic_r) from precomputed (N, N) distance matrix."""
     cond = squareform(D, checks=False)
     Z = linkage(cond, method=method)
     c, _ = cophenet(Z, cond)
@@ -172,9 +201,18 @@ def _source_labels_array(sizes: list, source_names: list) -> np.ndarray:
     return np.array(labels)
 
 
-def _mixing_score(feats: np.ndarray, labels: np.ndarray, k: int) -> tuple:
-    """Mean and per-structure fraction of k-NN from a different source."""
-    D = _pairwise_rmse(feats)
+def _mixing_score(
+    feats: np.ndarray | None,
+    labels: np.ndarray,
+    k: int,
+    D: np.ndarray | None = None,
+) -> tuple:
+    """Mean and per-structure fraction of k-NN from a different source. Provide either feats or precomputed D."""
+    if D is None:
+        if feats is None:
+            raise ValueError("_mixing_score requires feats or D")
+        D = _pairwise_rmse(feats)
+    D = np.asarray(D, dtype=np.float32)
     np.fill_diagonal(D, np.inf)
     knn = np.argsort(D, axis=1)[:, :k]
     mix = np.array([np.mean(labels[knn[i]] != labels[i]) for i in range(len(labels))])
@@ -276,16 +314,15 @@ def get_or_compute_coord_clustering_feats(
     max_test: int | None = None,
 ) -> tuple[str, np.ndarray, np.ndarray]:
     """
-    Load or compute train/test subsampled coordinate-aligned feats; save to cache_path.
-    Returns (cache_path, train_coords_np, test_coords_np).
-    Features = Kabsch-align to first structure, flatten; pairwise RMSE = pairwise RMSD.
+    Load or compute train/test subsampled raw coords (v2 cache: train_coords, test_coords).
+    Returns (cache_path, train_coords_np, test_coords_np). FPS uses rotation-invariant DM features.
     max_train/max_test cap the reference set sizes (None = use all).
     """
     if os.path.isfile(cache_path):
         try:
             loaded = np.load(cache_path, allow_pickle=False)
-            train_feats = np.asarray(loaded["train_feats"], dtype=np.float32)
-            test_feats = np.asarray(loaded["test_feats"], dtype=np.float32)
+            train_sub = np.asarray(loaded["train_coords"], dtype=np.float32)
+            test_sub = np.asarray(loaded["test_coords"], dtype=np.float32)
             loaded.close()
             coords = coords_tensor
             train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
@@ -300,7 +337,7 @@ def get_or_compute_coord_clustering_feats(
             if max_test is not None:
                 test_coords_np = test_coords_np[:max_test]
             if display_root is not None:
-                print(f"  Loaded seed-level coord clustering feats cache: {display_path(cache_path, display_root)}")
+                print(f"  Loaded seed-level coord clustering cache: {display_path(cache_path, display_root)}")
             return cache_path, train_coords_np, test_coords_np
         except Exception:
             pass
@@ -315,26 +352,33 @@ def get_or_compute_coord_clustering_feats(
         train_coords_np = train_coords_np[:max_train]
     if max_test is not None:
         test_coords_np = test_coords_np[:max_test]
-    train_feats_full = _feats_from_coords_aligned(train_coords_np)
-    test_feats_full = _feats_from_coords_aligned(test_coords_np)
-    tr_idx_fps = _fps_subsample(train_feats_full, n_subsample, seed=fps_seed)
-    te_idx_fps = _fps_subsample(test_feats_full, n_subsample, seed=fps_seed + 1)
-    train_feats = train_feats_full[tr_idx_fps]
-    test_feats = test_feats_full[te_idx_fps]
+    tr_idx_fps = _fps_subsample_coords(train_coords_np, n_subsample, seed=fps_seed)
+    te_idx_fps = _fps_subsample_coords(test_coords_np, n_subsample, seed=fps_seed + 1)
+    train_sub = train_coords_np[tr_idx_fps]
+    test_sub = test_coords_np[te_idx_fps]
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-    np.savez_compressed(cache_path, train_feats=train_feats, test_feats=test_feats)
+    np.savez_compressed(cache_path, train_coords=train_sub, test_coords=test_sub)
     if display_root is not None:
-        print(f"  Saved seed-level coord clustering feats cache: {display_path(cache_path, display_root)}")
+        print(f"  Saved seed-level coord clustering cache: {display_path(cache_path, display_root)}")
     return cache_path, train_coords_np, test_coords_np
 
 
 def _load_clustering_cache(cache_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load train_feats, test_feats from cache. Raises if missing."""
+    """Load train_feats, test_feats from cache (distmap clustering). Raises if missing."""
     loaded = np.load(cache_path, allow_pickle=False)
     train_feats = np.asarray(loaded["train_feats"], dtype=np.float32)
     test_feats = np.asarray(loaded["test_feats"], dtype=np.float32)
     loaded.close()
     return train_feats, test_feats
+
+
+def _load_coord_clustering_cache(cache_path: str) -> tuple[np.ndarray, np.ndarray]:
+    """Load train_coords, test_coords from v2 coord clustering cache. Raises if missing."""
+    loaded = np.load(cache_path, allow_pickle=False)
+    train_coords = np.asarray(loaded["train_coords"], dtype=np.float32)
+    test_coords = np.asarray(loaded["test_coords"], dtype=np.float32)
+    loaded.close()
+    return train_coords, test_coords
 
 
 def _plot_panel(
@@ -385,8 +429,9 @@ def _fig_pure_dendrograms(
     save_pdf_copy: bool,
     display_root: str | None,
     linkage_method: str,
+    pairwise_fn=None,
 ) -> None:
-    """Pure-population dendrograms (one per source). Left to right per source_order; shared y-axis for comparability."""
+    """Pure-population dendrograms (one per source). pairwise_fn: callable(data) -> D matrix; None = _pairwise_rmse on feats."""
     groups = [(name, sub_feats[name]) for name in source_order if name in sub_feats]
     if not groups:
         return
@@ -394,12 +439,17 @@ def _fig_pure_dendrograms(
     if len(groups) == 1:
         axes = [axes]
     fig.suptitle("Hierarchical Clustering — Pure Populations", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.02, family=FONT_FAMILY)
-    for ax, (name, feats) in zip(axes, groups):
-        Z, c = _compute_linkage_and_cophenetic(feats, method=linkage_method)
+    for ax, (name, data) in zip(axes, groups):
+        if pairwise_fn is not None:
+            D = pairwise_fn(data)
+            Z, c = _compute_linkage_and_cophenetic_from_distmat(D, method=linkage_method)
+        else:
+            Z, c = _compute_linkage_and_cophenetic(data, method=linkage_method)
+        n = len(data)
         color = source_colors[name]
-        leaf_colors = np.array([color] * len(feats))
-        _plot_panel(ax, Z, np.arange(len(feats)), name, c, source_colors, leaf_colors=leaf_colors)
-        patch = mpatches.Patch(color=color, label=f"{name}  (n={len(feats)})")
+        leaf_colors = np.array([color] * n)
+        _plot_panel(ax, Z, np.arange(n), name, c, source_colors, leaf_colors=leaf_colors)
+        patch = mpatches.Patch(color=color, label=f"{name}  (n={n})")
         ax.legend(handles=[patch], fontsize=FONT_SIZE_LEGEND, loc="upper right")
     y_max = max(ax.get_ylim()[1] for ax in axes)
     y_min = min(ax.get_ylim()[0] for ax in axes)
@@ -447,8 +497,9 @@ def _mixed_dendrogram_panel(
     k_mixing: int,
     linkage_method: str,
     panel_title: str | None = None,
+    pairwise_fn=None,
 ) -> tuple:
-    """One mixed dendrogram; returns (obs_mix, exp_mix, norm_mix, Z, labels)."""
+    """One mixed dendrogram; returns (obs_mix, exp_mix, norm_mix, Z, labels). pairwise_fn: callable(stacked) -> D; None = _pairwise_rmse."""
     parts = [(name_a, feats_a), (name_b, feats_b)]
     if feats_c is not None and name_c is not None:
         parts.append((name_c, feats_c))
@@ -457,8 +508,13 @@ def _mixed_dendrogram_panel(
     names = [n for n, _ in parts]
     labels = _source_labels_array(sizes, names)
     leaf_colors = np.concatenate([np.array([source_colors[n]] * sz) for n, sz in zip(names, sizes)])
-    Z, c = _compute_linkage_and_cophenetic(stacked, method=linkage_method)
-    obs_mix, _ = _mixing_score(stacked, labels, k=k_mixing)
+    if pairwise_fn is not None:
+        D = pairwise_fn(stacked)
+        Z, c = _compute_linkage_and_cophenetic_from_distmat(D, method=linkage_method)
+        obs_mix, _ = _mixing_score(None, labels, k=k_mixing, D=D)
+    else:
+        Z, c = _compute_linkage_and_cophenetic(stacked, method=linkage_method)
+        obs_mix, _ = _mixing_score(stacked, labels, k=k_mixing)
     exp_mix = _expected_mixing(labels, k=k_mixing)
     norm_mix = obs_mix / exp_mix if exp_mix > 0 else 0.0
     title_parts = panel_title if panel_title is not None else " + ".join(names)
@@ -478,6 +534,7 @@ def _fig_mixed_dendrograms(
     display_root: str | None,
     k_mixing: int,
     linkage_method: str,
+    pairwise_fn=None,
 ) -> dict:
     """Mixed dendrograms: left-to-right top-to-bottom — gen: Train+Test, Train+Gen, Test+Gen, Train+Test+Gen; recon: Train+Test, Train+Train recon, Test+Test recon, Test recon+Train recon. Returns mixing_stats."""
     is_gen = "Gen" in sub_feats
@@ -511,6 +568,7 @@ def _fig_mixed_dendrograms(
         obs, exp, ratio, Z_mix, lbl_mix = _mixed_dendrogram_panel(
             ax, fa, na, fb, nb, fc, nc, source_colors, k_mixing, linkage_method,
             panel_title=panel_title,
+            pairwise_fn=pairwise_fn,
         )
         key = f"{na}+{nb}" + (f"+{nc}" if nc else "")
         stats[key] = {"obs": obs, "exp": exp, "ratio": ratio}
@@ -585,8 +643,9 @@ def _fig_rmse_similarity(
     plot_dpi: int,
     save_pdf_copy: bool,
     display_root: str | None,
+    pairwise_fn=None,
 ) -> None:
-    """Quantile-quantile plots of pairwise RMSE distributions. Order: gen = (Train,Test), (Train,Gen), (Test,Gen); recon = (Train,Test), (Train,Train recon), (Test,Test recon), (Test recon,Train recon). Shared x/y limits and square aspect for comparability."""
+    """Quantile-quantile plots of pairwise RMSE/RMSD distributions. pairwise_fn: callable(data) -> D; None = _pairwise_rmse."""
     is_gen = "Gen" in sub_feats
     pair_order = RMSE_PAIR_ORDER_GEN if is_gen else RMSE_PAIR_ORDER_RECON
     pairs = [(a, b) for a, b in pair_order if a in sub_feats and b in sub_feats]
@@ -601,8 +660,12 @@ def _fig_rmse_similarity(
         feats_a = sub_feats[name_a]
         feats_b = sub_feats[name_b]
         ax = axes[panel]
-        Da = _pairwise_rmse(feats_a)
-        Db = _pairwise_rmse(feats_b)
+        if pairwise_fn is not None:
+            Da = pairwise_fn(feats_a)
+            Db = pairwise_fn(feats_b)
+        else:
+            Da = _pairwise_rmse(feats_a)
+            Db = _pairwise_rmse(feats_b)
         tri_a = Da[np.triu_indices(len(feats_a), k=1)]
         tri_b = Db[np.triu_indices(len(feats_b), k=1)]
         n_q = min(500, len(tri_a), len(tri_b))
@@ -653,8 +716,9 @@ def _write_clustering_figures(
     k_mixing: int,
     linkage_method: str,
     n_subsample: int,
+    pairwise_distance_fn=None,
 ) -> str:
-    """Write pure_dendrograms, mixed_dendrograms, mixing_analysis (mixing score bar chart), rmse_similarity. Optionally save data/ when save_data. Returns path to primary figure."""
+    """Write pure_dendrograms, mixed_dendrograms, mixing_analysis, rmse_similarity. pairwise_distance_fn: None = _pairwise_rmse (distmap); callable = use for coords (e.g. _pairwise_kabsch_rmsd). Returns path to primary figure."""
     os.makedirs(run_dir_this, exist_ok=True)
     dpi = plot_cfg["plot_dpi"]
     save_pdf = plot_cfg["save_pdf_copy"]
@@ -663,10 +727,10 @@ def _write_clustering_figures(
     mixed_path = os.path.join(run_dir_this, "mixed_dendrograms.png")
     mixing_path = os.path.join(run_dir_this, "mixing_analysis.png")
     rmse_path = os.path.join(run_dir_this, "rmse_similarity.png")
-    _fig_pure_dendrograms(sub_feats, source_order, source_colors, pure_path, dpi, save_pdf, display_root, linkage_method)
-    mixing_stats = _fig_mixed_dendrograms(sub_feats, source_order, source_colors, mixed_path, dpi, save_pdf, display_root, k_mixing, linkage_method)
+    _fig_pure_dendrograms(sub_feats, source_order, source_colors, pure_path, dpi, save_pdf, display_root, linkage_method, pairwise_fn=pairwise_distance_fn)
+    mixing_stats = _fig_mixed_dendrograms(sub_feats, source_order, source_colors, mixed_path, dpi, save_pdf, display_root, k_mixing, linkage_method, pairwise_fn=pairwise_distance_fn)
     _fig_mixing_analysis(mixing_stats, source_colors, mixing_path, dpi, save_pdf, display_root, k_mixing)
-    _fig_rmse_similarity(sub_feats, source_order, rmse_path, dpi, save_pdf, display_root)
+    _fig_rmse_similarity(sub_feats, source_order, rmse_path, dpi, save_pdf, display_root, pairwise_fn=pairwise_distance_fn)
     if save_data:
         data_dir = os.path.join(run_dir_this, "data")
         os.makedirs(data_dir, exist_ok=True)
@@ -875,7 +939,7 @@ def run_coord_clustering_gen_analysis(
     linkage_method: str,
 ) -> str:
     """
-    Coord clustering gen: load train/test coord feats from cache, generate structures, subsample gen feats, produce four figures.
+    Coord clustering gen: load train/test subsampled coords from cache, generate structures, FPS-subsample gen coords, produce figures with pairwise Kabsch RMSD.
     Saves to run_dir/analysis/coord_clustering/gen/<run_name>/.
     """
     from .distmap.sample import generate_samples
@@ -883,9 +947,9 @@ def run_coord_clustering_gen_analysis(
     run_name = output_suffix.lstrip("_") if output_suffix else "default"
     run_dir_this = os.path.join(run_dir, "analysis", "coord_clustering", "gen", run_name)
     if coord_clustering_seed_feats_path and os.path.isfile(coord_clustering_seed_feats_path):
-        train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
+        train_coords_sub, test_coords_sub = _load_coord_clustering_cache(coord_clustering_seed_feats_path)
     else:
-        raise ValueError("coord_clustering_gen requires coord_clustering_seed_feats_path (seed-level cache).")
+        raise ValueError("coord_clustering_gen requires coord_clustering_seed_feats_path (seed-level v2 cache).")
     num_atoms = coords_tensor.size(1)
     gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
@@ -898,13 +962,13 @@ def run_coord_clustering_gen_analysis(
             out_coords.append(embed(D_ne))
         gen_coords = torch.cat(out_coords, dim=0)
     gen_coords_np = gen_coords.cpu().numpy()
-    gen_feats_full = _feats_from_coords_aligned(gen_coords_np)
-    ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
-    gen_feats = gen_feats_full[ge_idx]
-    sub_feats = {"Train": train_feats, "Test": test_feats, "Gen": gen_feats}
+    ge_idx = _fps_subsample_coords(gen_coords_np, n_subsample, seed=FPS_SEED + 2)
+    gen_coords_sub = gen_coords_np[ge_idx]
+    sub_feats = {"Train": train_coords_sub, "Test": test_coords_sub, "Gen": gen_coords_sub}
     return _write_clustering_figures(
         run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
         plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
+        pairwise_distance_fn=_pairwise_kabsch_rmsd,
     )
 
 
@@ -931,13 +995,12 @@ def run_coord_clustering_gen_analysis_multi(
     k_mixing: int,
     linkage_method: str,
 ) -> list[str]:
-    """Run coord clustering gen for multiple num_samples with same variance."""
+    """Run coord clustering gen for multiple num_samples with same variance (pairwise Kabsch RMSD)."""
     from .distmap.sample import generate_samples
 
     if not coord_clustering_seed_feats_path or not os.path.isfile(coord_clustering_seed_feats_path):
         raise ValueError("coord_clustering_gen multi requires coord_clustering_seed_feats_path.")
-    train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
-    num_atoms = coords_tensor.size(1)
+    train_coords_sub, test_coords_sub = _load_coord_clustering_cache(coord_clustering_seed_feats_path)
     gen_decode_batch_size = plot_cfg["gen_decode_batch_size"]
     embed.eval()
     sorted_n = sorted(set(num_samples_list))
@@ -952,15 +1015,15 @@ def run_coord_clustering_gen_analysis_multi(
                 out_coords.append(embed(D_ne))
             gen_coords = torch.cat(out_coords, dim=0)
         gen_coords_np = gen_coords.cpu().numpy()
-        gen_feats_full = _feats_from_coords_aligned(gen_coords_np)
-        ge_idx = _fps_subsample(gen_feats_full, n_subsample, seed=FPS_SEED + 2)
-        gen_feats = gen_feats_full[ge_idx]
-        sub_feats = {"Train": train_feats, "Test": test_feats, "Gen": gen_feats}
+        ge_idx = _fps_subsample_coords(gen_coords_np, n_subsample, seed=FPS_SEED + 2)
+        gen_coords_sub = gen_coords_np[ge_idx]
+        sub_feats = {"Train": train_coords_sub, "Test": test_coords_sub, "Gen": gen_coords_sub}
         run_name = (str(n) + variance_suffix) if variance_suffix else str(n)
         run_dir_this = os.path.join(run_dir, "analysis", "coord_clustering", "gen", run_name)
         path = _write_clustering_figures(
             run_dir_this, sub_feats, SOURCE_ORDER_GEN, SOURCE_COLORS_GEN,
             plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
+            pairwise_distance_fn=_pairwise_kabsch_rmsd,
         )
         out_paths.append(path)
     return out_paths
@@ -982,24 +1045,23 @@ def run_coord_clustering_recon_analysis(
     linkage_method: str,
 ) -> str:
     """
-    Coord clustering recon: use cached train/test coord feats; compute train_recon and test_recon aligned feats, FPS subsample; four populations.
+    Coord clustering recon: use cached train/test subsampled coords; FPS-subsample train_recon and test_recon coords; four populations with pairwise Kabsch RMSD.
     Saves to run_dir/analysis/coord_clustering/recon[/recon_subdir]/.
     """
-    train_feats, test_feats = _load_clustering_cache(coord_clustering_seed_feats_path)
-    train_recon_feats_full = _feats_from_coords_aligned(train_recon_coords)
-    test_recon_feats_full = _feats_from_coords_aligned(test_recon_coords)
-    tr_recon_idx = _fps_subsample(train_recon_feats_full, n_subsample, seed=FPS_SEED + 3)
-    te_recon_idx = _fps_subsample(test_recon_feats_full, n_subsample, seed=FPS_SEED + 4)
-    train_recon_feats = train_recon_feats_full[tr_recon_idx]
-    test_recon_feats = test_recon_feats_full[te_recon_idx]
+    train_coords_sub, test_coords_sub = _load_coord_clustering_cache(coord_clustering_seed_feats_path)
+    tr_recon_idx = _fps_subsample_coords(train_recon_coords, n_subsample, seed=FPS_SEED + 3)
+    te_recon_idx = _fps_subsample_coords(test_recon_coords, n_subsample, seed=FPS_SEED + 4)
+    train_recon_sub = train_recon_coords[tr_recon_idx]
+    test_recon_sub = test_recon_coords[te_recon_idx]
     sub_feats = {
-        "Train": train_feats,
-        "Train Recon": train_recon_feats,
-        "Test": test_feats,
-        "Test Recon": test_recon_feats,
+        "Train": train_coords_sub,
+        "Train Recon": train_recon_sub,
+        "Test": test_coords_sub,
+        "Test Recon": test_recon_sub,
     }
     run_dir_recon = os.path.join(run_dir, "analysis", "coord_clustering", "recon", recon_subdir) if recon_subdir else os.path.join(run_dir, "analysis", "coord_clustering", "recon")
     return _write_clustering_figures(
         run_dir_recon, sub_feats, SOURCE_ORDER_RECON, SOURCE_COLORS_RECON,
         plot_cfg, display_root, k_mixing, linkage_method, n_subsample,
+        pairwise_distance_fn=_pairwise_kabsch_rmsd,
     )

@@ -520,11 +520,12 @@ def _delete_reference_size_caches(base_output_dir: str, run_entries: list, train
                 except OSError:
                     pass
         if "coord_clustering" in components:
-            for path in _glob.glob(os.path.join(cache_dir, "coord_clustering_train_test_feats_*.npz")):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+            for pattern in ("coord_clustering_train_test_feats_*.npz", "coord_clustering_v2_train_test_coords_*.npz"):
+                for path in _glob.glob(os.path.join(cache_dir, pattern)):
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
         if "distmap_clustering" in components:
             for path in _glob.glob(os.path.join(cache_dir, "distmap_clustering_train_test_feats_*.npz")):
                 try:

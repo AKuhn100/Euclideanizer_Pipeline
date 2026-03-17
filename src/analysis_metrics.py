@@ -165,17 +165,20 @@ def _q_precomputed_kwargs(tt, train_c, test_c):
     return {"precomputed_test_to_train_max_q": tt, "train_coords_np": train_c, "test_coords_np": test_c}
 
 
-def _make_clustering_cache_filename(prefix: str):
-    """Returns cache_filename(analysis_cfg, max_train, max_test) for coord or distmap clustering. Config must contain all required keys."""
+def _make_clustering_cache_filename(prefix: str, version_suffix: str = ""):
+    """Returns cache_filename(analysis_cfg, max_train, max_test) for coord or distmap clustering. version_suffix: e.g. 'v2' for coord to avoid loading old format."""
 
     def _fn(analysis_cfg: dict, max_train: int | None = None, max_test: int | None = None) -> str:
         gen = analysis_cfg[f"{prefix}_gen"]
         n = gen["n_subsample"]
         mt = max_train if max_train is not None else analysis_cfg[f"{prefix}_max_train"]
         mc = max_test if max_test is not None else analysis_cfg[f"{prefix}_max_test"]
+        ver = f"_{version_suffix}" if version_suffix else ""
+        # coord_clustering v2 stores train_coords/test_coords; distmap stores train_feats/test_feats
+        base = "train_test_coords" if version_suffix else "train_test_feats"
         if mt is None and mc is None:
-            return f"{prefix}_train_test_feats_n{n}.npz"
-        return f"{prefix}_train_test_feats_n{n}_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
+            return f"{prefix}{ver}_{base}_n{n}.npz"
+        return f"{prefix}{ver}_{base}_n{n}_{mt if mt is not None else 'all'}_{mc if mc is not None else 'all'}.npz"
 
     return _fn
 
@@ -295,8 +298,8 @@ def _make_clustering_recon_extra_kwargs(prefix: str, include_batch_size: bool = 
     return _fn
 
 
-# Coord clustering: no batch_size in cache or extra kwargs.
-_coord_clustering_cache_filename = _make_clustering_cache_filename("coord_clustering")
+# Coord clustering: v2 cache (train_coords/test_coords, pairwise Kabsch RMSD); no batch_size.
+_coord_clustering_cache_filename = _make_clustering_cache_filename("coord_clustering", version_suffix="v2")
 _coord_clustering_kwargs_for_cache = _make_clustering_kwargs_for_cache("coord_clustering", include_batch_size=False)
 _coord_clustering_get_or_compute = _make_clustering_get_or_compute(use_batch_size=False)
 _coord_clustering_build_gen_plot_cfg = _make_clustering_build_gen_plot_cfg("coord_clustering")
