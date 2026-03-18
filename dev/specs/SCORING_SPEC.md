@@ -74,7 +74,7 @@ Two special cases use ratio-based discrepancies rather than Wasserstein or MAE:
 
 - **Scaling:** MAE between P_exp(s) and P_recon(s) after z-scoring both curves.
 - **Rg:** Wasserstein between Rg_exp and Rg_recon samples after z-scoring the combined pool.
-- **Pairwise distances:** mean over **all genomic lags** s = 1,…,N−1 of Wasserstein between d(i,i+s) distributions (z-scored). Plotting may show only a subset of lags (e.g. 20) for display; scoring uses all lags.
+- **Pairwise distances:** mean over **all genomic lags** s = 1,…,N−1 of Wasserstein between d(i,i+s) distributions (z-scored). Experimental and reconstructed samples use the **same** train/test structure counts (`plotting.max_train` / `max_test`; `null` = full split). Plotting may show only a subset of lags (e.g. 20) for display; scoring uses all lags.
 - **Average map:** MAE between `<D>_exp` and `<D>_recon` matrices after z-scoring.
 
 8 components total (4 measures × train/test).

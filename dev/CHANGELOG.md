@@ -1,6 +1,24 @@
 # Changelog
 
+## 2026-03-18
+
+- **Resume:** Fixed missing **bond_length_by_genomic_distance** (and DistMap bond plots) when `gen_variance` was already on disk: the pipeline skipped loading full-dataset `exp_stats` and gated the whole plotting phase on `exp_stats is not None`. Added `_plotting_phase_needed()` and widened `need_plot_or_rmsd` so bond-length / recon_statistics runs without `exp_stats`. (`run.py`, `test_pipeline_behavior.py`, README, STYLE_GUIDE)
+
+- **Pairwise distance by lag:** Three figures when `plotting.bond_length_by_genomic_distance` is on: **train** (exp vs recon train), **test** (exp vs recon test), **gen** (train/test/gen overlay). Dirs `plots/bond_length_by_genomic_distance_{train,test,gen}/`. Recon statistics histograms: **experimental** train/test as **step outline** (foreground), **recon** filled behind. Dashboard: Title Case on block titles (RMSD/Q/gen run names, pairwise plots, etc.); three bond block types + score strips. (`plotting.py`, `run.py`, `dashboard.py`, tests, README, STYLE_GUIDE)
+
+- **Plotting / scoring alignment:** Reconstruction distmaps for **recon_statistics** (DistMap + Euclideanizer) are capped by **`plotting.max_train`** / **`max_test`** like experimental stats (`null` = full split), so recon pairwise scoring compares equal sample sizes. (`run.py` `_capped_train_test_subset`, `test_pipeline_behavior.py`, STYLE_GUIDE, README)
+
+- **Dashboard:** `_scan_runs` now includes `seed_<n>_split_<frac>/` (multi–`training_split` layout) with unique run IDs (`seed_<n>_split_<frac>_dm_*` / `_eu_*`) and labels showing seed + split. (`Pipeline/src/dashboard.py`, `Pipeline/tests/test_dashboard.py`, `Pipeline/dev/STYLE_GUIDE.md`, README directory/dashboard notes)
+- **Dashboard:** Vary-aspect mode adds **training_split (train / test)** when at least two runs differ in train fraction (from `seed_*_split_*` dirs or `pipeline_config.yaml`). Rows group by seed + distmap/Eu index + model params; columns are train fractions. (`Pipeline/src/dashboard.py`, tests, README, STYLE_GUIDE)
+- **Dashboard fix:** `_copy_assets_and_update_paths` now copies `training_split`, `split_seed`, `distmap_index`, `euclideanizer_index` into `manifest.json` / embedded manifest (they were dropped before, so Vary aspect never saw training split).
+- **Dashboard:** Under each scored plot (recon, gen @ var 1, RMSD, Q, latent, clustering), show grouped **component scores** (named labels + values) from `scoring/scores.json`; DistMap runs inherit scores from their Euclideanizer. Vary-aspect cells include the same strips. (`Pipeline/src/dashboard.py`, tests, STYLE_GUIDE, README)
+- **Dashboard (tweak):** Score strips **only under Euclideanizer** outputs (not DistMap-only detail); labels **Title Case**; **Bond length by genomic distance** also shows recon **pairwise distance** scores; new **Score vs aspect** view (SVG plot, Y = chosen component, X = aspect or training split; hover = Frozen DistMap + Euclideanizer table). Manifest adds `score_component_catalog` and per-Eu `component_scores`.
+- **Dashboard:** **Score Vs Aspect** — optional **Two Scores (Color By Aspect)** (X/Y = two components, color = aspect); toolbar/browse strings **Title Case**. (`dashboard.py` embedded HTML/JS)
+- **Dashboard:** Dual score plot: plot + color-key card **same row** (`flex-wrap: nowrap`), horizontal scroll if narrow; legend card **height matches** plot SVG via `--score-plot-h` (legend grid scrolls inside if many aspects).
+
 ## 2026-03-16
+
+- **Pipeline:** List support for `data.training_split`. Config can specify a single float or a list of floats in (0, 1); each value runs one full pipeline (like `split_seed`). Output dirs: when only one split value, keep `seed_<n>/`; when multiple, use `seed_<n>_split_<frac>/`. Validation in `src/config.py`; helper `get_training_splits(cfg)`; `run.py` outer loop over (seed, training_split), pipeline config and resume key off per-run split; cache and `_iter_euclideanizer_runs` recognize both dir patterns. (`Pipeline/src/config.py`, `Pipeline/run.py`, `Pipeline/samples/config_sample.yaml`)
 
 ### GRO / converter coordinate mis-parse and where safety lives
 
@@ -35,6 +53,10 @@ Before running the wizard, the user must type "Accept" after a short disclaimer 
 - **HPO: deterministic output_dir and SQLite path.** `output_dir` is resolved relative to the HPO config file's directory when relative, so the same config yields the same output root regardless of process cwd (avoids Slurm vs interactive sharing or crossing paths). The SQLite study DB path is not a config option: it is always `output_dir/hpo_study.db`. `optuna.storage` is only honored for non-SQLite backends (e.g. PostgreSQL). `run_hpo.py`.
 
 ## 2026-03-15
+
+- **Pipeline:** Consolidated scoring to run once per Euclideanizer run at end of run, with inline NPZ cleanup. Removed interleaved `_run_scoring_for_run` calls from `_run_one_distmap_group` and `run_one_hpo_trial`; added a single scoring + `_post_scoring_npz_cleanup` block at end of each EU run. Removed post-loop `_post_scoring_npz_cleanup` from `main()`. (`Pipeline/run.py`)
+- **Pipeline:** Fixed `shutil.SameFileError` when resuming an interrupted DistMap run from its own best checkpoint. Skip copying `model.pt` when source and destination are the same (same-run resume). (`Pipeline/src/train_distmap.py`)
+
 
 - **Setup wizard (SETUP_WIZARD.md).** New entry point `run_setup_wizard.py` guides from raw data (file or directory) to a converted NPZ file. Uses Claude API (model claude-sonnet-4-6) to generate a standalone Python converter script from sampled file content; validates output NPZ (coords key, shape, finiteness) with one retry on failure. Requires `ANTHROPIC_API_KEY`. Added `src/wizard.py` (main, check_api_key, collect_samples, call_claude, validate_converter, save_converter, resolve_output_path, print_getting_started), `src/wizard_prompts.py` (CONVERTER_SYSTEM_PROMPT, build_user_prompt, build_retry_prompt), `setup_wizard_scripts/` for generated scripts. CLI: `--data` (required), `--output`, `--max-files`, `--sample-lines`, `--confirm-large`. Dependencies: `anthropic>=0.21.0`. README (Data format / Setup wizard, Project layout), STYLE_GUIDE (entrypoints, package layout), and requirements.txt updated.
 

@@ -48,6 +48,7 @@ from src.config import (
     load_pipeline_config,
 )
 from run import (
+    _capped_train_test_subset,
     _run_completed,
     _pipeline_need_data,
     _pipeline_data_needs,
@@ -753,10 +754,33 @@ def test_euclideanizer_plotting_all_present_true_when_all_exist(tmp_path):
     (run_dir / "plots" / "recon_statistics" / "recon_statistics_test.png").write_bytes(b"x")
     (run_dir / "plots" / "recon_statistics" / "recon_statistics_train.png").write_bytes(b"x")
     (run_dir / "plots" / "gen_variance" / "gen_variance_1.0.png").write_bytes(b"x")
-    (run_dir / "plots" / "bond_length_by_genomic_distance").mkdir(parents=True)
-    (run_dir / "plots" / "bond_length_by_genomic_distance" / "bond_length_by_genomic_distance.png").write_bytes(b"x")
+    for sub, fn in (
+        ("bond_length_by_genomic_distance_gen", "bond_length_by_genomic_distance_gen.png"),
+        ("bond_length_by_genomic_distance_train", "bond_length_by_genomic_distance_train.png"),
+        ("bond_length_by_genomic_distance_test", "bond_length_by_genomic_distance_test.png"),
+    ):
+        p = run_dir / "plots" / sub
+        p.mkdir(parents=True)
+        (p / fn).write_bytes(b"x")
     assert _euclideanizer_plotting_all_present(
         str(run_dir), resume=True, do_recon_plot=True, do_bond_rg_scaling=True, do_avg_gen=True, do_bond_length_by_genomic_distance=True, sample_variances=[1.0]
+    ) is True
+
+
+def test_plotting_phase_needed_bond_without_exp_stats():
+    """Bond-length (and recon_statistics) plots do not need full-dataset exp_stats; run phase when those are on even if exp_stats was not loaded."""
+    from run import _plotting_phase_needed
+
+    coords = object()
+    ts, te = {"k": 1}, {"k": 2}
+    assert _plotting_phase_needed(
+        True, None, coords, ts, te, False, False, True, True,
+    ) is True
+    assert _plotting_phase_needed(
+        True, None, coords, ts, te, False, False, True, False,
+    ) is False
+    assert _plotting_phase_needed(
+        True, None, coords, ts, te, False, True, True, False,
     ) is True
 
 
@@ -1101,6 +1125,21 @@ def test_scoring_compute_and_save_creates_scores_json(tmp_path):
     assert "overall_score" in data
     assert "present" in data
     assert "missing" in data
+
+
+def test_capped_train_test_subset_matches_plot_max():
+    """Recon distmaps use the same first-N split order as exp_stats (plotting.max_train / max_test)."""
+    import torch
+
+    from src import utils
+
+    coords = torch.randn(120, 8, 3)
+    train_ds, test_ds = utils.get_train_test_split(coords, 0.8, split_seed=7)
+    assert len(_capped_train_test_subset(train_ds, None)) == len(train_ds)
+    assert len(_capped_train_test_subset(test_ds, None)) == len(test_ds)
+    assert len(_capped_train_test_subset(train_ds, 10)) == 10
+    assert len(_capped_train_test_subset(test_ds, 5)) == 5
+    assert len(_capped_train_test_subset(train_ds, 10_000)) == len(train_ds)
 
 
 def test_scoring_compute_and_save_no_overwrite_when_called_still_writes(tmp_path):

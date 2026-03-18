@@ -211,17 +211,29 @@ def plot_recon_statistics(
     recon_color = COLOR_TRAIN_RECON if is_train else COLOR_TEST_RECON
     fig, axes = plt.subplots(1, 3, figsize=(21, 6))
     bmax = max(np.percentile(true_bonds, 99), np.percentile(recon_bonds, 99))
-    axes[0].hist(true_bonds, bins=60, alpha=0.5, label=exp_label, density=True, range=(0, bmax), color=exp_color)
-    axes[0].hist(recon_bonds, bins=60, alpha=0.5, label=label_recon, density=True, range=(0, bmax), color=recon_color)
+    axes[0].hist(
+        recon_bonds, bins=60, alpha=0.42, label=label_recon, density=True, range=(0, bmax),
+        color=recon_color, zorder=1,
+    )
+    axes[0].hist(
+        true_bonds, bins=60, label=exp_label, density=True, range=(0, bmax), color=exp_color,
+        histtype="step", lw=2.4, zorder=4,
+    )
     axes[0].set_title("Bond Lengths", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].legend(fontsize=FONT_SIZE_LEGEND)
     rmax = max(np.percentile(true_rg, 99), np.percentile(recon_rg, 99)) * 1.1
-    axes[1].hist(true_rg, bins=40, alpha=0.5, label=exp_label, density=True, range=(0, rmax), color=exp_color)
-    axes[1].hist(recon_rg, bins=40, alpha=0.5, label=label_recon, density=True, range=(0, rmax), color=recon_color)
+    axes[1].hist(
+        recon_rg, bins=40, alpha=0.42, label=label_recon, density=True, range=(0, rmax),
+        color=recon_color, zorder=1,
+    )
+    axes[1].hist(
+        true_rg, bins=40, label=exp_label, density=True, range=(0, rmax), color=exp_color,
+        histtype="step", lw=2.4, zorder=4,
+    )
     axes[1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].legend(fontsize=FONT_SIZE_LEGEND)
-    axes[2].loglog(s, true_sc, label=exp_label, lw=2, color=exp_color)
-    axes[2].loglog(s, recon_sc, label=label_recon, lw=2, ls="--", color=recon_color)
+    axes[2].loglog(s, recon_sc, label=label_recon, lw=2, ls="--", color=recon_color, alpha=0.85, zorder=1)
+    axes[2].loglog(s, true_sc, label=exp_label, lw=2.6, color=exp_color, zorder=3)
     axes[2].set_title("Spatial Scaling P(s)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[2].legend(fontsize=FONT_SIZE_LEGEND)
     title = "Reconstruction Statistics" + (f" ({exp_label} Set)" if subset_label else " (Test Set)")
@@ -453,7 +465,10 @@ def plot_bond_length_by_genomic_distance(
         ax.legend(fontsize=FONT_SIZE_TINY)
     for idx in range(n_plots, len(axes_flat)):
         axes_flat[idx].set_visible(False)
-    plt.suptitle("Pairwise Distance d(i, i+k) by Genomic Lag k", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
+    plt.suptitle(
+        "Pairwise Distance By Genomic Lag k (Train, Test, Gen)",
+        fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY,
+    )
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
@@ -465,6 +480,86 @@ def plot_bond_length_by_genomic_distance(
             data[f"train_k{k}"] = distmap_distances_at_lag(train_dm, int(k))
             data[f"test_k{k}"] = distmap_distances_at_lag(test_dm, int(k))
             data[f"gen_k{k}"] = distmap_distances_at_lag(gen_dm, int(k))
+        _save_plot_data_npz(output_path, display_root=display_root, **data)
+    plt.close()
+    print(f"  Saved: {display_path(output_path, display_root)}")
+
+
+def plot_pairwise_distance_by_lag_exp_vs_recon(
+    exp_dm: np.ndarray,
+    recon_dm: np.ndarray,
+    output_path: str,
+    *,
+    exp_label: str = "Train",
+    recon_label: str = "Recon",
+    suptitle_suffix: str = "Train",
+    subset: str = "train",
+    num_k: int = NUM_K_DEFAULT,
+    exp_color: str | None = None,
+    recon_color: str | None = None,
+    dpi: int = PLOT_DPI,
+    save_pdf: bool = True,
+    save_plot_data: bool = False,
+    display_root: str | None = None,
+    data_key_prefix: str = "train",
+) -> None:
+    """
+    5×4 grid: per lag k, experimental vs reconstructed pairwise d(i,i+k).
+    Recon filled (behind); experimental step outline in front.
+    subset: 'train' or 'test' selects default colors.
+    """
+    if str(subset).lower() == "test":
+        exp_color = exp_color or COLOR_TEST
+        recon_color = recon_color or COLOR_TEST_RECON
+    else:
+        exp_color = exp_color or COLOR_TRAIN
+        recon_color = recon_color or COLOR_TRAIN_RECON
+    N = exp_dm.shape[1]
+    k_values = _k_values_evenly_spaced(N, num_k)
+    n_plots = len(k_values)
+    if n_plots == 0:
+        return
+    nrows, ncols = GRID_SHAPE
+    fig, axes_flat = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
+    axes_flat = np.asarray(axes_flat).flatten()
+    bins = 50
+    for idx, k in enumerate(k_values):
+        ax = axes_flat[idx]
+        exp_vals = distmap_distances_at_lag(exp_dm, int(k))
+        recon_vals = distmap_distances_at_lag(recon_dm, int(k))
+        all_vals = np.concatenate([exp_vals, recon_vals])
+        if len(all_vals) == 0:
+            ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            continue
+        x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
+        x_max = max(x_max, 1e-6)
+        ax.hist(
+            recon_vals, bins=bins, alpha=0.42, label=recon_label, density=True, range=(0, x_max),
+            color=recon_color, zorder=1,
+        )
+        ax.hist(
+            exp_vals, bins=bins, label=exp_label, density=True, range=(0, x_max), color=exp_color,
+            histtype="step", lw=2.2, zorder=4,
+        )
+        ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+        ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.legend(fontsize=FONT_SIZE_TINY)
+    for idx in range(n_plots, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+    plt.suptitle(
+        f"Pairwise Distance By Genomic Lag k ({suptitle_suffix})",
+        fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY,
+    )
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    plt.savefig(output_path, dpi=dpi)
+    _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
+    if save_plot_data and n_plots > 0:
+        k_arr = np.array(k_values)
+        data: dict = {"k_values": k_arr, "subset": np.array(data_key_prefix)}
+        for k in k_values:
+            data[f"{data_key_prefix}_exp_k{k}"] = distmap_distances_at_lag(exp_dm, int(k))
+            data[f"{data_key_prefix}_recon_k{k}"] = distmap_distances_at_lag(recon_dm, int(k))
         _save_plot_data_npz(output_path, display_root=display_root, **data)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
