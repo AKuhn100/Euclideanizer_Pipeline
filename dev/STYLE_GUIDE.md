@@ -46,7 +46,7 @@ These goals drive design and where we accept complexity.
 
 - **Resume is the default.** The pipeline skips any run (training, plotting, analysis) whose outputs already exist and are considered “complete.” Interrupted runs resume from the best checkpoint (or previous segment’s last) rather than restarting.
 - **Config must match on resume.** If the output directory exists and resume is on, training-related config (data, distmap, euclideanizer, training_visualization) must match the saved pipeline config exactly; otherwise the run fails with a diff before loading data.
-- **Granular overwrite.** When only plotting or analysis config changes, the pipeline does **not** wipe the whole output dir. It treats five independent **chunks**: Plotting, RMSD (gen), RMSD (recon), Q (gen), Q (recon). Only the chunks whose config changed are prompted, deleted, and re-run. Training and other chunks are left intact.
+- **Granular overwrite.** When only plotting or analysis config changes, the pipeline does **not** wipe the whole output dir. It treats chunked components (Plotting, RMSD gen/recon, Q gen/recon, Generative Capacity RMSD/Q, clustering gen/recon, latent, and meta-analysis sufficiency) independently. Only chunks whose config changed are prompted, deleted, and re-run. Training and other chunks are left intact.
 - **Overwrite_existing per component.** Each analysis block (e.g. `rmsd_gen`, `rmsd_recon`) and plotting have an `overwrite_existing` flag. When true and outputs exist, only that component’s outputs are removed and re-run (with optional prompt, or `--yes-overwrite` to skip). This avoids mixing old and new results.
 
 ### 2.2 Data loading: load only what’s needed
@@ -102,7 +102,7 @@ These goals drive design and where we accept complexity.
 
 ### 3.3 Config and naming
 
-- **Analysis config keys:** `rmsd_gen`, `rmsd_recon`, `q_gen`, `q_recon`, `coord_clustering_*`, `distmap_clustering_*`. File and directory names follow the metric (e.g. `analysis/rmsd/`, `rmsd_distributions.png`). In figure content (titles, axis labels), use the full description (e.g. “min RMSD to training set”) where the caveat matters.
+- **Analysis config keys:** `rmsd_gen`, `rmsd_recon`, `q_gen`, `q_recon`, `generative_capacity_rmsd`, `generative_capacity_q`, `coord_clustering_*`, `distmap_clustering_*`. File and directory names follow the metric (e.g. `analysis/rmsd/`, `rmsd_distributions.png`). In figure content (titles, axis labels), use the full description (e.g. “min RMSD to training set”) where the caveat matters.
 
 ### 3.4 Run completion and training actions
 
@@ -229,7 +229,7 @@ All pipeline-generated figures (plotting, analysis, training curves) must follow
 
 ## 6. Summary checklist for changes
 
-- [ ] Config: if you add or rename analysis or training_visualization keys, update `src/config.py` (REQUIRED_KEYS, REQUIRED_ANALYSIS_SUBKEYS), `samples/config_sample.yaml`, `samples/config_sample_hpo.yaml`, `dev/configs/*.yaml` as needed, and test configs. Pipeline plotting must list **`plot_dpi`** with other required `plotting` keys. Analysis order: rmsd, q, coord_clustering, distmap_clustering. When changing **scoring**: update `src/config.py` (scoring keys), `src/scoring.py`, sample config, and tests (e.g. `test_scoring.py`, `test_pipeline_behavior.py`).
+- [ ] Config: if you add or rename analysis or training_visualization keys, update `src/config.py` (REQUIRED_KEYS, REQUIRED_ANALYSIS_SUBKEYS), `samples/config_sample.yaml`, `samples/config_sample_hpo.yaml`, `dev/configs/*.yaml` as needed, and test configs. Pipeline plotting must list **`plot_dpi`** with other required `plotting` keys. Analysis order: rmsd, q, generative_capacity_rmsd, generative_capacity_q, coord_clustering, distmap_clustering. When changing **scoring**: update `src/config.py` (scoring keys), `src/scoring.py`, sample config, and tests (e.g. `test_scoring.py`, `test_pipeline_behavior.py`).
 - [ ] Paths and filenames: use the shared helpers (`_analysis_path`, `_plot_path`) and the same naming as the rest of the pipeline (e.g. `rmsd` for the first metric in paths and filenames; “min RMSD” only in figure text where the caveat is needed).
 - [ ] Resume/overwrite: preserve the rule that only the affected component’s outputs are deleted (and dashboard is removed once when any redo happens). Do not delete the whole output dir unless the user explicitly confirmed full overwrite (--no-resume).
 - [ ] Data needs: if you add a new kind of output that requires coords or stats, extend `_pipeline_data_needs` and the loading logic so that we still load only what’s needed.

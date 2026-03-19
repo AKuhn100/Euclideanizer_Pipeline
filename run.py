@@ -48,6 +48,7 @@ from src.config import (
     get_output_dir,
     get_seeds,
     get_training_splits,
+    get_max_data_values,
     save_run_config,
     load_run_config,
     load_pipeline_config,
@@ -78,6 +79,8 @@ from src.analysis_metrics import ANALYSIS_METRICS
 from src.latent_analysis import plot_latent_distribution, plot_latent_correlation, save_latent_stats_npz
 from src.gro_io import write_structures_gro
 from src import scoring as scoring_module
+from src import meta_analysis as meta_analysis_module
+from src import generative_capacity as generative_capacity_module
 
 # Log file in output root; also mirrored to stdout (set in main).
 _LOG_FILE = None
@@ -288,11 +291,12 @@ def _confirm_replot_one_chunk(base_output_dir: str, chunk_label: str) -> None:
         sys.exit(1)
 
 
-def _delete_plotting_and_analysis_outputs(base_output_dir: str, run_entries: list, training_splits: list) -> None:
+def _delete_plotting_and_analysis_outputs(base_output_dir: str, run_entries: list, training_splits: list, max_data_values: list[int | None] | None = None) -> None:
     """Remove all plots/, analysis/, and dashboard under base_output_dir for the given run entries."""
     import re
-    for seed, training_split in run_entries:
-        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
         if not os.path.isdir(seed_dir):
             continue
         distmap_dir = os.path.join(seed_dir, "distmap")
@@ -322,10 +326,11 @@ def _delete_plotting_and_analysis_outputs(base_output_dir: str, run_entries: lis
         shutil.rmtree(dashboard_dir, ignore_errors=True)
 
 
-def _has_any_plotting_output(base_output_dir: str, run_entries: list, training_splits: list) -> bool:
+def _has_any_plotting_output(base_output_dir: str, run_entries: list, training_splits: list, max_data_values: list[int | None] | None = None) -> bool:
     """True if any plots/ or dashboard exists under base_output_dir for the given run entries."""
-    for seed, training_split in run_entries:
-        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
         if not os.path.isdir(seed_dir):
             continue
         distmap_dir = os.path.join(seed_dir, "distmap")
@@ -349,7 +354,7 @@ def _has_any_plotting_output(base_output_dir: str, run_entries: list, training_s
     return False
 
 
-def _has_any_analysis_output(base_output_dir: str, run_entries: list, training_splits: list, component: str) -> bool:
+def _has_any_analysis_output(base_output_dir: str, run_entries: list, training_splits: list, component: str, max_data_values: list[int | None] | None = None) -> bool:
     """True if any analysis output for the given component exists. component: 'rmsd_gen', 'rmsd_recon', 'q_gen', or 'q_recon'."""
     if component in ("rmsd_gen", "rmsd_recon"):
         subdir = "gen" if component == "rmsd_gen" else "recon"
@@ -363,10 +368,15 @@ def _has_any_analysis_output(base_output_dir: str, run_entries: list, training_s
     elif component in ("distmap_clustering_gen", "distmap_clustering_recon"):
         subdir = "gen" if component == "distmap_clustering_gen" else "recon"
         target = os.path.join("analysis", "distmap_clustering", subdir)
+    elif component == "generative_capacity_rmsd":
+        target = os.path.join("analysis", "generative_capacity", "rmsd")
+    elif component == "generative_capacity_q":
+        target = os.path.join("analysis", "generative_capacity", "q")
     elif component == "latent":
         for target in (os.path.join("analysis", "latent"), os.path.join("plots", "latent")):
-            for seed, training_split in run_entries:
-                seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+            for entry in run_entries:
+                seed, training_split, max_data = _entry_seed_split_max(entry)
+                seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
                 if not os.path.isdir(seed_dir):
                     continue
                 distmap_dir = os.path.join(seed_dir, "distmap")
@@ -386,8 +396,9 @@ def _has_any_analysis_output(base_output_dir: str, run_entries: list, training_s
         return False
     else:
         return False
-    for seed, training_split in run_entries:
-        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
         if not os.path.isdir(seed_dir):
             continue
         distmap_dir = os.path.join(seed_dir, "distmap")
@@ -423,6 +434,27 @@ def _delete_scoring_outputs(base_output_dir: str) -> None:
             shutil.rmtree(scoring_dir, ignore_errors=True)
 
 
+def _has_any_sufficiency_meta_output(base_output_dir: str) -> bool:
+    """True if sufficiency meta-analysis heatmap output exists."""
+    root = os.path.join(base_output_dir, "meta_analysis", "sufficiency")
+    if not os.path.isdir(root):
+        return False
+    for name in os.listdir(root):
+        if not name.startswith("seed_"):
+            continue
+        p = os.path.join(root, name, "heatmap", "sufficiency_heatmap_rmsd_q.png")
+        if os.path.isfile(p):
+            return True
+    return False
+
+
+def _delete_sufficiency_meta_outputs(base_output_dir: str) -> None:
+    """Remove sufficiency meta-analysis outputs."""
+    root = os.path.join(base_output_dir, "meta_analysis", "sufficiency")
+    if os.path.isdir(root):
+        shutil.rmtree(root, ignore_errors=True)
+
+
 def _iter_euclideanizer_runs(base_output_dir: str):
     """Yield (run_dir_eu, seed_dir) for each Euclideanizer run under base_output_dir.
     Accepts seed_<n> and seed_<n>_split_<frac> directory names."""
@@ -432,7 +464,7 @@ def _iter_euclideanizer_runs(base_output_dir: str):
         if not seed_name.startswith("seed_"):
             continue
         rest = seed_name[5:]
-        if not (rest.isdigit() or "_split_" in rest):
+        if not (rest.isdigit() or "_split_" in rest or "_maxdata_" in rest):
             continue
         seed_dir = os.path.join(base_output_dir, seed_name)
         if not os.path.isdir(seed_dir):
@@ -485,11 +517,22 @@ def _reference_size_changed(saved_ref: dict, current_ref: dict) -> set:
     return out
 
 
-def _delete_reference_size_caches(base_output_dir: str, run_entries: list, training_splits: list, components: set) -> None:
+def _delete_reference_size_caches(
+    base_output_dir: str,
+    run_entries: list,
+    training_splits: list,
+    max_data_values: list[int | None] | set | None,
+    components: set | None = None,
+) -> None:
     """Remove cached data that depends on reference sizes so it can be recomputed. components: 'plotting', 'rmsd', 'q', 'coord_clustering', 'distmap_clustering', 'latent'. Latent has no seed-level cache (outputs are per-run)."""
+    if components is None and isinstance(max_data_values, set):
+        components = max_data_values
+        max_data_values = None
+    components = components or set()
     import glob as _glob
-    for seed, training_split in run_entries:
-        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
         cache_dir = os.path.join(seed_dir, EXP_STATS_CACHE_DIR)
         if not os.path.isdir(cache_dir):
             continue
@@ -562,10 +605,11 @@ def _confirm_reference_size_cache_purge(components: set) -> None:
         sys.exit(1)
 
 
-def _delete_plotting_outputs_only(base_output_dir: str, run_entries: list, training_splits: list) -> None:
+def _delete_plotting_outputs_only(base_output_dir: str, run_entries: list, training_splits: list, max_data_values: list[int | None] | None = None) -> None:
     """Remove all plots/ under base_output_dir for the given run entries (no analysis dirs, no dashboard)."""
-    for seed, training_split in run_entries:
-        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
         if not os.path.isdir(seed_dir):
             continue
         distmap_dir = os.path.join(seed_dir, "distmap")
@@ -588,7 +632,7 @@ def _delete_plotting_outputs_only(base_output_dir: str, run_entries: list, train
                         shutil.rmtree(plots_eu, ignore_errors=True)
 
 
-def _delete_analysis_outputs_for_component(base_output_dir: str, run_entries: list, training_splits: list, component: str) -> None:
+def _delete_analysis_outputs_for_component(base_output_dir: str, run_entries: list, training_splits: list, component: str, max_data_values: list[int | None] | None = None) -> None:
     """Remove only the analysis subdir for this component (e.g. analysis/q/gen). component: 'rmsd_gen', 'rmsd_recon', 'q_gen', or 'q_recon'."""
     if component in ("rmsd_gen", "rmsd_recon"):
         subdir = "gen" if component == "rmsd_gen" else "recon"
@@ -602,10 +646,15 @@ def _delete_analysis_outputs_for_component(base_output_dir: str, run_entries: li
     elif component in ("distmap_clustering_gen", "distmap_clustering_recon"):
         subdir = "gen" if component == "distmap_clustering_gen" else "recon"
         target = os.path.join("analysis", "distmap_clustering", subdir)
+    elif component == "generative_capacity_rmsd":
+        target = os.path.join("analysis", "generative_capacity", "rmsd")
+    elif component == "generative_capacity_q":
+        target = os.path.join("analysis", "generative_capacity", "q")
     elif component == "latent":
         targets = [os.path.join("analysis", "latent"), os.path.join("plots", "latent")]
-        for seed, training_split in run_entries:
-            seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+        for entry in run_entries:
+            seed, training_split, max_data = _entry_seed_split_max(entry)
+            seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
             if not os.path.isdir(seed_dir):
                 continue
             distmap_dir = os.path.join(seed_dir, "distmap")
@@ -627,8 +676,9 @@ def _delete_analysis_outputs_for_component(base_output_dir: str, run_entries: li
         return
     else:
         return
-    for seed, training_split in run_entries:
-        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, max_data_values))
         if not os.path.isdir(seed_dir):
             continue
         distmap_dir = os.path.join(seed_dir, "distmap")
@@ -735,11 +785,31 @@ def _log_raw(line: str, style: str | None = None) -> None:
 
 
 # Output layout: run_root/model/ (model.pt or euclideanizer.pt), run_root/plots/<type>/ (PNG and optional data/*.npz)
-def _seed_split_dir_name(seed: int, training_split: float, training_splits_list: list) -> str:
-    """Directory name for a (seed, training_split) run. When only one split value, use seed_<n> for backward compatibility."""
-    if len(training_splits_list) == 1:
-        return f"seed_{seed}"
-    return f"seed_{seed}_split_{training_split}"
+_ACTIVE_MAX_DATA: int | None = None
+_MAX_DATA_VALUES_CONTEXT: list[int | None] = [None]
+
+
+def _entry_seed_split_max(entry) -> tuple[int, float, int | None]:
+    if isinstance(entry, (tuple, list)) and len(entry) >= 3:
+        return int(entry[0]), float(entry[1]), entry[2]
+    return int(entry[0]), float(entry[1]), _ACTIVE_MAX_DATA
+
+
+def _seed_split_dir_name(
+    seed: int,
+    training_split: float,
+    max_data: int | None,
+    training_splits_list: list,
+    max_data_values_list: list[int | None] | None,
+) -> str:
+    """Directory name for a (seed, training_split, max_data) run."""
+    parts = [f"seed_{seed}"]
+    if len(training_splits_list) > 1:
+        parts.append(f"split_{training_split}")
+    md_vals = max_data_values_list or _MAX_DATA_VALUES_CONTEXT or [max_data]
+    if len(md_vals) > 1:
+        parts.append(f"maxdata_{'all' if max_data is None else max_data}")
+    return "_".join(parts)
 
 
 EXP_STATS_CACHE_DIR = "experimental_statistics"
@@ -767,7 +837,7 @@ def _base_has_any_seed_pipeline_content(base_output_dir: str, run_entries: list)
         if not name.startswith("seed_"):
             continue
         rest = name[5:]
-        if not (rest.isdigit() or "_split_" in rest):
+        if not (rest.isdigit() or "_split_" in rest or "_maxdata_" in rest):
             continue
         if os.path.isdir(os.path.join(base_output_dir, name, "distmap")):
             return True
@@ -839,8 +909,9 @@ def _try_load_stats_only(
             exp_stats = {k: data[k] for k in data.files}
     except (OSError, zlib.error, zipfile.BadZipFile):
         return None, None, None
-    for seed, training_split in run_entries:
-        output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
         train_s, test_s = _load_exp_stats_split_cache(
             output_dir, data_path, num_structures, num_atoms, seed, training_split,
             max_train=max_train, max_test=max_test,
@@ -1260,6 +1331,14 @@ def _analysis_cfg_from_need_data_kwargs(kw: dict) -> dict:
             kw.get("distmap_clustering_max_recon_train_list"),
             kw.get("distmap_clustering_max_recon_test_list"),
         ),
+        "generative_capacity_rmsd": {
+            "enabled": kw.get("do_generative_capacity_rmsd", False),
+            "n_structures": kw.get("gc_rmsd_n_structures") or [],
+        },
+        "generative_capacity_q": {
+            "enabled": kw.get("do_generative_capacity_q", False),
+            "n_structures": kw.get("gc_q_n_structures") or [],
+        },
         "latent": {"enabled": kw.get("do_latent", False)},
     }
 
@@ -1401,6 +1480,14 @@ def _euclideanizer_analysis_all_present(
         latent_dir = os.path.join(run_dir_eu, "analysis", "latent")
         if not os.path.isfile(os.path.join(latent_dir, "latent_distribution.png")) or not os.path.isfile(os.path.join(latent_dir, "latent_correlation.png")):
             return False
+    gc_r = analysis_cfg["generative_capacity_rmsd"]
+    if gc_r["enabled"]:
+        if not os.path.isfile(os.path.join(run_dir_eu, "analysis", "generative_capacity", "rmsd", "generative_capacity_rmsd.png")):
+            return False
+    gc_q = analysis_cfg["generative_capacity_q"]
+    if gc_q["enabled"]:
+        if not os.path.isfile(os.path.join(run_dir_eu, "analysis", "generative_capacity", "q", "generative_capacity_q.png")):
+            return False
     return True
 
 
@@ -1530,8 +1617,9 @@ def _pipeline_data_needs(
         "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
         "do_latent": do_latent,
     })
-    for seed, training_split in run_entries:
-        output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    for entry in run_entries:
+        seed, training_split, max_data = _entry_seed_split_max(entry)
+        output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
         if not os.path.isdir(output_dir):
             need_coords = True
             need_exp_stats = need_exp_stats or do_plot and do_avg_gen
@@ -1623,7 +1711,7 @@ def _pipeline_data_needs(
                             _analysis_cfg[spec.gen_key]["enabled"]
                             or _analysis_cfg[spec.recon_key]["enabled"]
                             for spec in ANALYSIS_METRICS
-                        )
+                        ) or _analysis_cfg["generative_capacity_rmsd"]["enabled"] or _analysis_cfg["generative_capacity_q"]["enabled"]
                         if has_any_analysis and not _euclideanizer_analysis_all_present(
                             eu_run_dir, resume, analysis_cfg=_analysis_cfg
                         ):
@@ -1987,7 +2075,7 @@ def _run_scoring_for_run(
         _log(f"Scoring failed for {run_dir_eu}: {e}", since_start=time.time() - pipeline_start, style="error")
 
 
-def _post_scoring_npz_cleanup(run_dir_eu: str, cfg: dict) -> None:
+def _post_scoring_npz_cleanup(run_dir_eu: str, cfg: dict, *, defer_sufficiency_inputs: bool = False) -> None:
     """Remove NPZ data dirs for blocks where save_data is false (scoring has already read them). One run_dir_eu (one Euclideanizer run)."""
     if not cfg.get("scoring", {}).get("enabled"):
         return
@@ -2014,12 +2102,88 @@ def _post_scoring_npz_cleanup(run_dir_eu: str, cfg: dict) -> None:
         for sub, save_ok in [("gen", gen_save), ("recon", recon_save)]:
             if save_ok:
                 continue
+            if defer_sufficiency_inputs and sub == "gen" and spec.id in ("rmsd", "q"):
+                continue
             branch = os.path.join(run_dir_eu, "analysis", spec.subdir, sub)
             if not os.path.isdir(branch):
                 continue
             for root, dirs, _ in os.walk(branch, topdown=True):
                 if "data" in dirs:
                     shutil.rmtree(os.path.join(root, "data"), ignore_errors=True)
+
+
+def _finalize_deferred_npz_cleanup(base_output_dir: str, cfg: dict) -> None:
+    """Run post-scoring cleanup without sufficiency deferral for all Euclideanizer runs."""
+    for run_dir_eu, _seed_dir in _iter_euclideanizer_runs(base_output_dir):
+        _post_scoring_npz_cleanup(run_dir_eu, cfg, defer_sufficiency_inputs=False)
+
+
+def _run_sufficiency_meta_analysis(
+    base_output_dir: str,
+    cfg: dict,
+    pipeline_start: float,
+) -> bool:
+    """Run sufficiency meta-analysis and return True if outputs were created."""
+    suff = cfg["meta_analysis"]["sufficiency"]
+    if not suff["enabled"]:
+        return False
+    _log("Sufficiency meta-analysis: building figures...", since_start=time.time() - pipeline_start, style="info")
+    made = meta_analysis_module.run_sufficiency_meta_analysis(
+        base_output_dir=base_output_dir,
+        max_data_values=get_max_data_values(cfg),
+        save_pdf_copy=bool(suff["save_pdf_copy"]),
+        log=lambda m: _log(m, since_start=time.time() - pipeline_start, style="info"),
+    )
+    if made:
+        _log("Sufficiency meta-analysis: complete.", since_start=time.time() - pipeline_start, style="success")
+    else:
+        _log("Sufficiency meta-analysis: no outputs created.", since_start=time.time() - pipeline_start, style="skip")
+    return made
+
+
+def _run_generative_capacity_blocks_for_run(
+    *,
+    run_dir_eu: str,
+    analysis_cfg: dict,
+    seed: int,
+    latent_dim: int,
+    device,
+    frozen_vae,
+    embed,
+    resume: bool,
+    pipeline_start: float,
+    display_root: str | None,
+) -> None:
+    gc_r = analysis_cfg["generative_capacity_rmsd"]
+    if gc_r["enabled"]:
+        fig_r = os.path.join(run_dir_eu, "analysis", "generative_capacity", "rmsd", "generative_capacity_rmsd.png")
+        if (not resume) or (not os.path.isfile(fig_r)):
+            _log("Running generative capacity RMSD analysis...", since_start=time.time() - pipeline_start, style="info")
+            generative_capacity_module.run_generative_capacity_rmsd(
+                run_dir=run_dir_eu,
+                seed=seed,
+                latent_dim=latent_dim,
+                device=device,
+                frozen_vae=frozen_vae,
+                embed=embed,
+                cfg_block=gc_r,
+                display_root=display_root,
+            )
+    gc_q = analysis_cfg["generative_capacity_q"]
+    if gc_q["enabled"]:
+        fig_q = os.path.join(run_dir_eu, "analysis", "generative_capacity", "q", "generative_capacity_q.png")
+        if (not resume) or (not os.path.isfile(fig_q)):
+            _log("Running generative capacity Q analysis...", since_start=time.time() - pipeline_start, style="info")
+            generative_capacity_module.run_generative_capacity_q(
+                run_dir=run_dir_eu,
+                seed=seed,
+                latent_dim=latent_dim,
+                device=device,
+                frozen_vae=frozen_vae,
+                embed=embed,
+                cfg_block=gc_q,
+                display_root=display_root,
+            )
 
 
 def run_one_hpo_trial(
@@ -2097,6 +2261,8 @@ def run_one_hpo_trial(
     do_rmsd_recon_cfg = analysis_cfg["rmsd_recon"]["enabled"]
     do_q = analysis_cfg["q_gen"]["enabled"]
     do_q_recon_cfg = analysis_cfg["q_recon"]["enabled"]
+    do_gc_rmsd = analysis_cfg["generative_capacity_rmsd"]["enabled"]
+    do_gc_q = analysis_cfg["generative_capacity_q"]["enabled"]
     do_coord_clustering_gen = analysis_cfg["coord_clustering_gen"]["enabled"]
     do_coord_clustering_recon_cfg = analysis_cfg["coord_clustering_recon"]["enabled"]
     do_distmap_clustering_gen = analysis_cfg["distmap_clustering_gen"]["enabled"]
@@ -2104,7 +2270,7 @@ def run_one_hpo_trial(
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
     _warn_calibration_reserve_if_low(cfg, pipeline_start)
     _log(f"config: (HPO trial)  output: {base_output_dir}  seeds: [{seed}]", since_start=time.time() - pipeline_start, style="info")
-    _log(f"DistMap runs: 1  Euclideanizer: 1  resume=False  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
+    _log(f"DistMap runs: 1  Euclideanizer: 1  resume=False  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  gc_rmsd={do_gc_rmsd}  gc_q={do_gc_q}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
 
     dm_epochs = int(dm_cfg["epochs"])
     # DistMap reports step=epoch (1..dm_epochs). Euclideanizer reports step=dm_epochs_max+epoch so its range never overlaps and the pruner can compare like-with-like across trials (same step range for all Euclideanizer runs). dm_epochs_max is passed by the HPO caller.
@@ -2348,7 +2514,7 @@ def run_one_hpo_trial(
         any_analysis = any(
             analysis_cfg[spec.gen_key]["enabled"] or analysis_cfg[spec.recon_key]["enabled"]
             for spec in ANALYSIS_METRICS
-        )
+        ) or analysis_cfg["generative_capacity_rmsd"]["enabled"] or analysis_cfg["generative_capacity_q"]["enabled"]
         seed_test_to_train_cache = {}
         if any_analysis and coords is not None:
             _force_gpu_cleanup(device)
@@ -2507,15 +2673,35 @@ def run_one_hpo_trial(
                                 display_root=base_output_dir, recon_subdir=recon_subdir,
                                 **recon_extra,
                             )
+            _run_generative_capacity_blocks_for_run(
+                run_dir_eu=run_dir_eu,
+                analysis_cfg=analysis_cfg,
+                seed=seed,
+                latent_dim=dm_cfg["latent_dim"],
+                device=device,
+                frozen_vae=frozen_vae,
+                embed=embed,
+                resume=False,
+                pipeline_start=pipeline_start,
+                display_root=base_output_dir,
+            )
         del embed, frozen_vae
         torch.cuda.empty_cache()
         if cfg["scoring"]["enabled"]:
             _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
-            _post_scoring_npz_cleanup(run_dir_eu, cfg)
+            _post_scoring_npz_cleanup(
+                run_dir_eu,
+                cfg,
+                defer_sufficiency_inputs=bool(cfg["meta_analysis"]["sufficiency"]["enabled"]),
+            )
     else:
         if cfg["scoring"]["enabled"]:
             _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
-            _post_scoring_npz_cleanup(run_dir_eu, cfg)
+            _post_scoring_npz_cleanup(
+                run_dir_eu,
+                cfg,
+                defer_sufficiency_inputs=bool(cfg["meta_analysis"]["sufficiency"]["enabled"]),
+            )
 
     _log("Pipeline complete.", since_start=time.time() - pipeline_start, style="success")
     scores_path = os.path.join(run_dir_eu, "scoring", "scores.json")
@@ -2539,8 +2725,17 @@ def _force_gpu_cleanup(device: torch.device) -> None:
         torch.cuda.empty_cache()
 
 
+def _apply_max_data_subset(coords_np: np.ndarray, max_data: int | None, seed: int) -> np.ndarray:
+    if max_data is None or max_data >= coords_np.shape[0]:
+        return coords_np
+    rng = np.random.default_rng(int(seed))
+    idx = rng.choice(coords_np.shape[0], size=max_data, replace=False)
+    return coords_np[idx]
+
+
 def _run_one_distmap_group(
     seed: int,
+    max_data: int | None,
     gidx: int,
     device,
     cfg: dict,
@@ -2604,7 +2799,7 @@ def _run_one_distmap_group(
 ) -> None:
     """Run one (seed, DistMap group): that group's segments, plotting, and all Euclideanizer runs for that DistMap."""
     gen_decode_batch_size = gen_decode_batch_size_holder[0] if gen_decode_batch_size_holder else None
-    output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
     split_seed = seed
     group = dm_groups[gidx]
     base_config = group["base_config"]
@@ -3052,13 +3247,13 @@ def _run_one_distmap_group(
                         any_analysis = any(
                             analysis_cfg[spec.gen_key]["enabled"] or analysis_cfg[spec.recon_key]["enabled"]
                             for spec in ANALYSIS_METRICS
-                        )
+                        ) or analysis_cfg["generative_capacity_rmsd"]["enabled"] or analysis_cfg["generative_capacity_q"]["enabled"]
                         if any_analysis and coords is not None:
                             if not isinstance(seed_test_to_train_holder[0], dict):
                                 seed_test_to_train_holder[0] = {}
                             _cache = seed_test_to_train_holder[0]
                             analysis_phase_start = time.time()
-                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (latent + metrics)...", since_start=time.time() - pipeline_start, style="info")
+                            _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis (latent + metrics + generative capacity)...", since_start=time.time() - pipeline_start, style="info")
                             # Before latent
                             _force_gpu_cleanup(device)
                             latent_cfg = analysis_cfg["latent"]
@@ -3227,13 +3422,29 @@ def _run_one_distmap_group(
                                                 )
                                             elif resume and n_recon == 1:
                                                 _log(f"  [skip] {spec.id} recon", since_start=time.time() - pipeline_start, style="skip")
+                            _run_generative_capacity_blocks_for_run(
+                                run_dir_eu=run_dir_eu,
+                                analysis_cfg=analysis_cfg,
+                                seed=split_seed,
+                                latent_dim=dm_cfg["latent_dim"],
+                                device=device,
+                                frozen_vae=frozen_vae,
+                                embed=embed,
+                                resume=resume,
+                                pipeline_start=pipeline_start,
+                                display_root=base_output_dir,
+                            )
                             _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): analysis done in {(time.time() - analysis_phase_start) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
 
                         del embed, frozen_vae
                         torch.cuda.empty_cache()
                         if cfg["scoring"]["enabled"]:
                             _run_scoring_for_run(run_dir_eu, output_dir, cfg, base_output_dir, pipeline_start)
-                            _post_scoring_npz_cleanup(run_dir_eu, cfg)
+                            _post_scoring_npz_cleanup(
+                                run_dir_eu,
+                                cfg,
+                                defer_sufficiency_inputs=bool(cfg["meta_analysis"]["sufficiency"]["enabled"]),
+                            )
                         _log(f"Euclideanizer {euri + 1}/{len(eu_configs)} (DistMap {ri}, epochs={eu_ev}): done in {(time.time() - phase_start_eu) / 60:.1f}m.", since_start=time.time() - pipeline_start, style="success")
                 if eu_stopped_early:
                     break
@@ -3242,6 +3453,7 @@ def _run_one_distmap_group(
 
 def _run_one_seed(
     seed: int,
+    max_data: int | None,
     cfg: dict,
     base_output_dir: str,
     dm_groups: list,
@@ -3302,9 +3514,14 @@ def _run_one_seed(
     assemble_video_fn=None,
 ) -> None:
     """Run the full pipeline for a single (seed, training_split): DistMap segments, Euclideanizer segments, plotting, analysis."""
-    output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+    output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+    if coords_np is not None and coords is not None:
+        coords_np = _apply_max_data_subset(coords_np, max_data, seed)
+        coords = torch.tensor(coords_np, dtype=torch.float32).to(device)
+        num_structures = len(coords_np)
+        num_atoms = coords.size(1)
     split_seed = seed
-    effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split}}
+    effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data}}
 
     if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
         save_pipeline_config(effective_cfg, output_dir)
@@ -3348,7 +3565,7 @@ def _run_one_seed(
     gen_decode_batch_size_holder = [gen_decode_batch_size]
     for gidx in range(len(dm_groups)):
         _run_one_distmap_group(
-            seed, gidx, device,
+            seed, max_data, gidx, device,
             cfg, base_output_dir, dm_groups, eu_groups, dm_configs, eu_configs,
             coords, coords_np, num_atoms, num_structures, exp_stats, data_path, need_train, pipeline_start,
             training_split, training_splits, do_plot, do_recon_plot, do_bond_rg_scaling, do_avg_gen, do_bond_length_by_genomic_distance, do_rmsd, resume,
@@ -3408,7 +3625,7 @@ def _worker(
 ) -> None:
     """Worker entry: set device, open log, load data, run each (seed, DistMap group) task.
     When invoked from multi-GPU, the launcher sets CUDA_VISIBLE_DEVICES so this process sees a single device as cuda:0."""
-    global _LOG_FILE, _LOG_LOCK
+    global _LOG_FILE, _LOG_LOCK, _MAX_DATA_VALUES_CONTEXT
     device = torch.device(f"cuda:{device_id}")
     _LOG_LOCK = None  # Workers use their own log handle; no cross-process lock.
     _LOG_FILE = open(log_path, "a", encoding="utf-8")
@@ -3418,6 +3635,7 @@ def _worker(
         base_output_dir = shared_args["base_output_dir"]
         if not task_list or not data_path:
             return
+        _MAX_DATA_VALUES_CONTEXT = list(shared_args.get("max_data_values") or [None])
         if shared_args.get("vis_enabled") and shared_args.get("make_distmap_epoch_hook") is None:
             from src.training_visualization import (
                 make_distmap_epoch_hook,
@@ -3438,20 +3656,24 @@ def _worker(
         if exp_stats is None and (shared_args["do_plot"] or shared_args["do_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
             data_cfg = shared_args["cfg"]["data"]
             exp_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"])
-        for seed, training_split, gidx in task_list:
-            output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, shared_args["training_splits"]))
+        for seed, training_split, max_data, gidx in task_list:
+            output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, shared_args["training_splits"], None))
+            coords_np_run = _apply_max_data_subset(coords_np, max_data, seed)
+            coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
+            num_structures_run = len(coords_np_run)
+            num_atoms_run = coords_run.size(1)
             train_stats = test_stats = None
             if data_path and (shared_args["do_plot"] or shared_args["do_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
                 plot_mt = shared_args.get("plot_max_train")
                 plot_mc = shared_args.get("plot_max_test")
                 train_stats, test_stats = _load_exp_stats_split_cache(
-                    output_dir, data_path, num_structures, num_atoms,
+                    output_dir, data_path, num_structures_run, num_atoms_run,
                     seed, training_split,
                     max_train=plot_mt, max_test=plot_mc,
                 )
                 if train_stats is None or test_stats is None:
                     train_ds, test_ds = utils.get_train_test_split(
-                        coords.cpu(), training_split, seed
+                        coords_run.cpu(), training_split, seed
                     )
                     train_indices = np.array(train_ds.indices)
                     test_indices = np.array(test_ds.indices)
@@ -3461,23 +3683,23 @@ def _worker(
                         test_indices = test_indices[: plot_mc]
                     data_cfg = shared_args["cfg"]["data"]
                     train_stats = compute_exp_statistics(
-                        coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices
+                        coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices
                     )
                     test_stats = compute_exp_statistics(
-                        coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices
+                        coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices
                     )
                     _save_exp_stats_split_cache(
-                        output_dir, data_path, num_structures, num_atoms,
+                        output_dir, data_path, num_structures_run, num_atoms_run,
                         seed, training_split,
                         train_stats, test_stats,
                         max_train=plot_mt, max_test=plot_mc,
                     )
             seed_test_to_train_holder = [None]
             _run_one_distmap_group(
-                seed, gidx, device,
+                seed, max_data, gidx, device,
                 shared_args["cfg"], base_output_dir, shared_args["dm_groups"],
                 shared_args["eu_groups"], shared_args["dm_configs"], shared_args["eu_configs"],
-                coords, coords_np, num_atoms, num_structures, exp_stats, data_path,
+                coords_run, coords_np_run, num_atoms_run, num_structures_run, exp_stats, data_path,
                 shared_args["need_train"], worker_start, training_split, shared_args["training_splits"],
                 shared_args["do_plot"], shared_args["do_recon_plot"],
                 shared_args["do_bond_rg_scaling"], shared_args["do_avg_gen"], shared_args["do_bond_length_by_genomic_distance"],
@@ -3584,23 +3806,27 @@ def _run_multi_gpu_tasks(
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
 ) -> None:
-    """Run tasks in parallel on multiple GPUs (one process per device). Tasks are (seed, training_split, group_idx)."""
-    run_entries_from_tasks = list(dict.fromkeys([(t[0], t[1]) for t in tasks]))
+    """Run tasks in parallel on multiple GPUs (one process per device). Tasks are (seed, training_split, max_data, group_idx)."""
+    run_entries_from_tasks = list(dict.fromkeys([(t[0], t[1], t[2]) for t in tasks]))
     # Per-run setup: output dirs and pipeline config. Train/test caches are precomputed in main when multi-GPU (to free data before spawn).
-    for seed, training_split in run_entries_from_tasks:
-        output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
-        effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split}}
+    for seed, training_split, max_data in run_entries_from_tasks:
+        output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+        coords_np_run = _apply_max_data_subset(coords_np, max_data, seed) if coords_np is not None else None
+        coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device) if coords_np_run is not None else None
+        num_structures_run = len(coords_np_run) if coords_np_run is not None else num_structures
+        num_atoms_run = coords_run.size(1) if coords_run is not None else num_atoms
+        effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data}}
         if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
             save_pipeline_config(effective_cfg, output_dir)
         if data_path and coords is not None and (do_plot or do_rmsd or do_q or do_q_recon):
             plot_mt = plot_cfg["max_train"]
             plot_mc = plot_cfg["max_test"]
             train_stats, test_stats = _load_exp_stats_split_cache(
-                output_dir, data_path, num_structures, num_atoms, seed, training_split,
+                output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                 max_train=plot_mt, max_test=plot_mc,
             )
             if train_stats is None or test_stats is None:
-                train_ds, test_ds = utils.get_train_test_split(coords.cpu(), training_split, seed)
+                train_ds, test_ds = utils.get_train_test_split(coords_run.cpu(), training_split, seed)
                 train_indices = np.array(train_ds.indices)
                 test_indices = np.array(test_ds.indices)
                 if plot_mt is not None:
@@ -3608,10 +3834,10 @@ def _run_multi_gpu_tasks(
                 if plot_mc is not None:
                     test_indices = test_indices[: plot_mc]
                 data_cfg = cfg["data"]
-                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
+                train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
-                    output_dir, data_path, num_structures, num_atoms,
+                    output_dir, data_path, num_structures_run, num_atoms_run,
                     seed, training_split, train_stats, test_stats,
                     max_train=plot_mt, max_test=plot_mc,
                 )
@@ -3631,6 +3857,7 @@ def _run_multi_gpu_tasks(
         "need_train": need_train,
         "pipeline_start": pipeline_start,
         "training_splits": training_splits,
+        "max_data_values": _MAX_DATA_VALUES_CONTEXT,
         "do_plot": do_plot,
         "do_recon_plot": do_recon_plot,
         "do_bond_rg_scaling": do_bond_rg_scaling,
@@ -3725,7 +3952,7 @@ def _run_multi_gpu_tasks(
 
 
 def main():
-    global _LOG_FILE, _pipeline_real_stdout, _pipeline_real_stderr
+    global _LOG_FILE, _pipeline_real_stdout, _pipeline_real_stderr, _MAX_DATA_VALUES_CONTEXT
     pipeline_start = time.time()
     args = _parse_args()
     # Worker subprocess entry: load args from pickle and run _worker (CUDA_VISIBLE_DEVICES already set by parent).
@@ -3768,12 +3995,16 @@ def main():
     save_pipeline_config(root_run_cfg, base_output_dir)
     seeds = get_seeds(cfg)
     training_splits = get_training_splits(cfg)
-    run_entries = [(s, t) for s in seeds for t in training_splits]
+    max_data_values = get_max_data_values(cfg)
+    _MAX_DATA_VALUES_CONTEXT = list(max_data_values)
+    run_entries = [(s, t, md) for s in seeds for t in training_splits for md in max_data_values]
     plot_cfg = cfg["plotting"]
     do_plot = plot_cfg["enabled"]
     plot_dpi = int(plot_cfg["plot_dpi"])
     save_pdf = plot_cfg["save_pdf_copy"]
     scoring_enabled = cfg["scoring"]["enabled"]
+    meta_suff_cfg = cfg["meta_analysis"]["sufficiency"]
+    meta_suff_enabled = meta_suff_cfg["enabled"]
     save_plot_data = plot_cfg["save_data"] or scoring_enabled  # effective: save when scoring needs NPZ
     num_recon_samples = plot_cfg["num_reconstruction_samples"]
     do_recon_plot = plot_cfg["reconstruction"]
@@ -3785,6 +4016,8 @@ def main():
     do_rmsd_recon_cfg = analysis_cfg["rmsd_recon"]["enabled"]
     do_q = analysis_cfg["q_gen"]["enabled"]
     do_q_recon_cfg = analysis_cfg["q_recon"]["enabled"]
+    do_gc_rmsd = analysis_cfg["generative_capacity_rmsd"]["enabled"]
+    do_gc_q = analysis_cfg["generative_capacity_q"]["enabled"]
     do_coord_clustering_gen = analysis_cfg["coord_clustering_gen"]["enabled"]
     do_coord_clustering_recon_cfg = analysis_cfg["coord_clustering_recon"]["enabled"]
     do_distmap_clustering_gen = analysis_cfg["distmap_clustering_gen"]["enabled"]
@@ -3804,7 +4037,7 @@ def main():
     _log("Pipeline started.", since_start=time.time() - pipeline_start, style="info")
     _warn_calibration_reserve_if_low(cfg, pipeline_start)
     _log(f"config: {config_path}  output: {base_output_dir}  seeds: {seeds}", since_start=time.time() - pipeline_start, style="info")
-    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}", since_start=time.time() - pipeline_start, style="info")
+    _log(f"DistMap runs: {len(dm_configs)}  Euclideanizer: {len(eu_configs)}  resume={resume}  plot={do_plot}  rmsd_gen={do_rmsd}  rmsd_recon={do_rmsd_recon_cfg}  q_gen={do_q}  q_recon={do_q_recon_cfg}  gc_rmsd={do_gc_rmsd}  gc_q={do_gc_q}  coord_clustering_gen={do_coord_clustering_gen}  coord_clustering_recon={do_coord_clustering_recon_cfg}  distmap_clustering_gen={do_distmap_clustering_gen}  distmap_clustering_recon={do_distmap_clustering_recon_cfg}  sufficiency_meta={meta_suff_enabled}", since_start=time.time() - pipeline_start, style="info")
 
     num_samples_list = analysis_cfg["rmsd_gen"]["num_samples"] if do_rmsd else []
     if not isinstance(num_samples_list, list):
@@ -3870,12 +4103,15 @@ def main():
         ("rmsd_recon", do_rmsd_recon_cfg, analysis_cfg["rmsd_recon"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "rmsd_recon")),
         ("q_gen", do_q, analysis_cfg["q_gen"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "q_gen")),
         ("q_recon", do_q_recon_cfg, analysis_cfg["q_recon"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "q_recon")),
+        ("generative_capacity_rmsd", do_gc_rmsd, analysis_cfg["generative_capacity_rmsd"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "generative_capacity_rmsd")),
+        ("generative_capacity_q", do_gc_q, analysis_cfg["generative_capacity_q"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "generative_capacity_q")),
         ("coord_clustering_gen", do_coord_clustering_gen, analysis_cfg["coord_clustering_gen"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "coord_clustering_gen")),
         ("coord_clustering_recon", do_coord_clustering_recon_cfg, analysis_cfg["coord_clustering_recon"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "coord_clustering_recon")),
         ("distmap_clustering_gen", do_distmap_clustering_gen, analysis_cfg["distmap_clustering_gen"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "distmap_clustering_gen")),
         ("distmap_clustering_recon", do_distmap_clustering_recon_cfg, analysis_cfg["distmap_clustering_recon"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "distmap_clustering_recon")),
         ("latent", analysis_cfg["latent"]["enabled"], analysis_cfg["latent"]["overwrite_existing"], lambda: _has_any_analysis_output(base_output_dir, run_entries, training_splits, "latent")),
         ("scoring", scoring_enabled, cfg["scoring"]["overwrite_existing"], lambda: _has_any_scoring_output(base_output_dir, run_entries)),
+        ("meta_analysis_sufficiency", meta_suff_enabled, meta_suff_cfg["overwrite_existing"], lambda: _has_any_sufficiency_meta_output(base_output_dir)),
     ]
     to_overwrite = [label for (label, en, ov, has_out) in _overwrite_descriptors if en and ov and has_out()]
     if to_overwrite:
@@ -3888,6 +4124,8 @@ def main():
                 _delete_plotting_outputs_only(base_output_dir, run_entries, training_splits)
             elif label == "scoring":
                 _delete_scoring_outputs(base_output_dir)
+            elif label == "meta_analysis_sufficiency":
+                _delete_sufficiency_meta_outputs(base_output_dir)
             else:
                 _delete_analysis_outputs_for_component(base_output_dir, run_entries, training_splits, label)
         _log("Done removing; will re-run these components.", since_start=time.time() - pipeline_start, style="success")
@@ -3901,15 +4139,16 @@ def main():
     if need_train and resume and data_path:
         chunks_to_update = set()
         saved_compare_for_ref = None
-        for seed, training_split in run_entries:
-            output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+        for entry in run_entries:
+            seed, training_split, max_data = _entry_seed_split_max(entry)
+            output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
             if os.path.isdir(output_dir):
                 if not os.path.isfile(pipeline_config_path(output_dir)):
                     raise RuntimeError(
                         f"Resume is enabled but no pipeline config found in output_dir ({output_dir!r}). "
                         f"Refusing to resume without an exact config copy. Use a different output_dir or run with --no-resume to overwrite existing files in that directory."
                     )
-                effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split}}
+                effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data}}
                 saved_cfg = load_pipeline_config(output_dir)
                 saved_compare = _cfg_for_compare(saved_cfg) if saved_cfg else None
                 effective_compare = _cfg_for_compare(effective_cfg)
@@ -3947,6 +4186,10 @@ def main():
                     chunks_to_update.add("q_gen")
                 if s_analysis["q_recon"] != e_analysis["q_recon"]:
                     chunks_to_update.add("q_recon")
+                if s_analysis["generative_capacity_rmsd"] != e_analysis["generative_capacity_rmsd"]:
+                    chunks_to_update.add("generative_capacity_rmsd")
+                if s_analysis["generative_capacity_q"] != e_analysis["generative_capacity_q"]:
+                    chunks_to_update.add("generative_capacity_q")
                 if s_analysis["coord_clustering_gen"] != e_analysis["coord_clustering_gen"]:
                     chunks_to_update.add("coord_clustering_gen")
                 if s_analysis["coord_clustering_recon"] != e_analysis["coord_clustering_recon"]:
@@ -3957,6 +4200,8 @@ def main():
                     chunks_to_update.add("distmap_clustering_recon")
                 if s_analysis["latent"] != e_analysis["latent"]:
                     chunks_to_update.add("latent")
+                if saved_compare.get("meta_analysis", {}).get("sufficiency") != effective_compare.get("meta_analysis", {}).get("sufficiency"):
+                    chunks_to_update.add("meta_analysis_sufficiency")
         chunks_to_update = sorted(chunks_to_update)  # stable order: rmsd_gen, rmsd_recon, q_gen, q_recon, plotting
         if "plotting" in chunks_to_update:
             chunks_to_update = ["plotting"] + [c for c in chunks_to_update if c != "plotting"]
@@ -3989,10 +4234,11 @@ def main():
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
         # Only prompt and delete for chunks that actually have existing outputs
-        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)", "latent": "Latent"}
+        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "generative_capacity_rmsd": "Generative Capacity (RMSD)", "generative_capacity_q": "Generative Capacity (Q)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)", "latent": "Latent", "meta_analysis_sufficiency": "Sufficiency Meta-Analysis"}
         chunks_with_outputs = [
             c for c in chunks_still_to_delete
             if (c == "plotting" and _has_any_plotting_output(base_output_dir, run_entries, training_splits))
+            or (c == "meta_analysis_sufficiency" and _has_any_sufficiency_meta_output(base_output_dir))
             or (c != "plotting" and _has_any_analysis_output(base_output_dir, run_entries, training_splits, c))
         ]
         if chunks_to_update:
@@ -4003,14 +4249,17 @@ def main():
                 _log(f"Removing existing {chunk_labels[chunk]} outputs (config changed).", since_start=time.time() - pipeline_start, style="info")
                 if chunk == "plotting":
                     _delete_plotting_outputs_only(base_output_dir, run_entries, training_splits)
+                elif chunk == "meta_analysis_sufficiency":
+                    _delete_sufficiency_meta_outputs(base_output_dir)
                 else:
                     _delete_analysis_outputs_for_component(base_output_dir, run_entries, training_splits, chunk)
             save_pipeline_config({**cfg, "output_dir": base_output_dir}, base_output_dir)
-            for seed, training_split in run_entries:
-                output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+            for entry in run_entries:
+                seed, training_split, max_data = _entry_seed_split_max(entry)
+                output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
                 if os.path.isdir(output_dir):
                     save_pipeline_config(
-                        {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split}},
+                        {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data}},
                         output_dir,
                     )
             _log("Saved updated pipeline config; will skip training and re-run affected plotting/analysis.", since_start=time.time() - pipeline_start, style="success")
@@ -4024,7 +4273,7 @@ def main():
         and not need_train
         and (do_plot or do_rmsd or do_q or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg)
     ):
-        first_seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(run_entries[0][0], run_entries[0][1], training_splits))
+        first_seed_dir = os.path.join(base_output_dir, _seed_split_dir_name(run_entries[0][0], run_entries[0][1], _entry_seed_split_max(run_entries[0])[2], training_splits, None))
         if os.path.isdir(first_seed_dir) and os.path.isfile(pipeline_config_path(first_seed_dir)):
             saved_cfg_ref = load_pipeline_config(first_seed_dir)
             if saved_cfg_ref is not None:
@@ -4082,14 +4331,20 @@ def main():
         )
     # Run pipeline when any output is missing (same as plotting/analysis: overwrite is handled by upfront delete, then need = output missing)
     scoring_needs_run = scoring_enabled and not _has_any_scoring_output(base_output_dir, run_entries)
-    need_any = (needs.need_any() or scoring_needs_run) and data_path
+    gc_needs_run = (
+        (do_gc_rmsd and not _has_any_analysis_output(base_output_dir, run_entries, training_splits, "generative_capacity_rmsd"))
+        or (do_gc_q and not _has_any_analysis_output(base_output_dir, run_entries, training_splits, "generative_capacity_q"))
+    )
+    meta_needs_run = meta_suff_enabled and not _has_any_sufficiency_meta_output(base_output_dir)
+    need_any = ((needs.need_any() or scoring_needs_run or gc_needs_run) and data_path) or meta_needs_run
 
     # Remove dashboard when we will run any block (plotting, analysis, or scoring) so it gets rebuilt with current outputs
-    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg or scoring_needs_run):
+    if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_gc_rmsd or do_gc_q or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg or scoring_needs_run or meta_needs_run):
         _delete_dashboard(base_output_dir)
 
     # Scoring-only: no coords/stats needed; run scoring for every run without loading data
     scoring_only = need_any and scoring_needs_run and not needs.need_any()
+    meta_only = need_any and meta_needs_run and not needs.need_any() and not scoring_needs_run
 
     stats_only_ok = False
     if need_any and not scoring_only and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):
@@ -4110,10 +4365,10 @@ def main():
             _log(f"Reused stats for {num_structures} structures, {num_atoms} atoms.", since_start=time.time() - pipeline_start, style="success")
             _log("Data ready (stats only).", since_start=time.time() - pipeline_start, since_phase=time.time() - phase_start, style="success")
 
-    if need_any and not stats_only_ok and not scoring_only:
+    if need_any and not stats_only_ok and not scoring_only and not meta_only:
         phase_start = time.time()
         _log("Loading data...", since_start=time.time() - pipeline_start, style="info")
-        coords_np = utils.load_data(data_path)
+        coords_np = utils.load_data(data_path, max_data=None, seed=0)
         coords = torch.tensor(coords_np, dtype=torch.float32)
         device = utils.get_device()
         coords = coords.to(device)
@@ -4168,6 +4423,9 @@ def main():
     elif scoring_only:
         coords_np = coords = device = num_atoms = num_structures = exp_stats = None
         _log("Scoring only: skipping data load (reading NPZ from existing run outputs).", since_start=time.time() - pipeline_start, style="skip")
+    elif meta_only:
+        coords_np = coords = device = num_atoms = num_structures = exp_stats = None
+        _log("Meta-analysis only: skipping data load (reading NPZ from existing run outputs).", since_start=time.time() - pipeline_start, style="skip")
 
     vis_cfg = cfg["training_visualization"]
     vis_enabled = vis_cfg["enabled"]
@@ -4199,12 +4457,14 @@ def main():
         or (do_rmsd and coords is not None)
         or (do_q and coords is not None)
         or (do_q_recon_cfg and coords is not None)
+        or (do_gc_rmsd and coords is not None)
+        or (do_gc_q and coords is not None)
     )
     save_structures_gro_plot = plot_cfg["save_structures_gro"]
     analysis_save_data = analysis_cfg["rmsd_gen"]["save_data"] or scoring_enabled  # effective: save when scoring needs NPZ
     analysis_save_structures_gro = analysis_cfg["rmsd_gen"]["save_structures_gro"]
 
-    tasks = [(s, t, g) for (s, t) in run_entries for g in range(len(dm_groups))]
+    tasks = [(s, t, md, g) for (s, t, md) in run_entries for g in range(len(dm_groups))]
     n_gpus = utils.get_available_cuda_count()
     if args.gpus is not None:
         n_gpus = min(n_gpus, args.gpus)
@@ -4224,14 +4484,19 @@ def main():
     if use_multi_gpu and data_path and coords is not None and _need_precompute_caches:
         plot_mt = plot_cfg["max_train"]
         plot_mc = plot_cfg["max_test"]
-        for seed, training_split in run_entries:
-            output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+        for entry in run_entries:
+            seed, training_split, max_data = _entry_seed_split_max(entry)
+            output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+            coords_np_run = _apply_max_data_subset(coords_np, max_data, seed)
+            coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
+            num_structures_run = len(coords_np_run)
+            num_atoms_run = coords_run.size(1)
             train_stats, test_stats = _load_exp_stats_split_cache(
-                output_dir, data_path, num_structures, num_atoms, seed, training_split,
+                output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                 max_train=plot_mt, max_test=plot_mc,
             )
             if train_stats is None or test_stats is None:
-                train_ds, test_ds = utils.get_train_test_split(coords, training_split, seed)
+                train_ds, test_ds = utils.get_train_test_split(coords_run, training_split, seed)
                 train_indices = np.array(train_ds.indices)
                 test_indices = np.array(test_ds.indices)
                 if plot_mt is not None:
@@ -4239,10 +4504,10 @@ def main():
                 if plot_mc is not None:
                     test_indices = test_indices[: plot_mc]
                 data_cfg = cfg["data"]
-                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
+                train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
-                    output_dir, data_path, num_structures, num_atoms, seed, training_split,
+                    output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                     train_stats, test_stats,
                     max_train=plot_mt, max_test=plot_mc,
                 )
@@ -4256,13 +4521,16 @@ def main():
             _ref_mc = analysis_cfg[f"{spec.id}_max_test"]
             if spec.requires_reference_bounds and (_ref_mt is None or _ref_mc is None):
                 continue
-            for seed, training_split in run_entries:
-                output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, training_splits))
+            for entry in run_entries:
+                seed, training_split, max_data = _entry_seed_split_max(entry)
+                output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+                coords_np_run = _apply_max_data_subset(coords_np, max_data, seed)
+                coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
                 cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, _ref_mt, _ref_mc))
                 if os.path.isfile(cache_path):
                     continue
                 spec.get_or_compute_test_to_train(
-                    cache_path, coords_np, coords, training_split, seed, base_output_dir,
+                    cache_path, coords_np_run, coords_run, training_split, seed, base_output_dir,
                     **spec.kwargs_for_cache(analysis_cfg, _ref_mt, _ref_mc),
                 )
         _log("Freed main-process data before spawning workers (multi-GPU).", since_start=time.time() - pipeline_start, style="info")
@@ -4273,10 +4541,17 @@ def main():
         _log("Running scoring for all runs (no data load).", since_start=time.time() - pipeline_start, style="info")
         for run_dir_eu, seed_dir in _iter_euclideanizer_runs(base_output_dir):
             _run_scoring_for_run(run_dir_eu, seed_dir, cfg, base_output_dir, pipeline_start)
+            _post_scoring_npz_cleanup(
+                run_dir_eu,
+                cfg,
+                defer_sufficiency_inputs=bool(meta_suff_enabled),
+            )
     elif not use_multi_gpu:
-        for seed, training_split in run_entries:
+        for entry in run_entries:
+            seed, training_split, max_data = _entry_seed_split_max(entry)
             _run_one_seed(
             seed=seed,
+            max_data=max_data,
             cfg=cfg,
             base_output_dir=base_output_dir,
             dm_groups=dm_groups,
@@ -4396,6 +4671,12 @@ def main():
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
         )
+
+    should_run_meta = meta_suff_enabled and (meta_needs_run or (need_any and not meta_only))
+    if should_run_meta:
+        _run_sufficiency_meta_analysis(base_output_dir, cfg, pipeline_start)
+        if scoring_enabled:
+            _finalize_deferred_npz_cleanup(base_output_dir, cfg)
 
     if do_dashboard:
         from src.dashboard import build_dashboard

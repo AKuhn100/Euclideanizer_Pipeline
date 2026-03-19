@@ -898,6 +898,7 @@ def test_euclideanizer_analysis_all_present_true_when_latent_enabled_and_exists(
     analysis_cfg = {
         "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
         "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
+        "generative_capacity_rmsd": {"enabled": False}, "generative_capacity_q": {"enabled": False},
         "coord_clustering_gen": {"enabled": False}, "coord_clustering_recon": {"enabled": False},
         "distmap_clustering_gen": {"enabled": False}, "distmap_clustering_recon": {"enabled": False},
         "latent": {"enabled": True},
@@ -910,6 +911,7 @@ def test_euclideanizer_analysis_all_present_false_when_latent_enabled_but_missin
     analysis_cfg = {
         "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
         "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
+        "generative_capacity_rmsd": {"enabled": False}, "generative_capacity_q": {"enabled": False},
         "coord_clustering_gen": {"enabled": False}, "coord_clustering_recon": {"enabled": False},
         "distmap_clustering_gen": {"enabled": False}, "distmap_clustering_recon": {"enabled": False},
         "latent": {"enabled": True},

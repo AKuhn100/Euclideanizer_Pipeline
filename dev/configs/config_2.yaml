@@ -10,6 +10,7 @@ data:
   training_split: [0.8]   # fraction for training; same for both models, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
+  max_data: null
 
 output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-16/RANGE_SLURM/High_Coord_Loss/Chrom_2"
 
@@ -172,6 +173,23 @@ analysis:
     feats_batch_size: 64
     save_data: false
     save_pdf_copy: false
+  generative_capacity_rmsd:
+    enabled: false
+    overwrite_existing: false
+    n_structures: [100, 250, 500]
+    gen_decode_batch_size: 256
+    query_batch_size: 128
+    save_data: false
+    save_pdf_copy: false
+  generative_capacity_q:
+    enabled: false
+    overwrite_existing: false
+    n_structures: [100, 250, 500]
+    gen_decode_batch_size: 256
+    query_batch_size: 128
+    delta: 0.7071
+    save_data: false
+    save_pdf_copy: false
   latent:
     enabled: true
     overwrite_existing: false
@@ -183,6 +201,12 @@ scoring:
   enabled: true
   overwrite_existing: false
   save_pdf_copy: false
+
+meta_analysis:
+  sufficiency:
+    enabled: false
+    overwrite_existing: false
+    save_pdf_copy: false
 
 # Dashboard: interactive HTML report in run root (dashboard/). Disable with --no-dashboard or dashboard.enabled: false.
 dashboard:

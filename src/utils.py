@@ -13,8 +13,8 @@ from torch.utils.data import random_split
 from torch.utils.data.dataset import Subset
 
 
-def load_data(npz_path: str) -> np.ndarray:
-    """Load coordinate array from an NPZ file (key 'coords'); returns (n_structures, n_atoms, 3) float32."""
+def load_data(npz_path: str, max_data: int | None = None, seed: int = 0) -> np.ndarray:
+    """Load coordinate array from NPZ (key 'coords') and optionally subsample up to max_data."""
     if not os.path.isfile(npz_path):
         raise ValueError(f"Dataset file does not exist or cannot be read: {npz_path!r}.")
     try:
@@ -50,6 +50,10 @@ def load_data(npz_path: str) -> np.ndarray:
             f"NPZ file {npz_path!r}: 'coords' contains non-finite values ({n_bad} NaN/inf). Coordinates must be finite."
         )
     out = np.asarray(coords, dtype=np.float32)
+    if max_data is not None and max_data < out.shape[0]:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(out.shape[0], size=max_data, replace=False)
+        out = out[idx]
     return out
 
 

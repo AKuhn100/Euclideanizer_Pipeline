@@ -69,10 +69,10 @@ def _parse_seed_output_dir(dirname: str) -> tuple[int, str, Optional[str]] | Non
     seed_group_id matches the directory name (unique per seed or per seed×split).
     training_split_token is the string after _split_ when multiple splits are used; else None.
     """
-    m = re.match(r"^seed_(\d+)$", dirname)
+    m = re.match(r"^seed_(\d+)(?:_maxdata_(.+))?$", dirname)
     if m:
         return int(m.group(1)), dirname, None
-    m = re.match(r"^seed_(\d+)_split_(.+)$", dirname)
+    m = re.match(r"^seed_(\d+)_split_([^_]+)(?:_maxdata_(.+))?$", dirname)
     if m:
         return int(m.group(1)), dirname, m.group(2)
     return None
@@ -104,7 +104,11 @@ def _label_from_distmap_config(
     seed_group_id: str,
     split_token: Optional[str] = None,
 ) -> tuple[str, str]:
-    prefix = f"Seed {seed} · split {split_token} · " if split_token else f"Seed {seed} · "
+    max_data_tag = None
+    if "_maxdata_" in seed_group_id:
+        max_data_tag = seed_group_id.split("_maxdata_", 1)[1]
+    extra = f" · max_data {max_data_tag}" if max_data_tag is not None else ""
+    prefix = f"Seed {seed}{extra} · split {split_token} · " if split_token else f"Seed {seed}{extra} · "
     short = f"{prefix}DM {dm_index}"
     if not cfg or "distmap" not in cfg:
         return short, f"{seed_group_id}_dm_{dm_index}"
@@ -126,7 +130,11 @@ def _label_from_euclideanizer_config(
     seed_group_id: str,
     split_token: Optional[str] = None,
 ) -> tuple[str, str]:
-    prefix = f"Seed {seed} · split {split_token} · " if split_token else f"Seed {seed} · "
+    max_data_tag = None
+    if "_maxdata_" in seed_group_id:
+        max_data_tag = seed_group_id.split("_maxdata_", 1)[1]
+    extra = f" · max_data {max_data_tag}" if max_data_tag is not None else ""
+    prefix = f"Seed {seed}{extra} · split {split_token} · " if split_token else f"Seed {seed}{extra} · "
     short = f"{prefix}DM {dm_index} · Eu {eu_index}"
     if not cfg or "euclideanizer" not in cfg:
         return short, f"{seed_group_id}_dm_{dm_index}_eu_{eu_index}"
@@ -557,6 +565,20 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, Any]]:
                         blocks.append({"type": "q_recon", "name": f"Q (recon) {subdir}", "source_path": rel})
     _append_clustering_analysis_blocks(run_root, blocks, _COORD_CLUSTERING_DIR, "coord_clustering", "Coord clustering")
     _append_clustering_analysis_blocks(run_root, blocks, _DISTMAP_CLUSTERING_DIR, "distmap_clustering", "Distmap clustering", include_latent=False)
+    gc_r = os.path.join(run_root, "analysis", "generative_capacity", "rmsd", "generative_capacity_rmsd.png")
+    if os.path.isfile(gc_r):
+        blocks.append({
+            "type": "generative_capacity_rmsd",
+            "name": "Generative Capacity (RMSD)",
+            "source_path": os.path.join("analysis", "generative_capacity", "rmsd", "generative_capacity_rmsd.png"),
+        })
+    gc_q = os.path.join(run_root, "analysis", "generative_capacity", "q", "generative_capacity_q.png")
+    if os.path.isfile(gc_q):
+        blocks.append({
+            "type": "generative_capacity_q",
+            "name": "Generative Capacity (Q)",
+            "source_path": os.path.join("analysis", "generative_capacity", "q", "generative_capacity_q.png"),
+        })
     _finalize_dashboard_block_titles(blocks)
     return blocks
 
@@ -654,6 +676,23 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
         seed_children = []
         seed_blocks = []
         training_split_val = _training_split_value_for_seed_dir(seed_dir, split_token)
+        suff_path = os.path.join(
+            base_output_dir,
+            "meta_analysis",
+            "sufficiency",
+            f"seed_{seed_num}",
+            "heatmap",
+            "sufficiency_heatmap_rmsd_q.png",
+        )
+        if os.path.isfile(suff_path):
+            seed_blocks.append(
+                {
+                    "type": "meta_analysis_sufficiency",
+                    "name": "Sufficiency Heatmap (RMSD/Q)",
+                    "source_path": os.path.relpath(suff_path, seed_dir),
+                    "run_id": seed_id,
+                }
+            )
 
         for dm_name in sorted(os.listdir(distmap_dir), key=lambda x: (len(x), x)):
             if not dm_name.isdigit():
@@ -739,7 +778,7 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
             "parent_id": None,
             "children_ids": seed_children,
             "blocks": seed_blocks,
-            "run_root": None,
+            "run_root": seed_dir,
             "params": {},
         })
     return runs
@@ -1442,9 +1481,13 @@ def _html_content(manifest: dict) -> str:
         null,
         'q_gen', 'q_recon',
         null,
+        'generative_capacity_rmsd', 'generative_capacity_q',
+        null,
         'coord_clustering_gen', 'coord_clustering_recon',
         null,
         'distmap_clustering_gen', 'distmap_clustering_recon',
+        null,
+        'meta_analysis_sufficiency',
         null
       ];
       const i = order.indexOf(type);

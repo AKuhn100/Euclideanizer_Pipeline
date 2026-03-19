@@ -16,7 +16,7 @@ except ImportError:
 # Required keys per section (no code-side defaults). Key order is standardized:
 # enabled/overwrite_existing first, then behavior params, then save_data, save_pdf_copy, save_structures_gro.
 REQUIRED_KEYS = {
-    "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample"],
+    "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample", "max_data"],
     "distmap": [
         "latent_dim", "beta_kl",
         "epochs", "batch_size", "learning_rate",
@@ -45,6 +45,7 @@ REQUIRED_KEYS = {
         "rmsd_gen", "rmsd_recon",
         "q_max_train", "q_max_test",
         "q_gen", "q_recon",
+        "generative_capacity_rmsd", "generative_capacity_q",
         "coord_clustering_max_train", "coord_clustering_max_test",
         "coord_clustering_gen", "coord_clustering_recon",
         "distmap_clustering_max_train", "distmap_clustering_max_test",
@@ -104,7 +105,7 @@ REQUIRED_ANALYSIS_SUBKEYS = {
 }
 REQUIRED_KEYS = {
     **{k: v for k, v in REQUIRED_KEYS.items() if k not in ("analysis", "data")},
-    "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample"],
+    "data": ["path", "split_seed", "training_split", "exp_stats_chunk_size", "exp_stats_avg_map_sample", "max_data"],
     "analysis": [
         "rmsd_max_train", "rmsd_max_test",
         "rmsd_gen", "rmsd_recon",
@@ -125,16 +126,31 @@ REQUIRED_KEYS = {
     ],
     "dashboard": ["enabled"],
     "scoring": ["enabled", "overwrite_existing", "save_pdf_copy"],
+    "meta_analysis": ["sufficiency"],
 }
 # Required keys inside analysis.latent (latent is its own block: one plot per run; uses analysis.latent_max_train / latent_max_test).
 REQUIRED_ANALYSIS_SUBKEYS["latent"] = [
     "enabled", "overwrite_existing",
     "save_data", "save_pdf_copy",
 ]
+REQUIRED_ANALYSIS_SUBKEYS["generative_capacity_rmsd"] = [
+    "enabled", "overwrite_existing",
+    "n_structures", "gen_decode_batch_size", "query_batch_size",
+    "save_data", "save_pdf_copy",
+]
+REQUIRED_ANALYSIS_SUBKEYS["generative_capacity_q"] = [
+    "enabled", "overwrite_existing",
+    "n_structures", "gen_decode_batch_size", "query_batch_size", "delta",
+    "save_data", "save_pdf_copy",
+]
+# Required keys inside meta_analysis blocks.
+REQUIRED_META_ANALYSIS_SUBKEYS = {
+    "sufficiency": ["enabled", "overwrite_existing", "save_pdf_copy"],
+}
 # Order: training_visualization before plotting so training-related config is grouped.
 # calibration_safety_margin_gb: fixed GB reserved regardless of GPU size. calibration_binary_search_steps: max halving iterations.
 # calibration_training_batch_cap: required; positive int; upper bound for training batch-size calibration only.
-REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring"]
+REQUIRED_TOP_LEVEL = ["resume", "data", "output_dir", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap", "distmap", "euclideanizer", "training_visualization", "plotting", "analysis", "dashboard", "scoring", "meta_analysis"]
 
 # Sections that must match exactly when resuming (training and training visualization).
 TRAINING_CRITICAL_KEYS = ["data", "distmap", "euclideanizer", "training_visualization", "calibration_safety_margin_gb", "calibration_binary_search_steps", "calibration_training_batch_cap"]
@@ -167,6 +183,15 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
             if top == "analysis" and isinstance(cfg.get("analysis"), dict):
                 for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
                     block = cfg["analysis"].get(block_name)
+                    if not isinstance(block, dict):
+                        missing.append(f"{top}.{block_name} (must be a dict)")
+                    else:
+                        for sk in sub_keys:
+                            if sk not in block:
+                                missing.append(f"{top}.{block_name}.{sk}")
+            if top == "meta_analysis" and isinstance(cfg.get("meta_analysis"), dict):
+                for block_name, sub_keys in REQUIRED_META_ANALYSIS_SUBKEYS.items():
+                    block = cfg["meta_analysis"].get(block_name)
                     if not isinstance(block, dict):
                         missing.append(f"{top}.{block_name} (must be a dict)")
                     else:
@@ -223,6 +248,26 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
             _validate_query_batch_size_key(block["query_batch_size"], f"analysis.{block_name}.query_batch_size")
         if "gen_decode_batch_size" in sub_keys and "gen_decode_batch_size" in block:
             _validate_gen_decode_batch_key(block["gen_decode_batch_size"], f"analysis.{block_name}.gen_decode_batch_size")
+    # generative_capacity n_structures: positive int(s), strictly ascending.
+    for gk in ("generative_capacity_rmsd", "generative_capacity_q"):
+        block = (cfg.get("analysis") or {}).get(gk)
+        if not isinstance(block, dict):
+            continue
+        n_structures = block.get("n_structures")
+        vals = n_structures if isinstance(n_structures, list) else [n_structures]
+        prev = None
+        for i, v in enumerate(vals):
+            if not isinstance(v, int) or v < 1:
+                raise ValueError(f"analysis.{gk}.n_structures must be a positive integer or list of positive integers; got {v!r} at index {i}.")
+            if prev is not None and v <= prev:
+                raise ValueError(f"analysis.{gk}.n_structures must be strictly ascending; got {v!r} after {prev!r}.")
+            prev = v
+    # generative_capacity_q.delta: positive float.
+    qgc = ((cfg.get("analysis") or {}).get("generative_capacity_q") or {})
+    if "delta" in qgc:
+        _d = qgc["delta"]
+        if not isinstance(_d, (int, float)) or _d <= 0:
+            raise ValueError(f"analysis.generative_capacity_q.delta must be a positive number, got {_d!r}.")
 
     # calibration_safety_margin_gb: positive float (fixed GB reserved).
     val = cfg.get("calibration_safety_margin_gb")
@@ -256,6 +301,16 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
                 raise ValueError(
                     f"data.training_split values must be in (0, 1), got {f!r} at index {i}."
                 )
+    # data.max_data: null, positive int, or list of positive ints.
+    v = (cfg.get("data") or {}).get("max_data")
+    vals = [v] if not isinstance(v, list) else v
+    for i, x in enumerate(vals):
+        if x is None:
+            continue
+        if not isinstance(x, int) or x < 1:
+            raise ValueError(
+                f"data.max_data must be null, a positive integer, or a list of positive integers; got {x!r} at index {i}."
+            )
 
 
 def validate_config(cfg: Dict[str, Any]) -> None:
@@ -401,6 +456,16 @@ def get_training_splits(cfg: Dict[str, Any]) -> List[float]:
     """Return list of training split fractions (1 per full pipeline run). data.training_split can be a single float or a list of floats."""
     v = cfg["data"]["training_split"]
     return [float(x) for x in (v if isinstance(v, list) else [v])]
+
+
+def get_max_data_values(cfg: Dict[str, Any]) -> List[int | None]:
+    """Return data.max_data values as a list. data.max_data can be null, int, or list of int/null."""
+    v = cfg["data"]["max_data"]
+    vals = v if isinstance(v, list) else [v]
+    out: List[int | None] = []
+    for x in vals:
+        out.append(None if x is None else int(x))
+    return out
 
 
 # Filename for the full pipeline config saved in output_dir (required for resume).

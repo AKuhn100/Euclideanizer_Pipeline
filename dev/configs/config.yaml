@@ -10,6 +10,7 @@ data:
   training_split: [0.8]   # fraction for training; same for both models, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
+  max_data: null
 
 output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-18/RANGE_SLURM/Chrom_21"
 
@@ -171,6 +172,23 @@ analysis:
     feats_batch_size: 64
     save_data: false
     save_pdf_copy: false
+  generative_capacity_rmsd:
+    enabled: false
+    overwrite_existing: false
+    n_structures: [100, 250, 500]
+    gen_decode_batch_size: 256
+    query_batch_size: 128
+    save_data: false
+    save_pdf_copy: false
+  generative_capacity_q:
+    enabled: false
+    overwrite_existing: false
+    n_structures: [100, 250, 500]
+    gen_decode_batch_size: 256
+    query_batch_size: 128
+    delta: 0.7071
+    save_data: false
+    save_pdf_copy: false
   latent:
     enabled: true   # if true, run latent analysis once per Euclideanizer run (analysis/latent/; uses latent_max_train / latent_max_test)
     overwrite_existing: false   # if true, prompt then remove existing latent outputs before re-running
@@ -182,6 +200,12 @@ scoring:
   enabled: true   # set true to compute per-run scores after analysis
   overwrite_existing: false   # if true, re-run score even when scores.json exists
   save_pdf_copy: false   # if true, save a PDF copy of the scores spider plot (dashboard) when built
+
+meta_analysis:
+  sufficiency:
+    enabled: false
+    overwrite_existing: false
+    save_pdf_copy: false
 
 # Dashboard: interactive HTML report in run root (dashboard/). Disable with --no-dashboard or dashboard.enabled: false.
 dashboard:

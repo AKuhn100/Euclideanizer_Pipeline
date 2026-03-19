@@ -122,6 +122,18 @@ def test_scan_runs_two_splits_distinct_ids(tmp_path):
     assert dm8["split_seed"] == 0 and dm8["distmap_index"] == 0 and dm8["training_split"] == 0.8
 
 
+def test_scan_runs_training_split_and_max_data_dirs(tmp_path):
+    _make_minimal_run_tree(
+        tmp_path,
+        n_seeds=1,
+        seed_dirname_fn=lambda s: f"seed_{s}_split_0.9_maxdata_500",
+    )
+    runs = _scan_runs(str(tmp_path))
+    ids = {r["id"] for r in runs}
+    assert "seed_0_split_0.9_maxdata_500" in ids
+    assert "seed_0_split_0.9_maxdata_500_dm_0_eu_0" in ids
+
+
 def test_scan_runs_training_split_from_pipeline_config(tmp_path):
     """Single seed_<n>/ dir: training_split from pipeline_config.yaml for Vary aspect."""
     _make_minimal_run_tree(tmp_path, n_seeds=1)
@@ -233,3 +245,37 @@ def test_build_dashboard_manifest_keeps_training_split_for_vary_aspect(tmp_path)
     ts = {r.get("training_split") for r in eu_runs}
     assert 0.8 in ts and 0.9 in ts
     assert all(r.get("split_seed") == 0 for r in eu_runs)
+
+
+def test_scan_runs_includes_sufficiency_meta_block(tmp_path):
+    _make_minimal_run_tree(tmp_path, n_seeds=1)
+    heat = (
+        tmp_path
+        / "meta_analysis"
+        / "sufficiency"
+        / "seed_0"
+        / "heatmap"
+        / "sufficiency_heatmap_rmsd_q.png"
+    )
+    heat.parent.mkdir(parents=True, exist_ok=True)
+    heat.write_bytes(_MIN_PNG)
+    runs = _scan_runs(str(tmp_path))
+    seed = next(r for r in runs if r["id"] == "seed_0")
+    block_types = {b.get("type") for b in seed.get("blocks", [])}
+    assert "meta_analysis_sufficiency" in block_types
+
+
+def test_scan_runs_includes_generative_capacity_blocks(tmp_path):
+    _make_minimal_run_tree(tmp_path, n_seeds=1)
+    eu_root = tmp_path / "seed_0" / "distmap" / "0" / "euclideanizer" / "0"
+    gc_r = eu_root / "analysis" / "generative_capacity" / "rmsd" / "generative_capacity_rmsd.png"
+    gc_q = eu_root / "analysis" / "generative_capacity" / "q" / "generative_capacity_q.png"
+    gc_r.parent.mkdir(parents=True, exist_ok=True)
+    gc_q.parent.mkdir(parents=True, exist_ok=True)
+    gc_r.write_bytes(_MIN_PNG)
+    gc_q.write_bytes(_MIN_PNG)
+    runs = _scan_runs(str(tmp_path))
+    eu = next(r for r in runs if r["id"] == "seed_0_dm_0_eu_0")
+    block_types = {b.get("type") for b in eu.get("blocks", [])}
+    assert "generative_capacity_rmsd" in block_types
+    assert "generative_capacity_q" in block_types

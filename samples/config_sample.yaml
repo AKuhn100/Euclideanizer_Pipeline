@@ -16,6 +16,7 @@ data:
   training_split: [0.8]   # fraction for training; single float or list of floats in (0,1); list = one full pipeline per value (output under seed_<n>_split_<frac>); same for DistMap, Euclideanizer, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 100   # number of structures to average for avg_exp_map in experimental statistics
+  max_data: null   # optional cap on structures loaded from data.path (null = all)
 
 output_dir: "./output"   # root directory for all run outputs (seeds, distmap, euclideanizer, plots, analysis)
 
@@ -97,7 +98,7 @@ analysis:
   rmsd_gen:
     enabled: true   # if true, run min-RMSD-to-training analysis on generated structures
     overwrite_existing: false   # if true, prompt then remove existing rmsd gen outputs before re-running
-    num_samples: [1]   # list of sample counts per run name (e.g. [1, 10] → run "1", "10")
+    num_samples: [1000]   # list of sample counts per run name (e.g. [1, 10] → run "1", "10")
     sample_variance: [1, 2]   # list of latent variances; one set of outputs per value
     query_batch_size: 256   # batch size for RMSD query (CPU RAM; set based on system memory)
     gen_decode_batch_size: 256   # batch size when decoding latents to structures
@@ -174,6 +175,25 @@ analysis:
     feats_batch_size: 64   # batch size for computing distance-map features
     save_data: true   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies (no per-metric latent; use analysis.latent for analysis/latent/)
+  generative_capacity_rmsd:
+    # Note: n_max = max(n_structures). Pairwise work scales as O(n_max^2), so large n_max can be expensive.
+    enabled: false
+    overwrite_existing: false
+    n_structures: [100, 250, 500, 1000]
+    gen_decode_batch_size: 256
+    query_batch_size: 128
+    save_data: true
+    save_pdf_copy: false
+  generative_capacity_q:
+    # Note: n_max = max(n_structures). Pairwise work scales as O(n_max^2), so large n_max can be expensive.
+    enabled: false
+    overwrite_existing: false
+    n_structures: [100, 250, 500, 1000]
+    gen_decode_batch_size: 256
+    query_batch_size: 128
+    delta: 0.7071
+    save_data: true
+    save_pdf_copy: false
   latent:
     enabled: true   # if true, run latent analysis once per Euclideanizer run (analysis/latent/; uses latent_max_train / latent_max_test above)
     overwrite_existing: false   # if true, prompt then remove existing latent outputs before re-running
@@ -185,6 +205,12 @@ scoring:
   enabled: true   # set true to compute per-run scores after analysis
   overwrite_existing: false   # if true, re-run score even when scores.json exists
   save_pdf_copy: false   # if true, save a PDF copy of the scores spider plot (dashboard) when built
+
+meta_analysis:
+  sufficiency:
+    enabled: false   # if true, build per-seed sufficiency distributions/heatmaps from analysis/rmsd + analysis/q NPZ
+    overwrite_existing: false   # if true, prompt then remove existing meta_analysis/sufficiency outputs before re-running
+    save_pdf_copy: false   # if true, save PDF copies of sufficiency figures
 
 # Dashboard: interactive HTML report in run root (dashboard/). Built once at end of pipeline when enabled.
 dashboard:
