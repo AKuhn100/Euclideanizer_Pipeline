@@ -37,6 +37,14 @@ CMAP_DM_R = "viridis_r"  # reversed (e.g. avg maps: high = warm)
 # DPI for saved figure files (PNG, etc.); single definition for all pipeline plots
 PLOT_DPI = 150
 
+# Filled bar histograms: no outlines (matches recon_statistics; RMSD/Q/analysis use this)
+HIST_FILLED_EDGE_COLOR = "none"
+
+# Step-outline histograms (train/test/gen overlays; exp outline on recon_statistics)
+LINEWIDTH_HIST_STEP = 2.4
+# Log-log scaling P(s) and comparable curve overlays (train/test/gen; recon vs exp)
+LINEWIDTH_SCALING_LOGLOG = 2.4
+
 # ---------------------------------------------------------------------------
 # Font and font sizes (use in every plotting call for consistency)
 # ---------------------------------------------------------------------------

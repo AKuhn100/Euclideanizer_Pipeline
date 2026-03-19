@@ -133,7 +133,11 @@ def train_euclideanizer(
             best_epoch = prev_cfg["best_epoch"]
             start_epoch_offset = (prev_cfg["best_epoch"] or 0) if resume_from_best else (prev_cfg["last_epoch_trained"] or 0)
         if os.path.isfile(prev_best):
-            shutil.copy2(prev_best, os.path.join(model_dir, "euclideanizer.pt"))
+            dst_best = os.path.join(model_dir, "euclideanizer.pt")
+            # SameFileError happens when resuming within the same euclideanizer segment:
+            # src and dst resolve to the same path. In that case, the copy is unnecessary.
+            if os.path.normpath(prev_best) != os.path.normpath(dst_best):
+                shutil.copy2(prev_best, dst_best)
             if not memory_efficient:
                 best_state = {k: v.clone() for k, v in torch.load(prev_best, map_location="cpu").items()}
         save_run_config({"euclideanizer": eu_cfg}, model_dir, last_epoch_trained=0, best_epoch=best_epoch, best_val=best_val)

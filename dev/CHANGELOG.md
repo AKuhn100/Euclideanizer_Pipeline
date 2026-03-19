@@ -2,6 +2,16 @@
 
 ## 2026-03-18
 
+- **Plots:** **Gen variance** (bond + Rg) and **bond_length_by_genomic_distance_gen** (Train/Test/Gen lag grid): **Gen** distributions are **filled** bars (behind); **Train** and **Test** remain **step** outlines. Legend order Train, Test, Gen via `_legend_train_test_gen`. (`plotting.py`, STYLE_GUIDE, README)
+
+- **Config:** **`plotting.plot_dpi`** is required (positive int): DPI for main pipeline PNGs and for RMSD/Q/clustering analysis figures. Wired in `run.py` into analysis `plot_cfg`; validated in `src/config.py`. Samples, test YAMLs, and `config_sample_hpo` updated; dev configs already had `plot_dpi`. README condensed reference fixed (removed stale `calibration_decode_batch_cap`). HPO sample + `dev/configs/hpo_config.yaml`: commented **`optuna.storage`** option. (`run.py`, `config.py`, samples/tests, STYLE_GUIDE)
+
+- **Plots:** **Genomic-distance / bond / Rg / scaling:** `LINEWIDTH_HIST_STEP` (2.4) for **step** histograms (train/test in gen_variance and bond-lag gen grid; experimental outlines in recon_statistics); **Gen** in those Train/Test/Gen overlays is **filled**. `LINEWIDTH_SCALING_LOGLOG` (2.4) for P(s) curves. (`plot_config.py`, `plotting.py`, `training_visualization.py`, STYLE_GUIDE)
+
+- **Plots:** RMSD and Q analysis histograms (gen + recon panels) use **borderless** filled bars (`HIST_FILLED_EDGE_COLOR` in `plot_config.py`), matching recon_statistics. Training-video Rg uses step/filled per video design. (`rmsd.py`, `q_analysis.py`, `plotting.py`, `training_visualization.py`, STYLE_GUIDE)
+
+- **Resume:** Fixed multi-GPU resume crash (`shutil.SameFileError`) in `train_euclideanizer.py` when `resume_from_best` tries to copy `euclideanizer.pt` onto itself (src==dst). Now skips the copy in that case. (`train_euclideanizer.py`, pipeline.log)
+
 - **Resume:** Fixed missing **bond_length_by_genomic_distance** (and DistMap bond plots) when `gen_variance` was already on disk: the pipeline skipped loading full-dataset `exp_stats` and gated the whole plotting phase on `exp_stats is not None`. Added `_plotting_phase_needed()` and widened `need_plot_or_rmsd` so bond-length / recon_statistics runs without `exp_stats`. (`run.py`, `test_pipeline_behavior.py`, README, STYLE_GUIDE)
 
 - **Pairwise distance by lag:** Three figures when `plotting.bond_length_by_genomic_distance` is on: **train** (exp vs recon train), **test** (exp vs recon test), **gen** (train/test/gen overlay). Dirs `plots/bond_length_by_genomic_distance_{train,test,gen}/`. Recon statistics histograms: **experimental** train/test as **step outline** (foreground), **recon** filled behind. Dashboard: Title Case on block titles (RMSD/Q/gen run names, pairwise plots, etc.); three bond block types + score strips. (`plotting.py`, `run.py`, `dashboard.py`, tests, README, STYLE_GUIDE)

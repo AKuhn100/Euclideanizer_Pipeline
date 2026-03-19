@@ -22,6 +22,7 @@ from .plot_config import (
     FONT_SIZE_TITLE,
     FONT_SIZE_AXIS,
     FONT_SIZE_LEGEND,
+    HIST_FILLED_EDGE_COLOR,
 )
 
 def _distmap_from_coords(coords: np.ndarray) -> np.ndarray:
@@ -176,15 +177,15 @@ def _run_one_q(
 
     c0, c1, c2 = GEN_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c0, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[0].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[0].set_title("Test → Train (Max Q to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].set_xlim(x_min, x_max)
-    axes[1].hist(gen_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
+    axes[1].hist(gen_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c1, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[1].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[1].set_title("Gen → Train (Max Q to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].set_xlim(x_min, x_max)
-    axes[2].hist(gen_to_test_max_q, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
+    axes[2].hist(gen_to_test_max_q, bins=bins, density=True, alpha=0.7, color=c2, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[2].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_xlabel("Max Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_title("Gen → Test (Max Q to Test Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
@@ -474,15 +475,15 @@ def _run_one_q_recon(
 
     c0, c1, c2 = RECON_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train_max_q, bins=bins, density=True, alpha=0.7, color=c0, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[0].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[0].set_title("Test → Train (Max Q to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].set_xlim(x_min, x_max)
-    axes[1].hist(train_recon_q, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
+    axes[1].hist(train_recon_q, bins=bins, density=True, alpha=0.7, color=c1, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[1].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[1].set_title("Train Recon (Q to Original)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].set_xlim(x_min, x_max)
-    axes[2].hist(test_recon_q, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
+    axes[2].hist(test_recon_q, bins=bins, density=True, alpha=0.7, color=c2, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[2].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_xlabel("Max Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_title("Test Recon (Q to Original)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)

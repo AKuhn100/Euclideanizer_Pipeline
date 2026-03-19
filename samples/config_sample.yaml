@@ -3,9 +3,9 @@
 # CLI flags override these. Dataset path is required for training: set --data or data.path here.
 # The project does not bundle large data; use tests/test_data/spheres.npz (generate with tests/test_data/generate_spheres.py) or your own .npz path.
 
-resume: false   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
+resume: true   # if true, skip runs that already have checkpoints; if false, overwrite existing outputs
 # Calibration: fixed GB reserved regardless of GPU size; max halving steps after OOM.
-calibration_safety_margin_gb: 10.0
+calibration_safety_margin_gb: 15.0
 calibration_binary_search_steps: 5
 # Upper bound for training batch-size calibration (distmap/euclideanizer batch_size when null).
 calibration_training_batch_cap: 512
@@ -75,10 +75,11 @@ plotting:
   gen_decode_batch_size: 256   # batch size when decoding latents to structures for gen plots
   sample_variance: [1]   # list of latent variances; one plot set per value
   num_reconstruction_samples: 5   # number of structures to decode for reconstruction plots
+  plot_dpi: 150   # DPI for saved PNGs (plotting + RMSD/Q/clustering analysis figures); matches src/plot_config.PLOT_DPI default
   max_train: null   # cap on train structures for reference stats; null = use all
   max_test: null   # cap on test structures for reference stats; null = use all
   save_data: true   # if true, save NumPy .npz data for each plot (e.g. reconstruction_data.npz)
-  save_pdf_copy: true   # if true, save a PDF copy of each figure where supported
+  save_pdf_copy: false   # if true, save a PDF copy of each figure where supported
   save_structures_gro: true   # if true, save generated structures as GRO for gen_variance (Euclideanizer only)
 
 # Analysis: metrics run after plotting for each Euclideanizer. Reference sizes (below) cap train/test for caching; null = use all. Large values can be slow (O(n²) pairwise comparisons).
@@ -108,10 +109,10 @@ analysis:
     overwrite_existing: false   # if true, prompt then remove existing rmsd recon outputs before re-running
     max_recon_train: [null]   # list of caps on train structures for recon; null = use all (one run per list entry)
     max_recon_test: [null]   # list of caps on test structures for recon; null = use all
-    save_data: false   # if true, save recon RMSD data as .npz
+    save_data: true   # if true, save recon RMSD data as .npz
     save_pdf_copy: false   # if true, save PDF copies of recon figures
   q_gen:
-    enabled: false   # if true, run Q (order parameter) analysis on generated structures
+    enabled: true   # if true, run Q (order parameter) analysis on generated structures
     overwrite_existing: false   # if true, prompt then remove existing q gen outputs before re-running
     num_samples: [500]   # list of sample counts per run name
     sample_variance: [1]   # list of latent variances
@@ -119,18 +120,18 @@ analysis:
     query_batch_size: 64   # batch size for Q computation (CPU RAM; set based on system memory)
     gen_decode_batch_size: 256   # batch size when decoding latents to structures
     save_data: true   # if true, save Q data as .npz
-    save_pdf_copy: true   # if true, save PDF copies of Q figures
+    save_pdf_copy: false   # if true, save PDF copies of Q figures
     save_structures_gro: false   # if true, save generated structures as GRO
   q_recon:
-    enabled: false   # if true, run Q analysis on reconstructed structures
+    enabled: true   # if true, run Q analysis on reconstructed structures
     overwrite_existing: false   # if true, prompt then remove existing q recon outputs before re-running
     max_recon_train: [500]   # list of caps on train structures for recon
     max_recon_test: [200]   # list of caps on test structures for recon
     delta: 0.7071   # Q smoothing parameter for recon
     save_data: true   # if true, save recon Q data as .npz
-    save_pdf_copy: true   # if true, save PDF copies
+    save_pdf_copy: false   # if true, save PDF copies
   coord_clustering_gen:
-    enabled: false   # if true, run coordinate-based clustering analysis on generated structures (dendrograms, mixing)
+    enabled: true   # if true, run coordinate-based clustering analysis on generated structures (dendrograms, mixing)
     overwrite_existing: false   # if true, prompt then remove existing coord_clustering gen outputs before re-running
     num_samples: [150]   # list of sample counts per run name
     sample_variance: [1.0, 2.0]   # list of latent variances
@@ -138,20 +139,20 @@ analysis:
     k_mixing: 10   # number of nearest neighbours used to compute source mixing score (0–1, higher = more mixing)
     linkage_method: "average"   # scipy linkage method for hierarchical clustering (e.g. average, single, complete)
     gen_decode_batch_size: 256   # batch size when decoding latents to structures
-    save_data: false   # if true, save clustering data as .npz
+    save_data: true   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies of clustering figures
   coord_clustering_recon:
-    enabled: false   # if true, run coordinate-based clustering on reconstructed structures
+    enabled: true   # if true, run coordinate-based clustering on reconstructed structures
     overwrite_existing: false   # if true, prompt then remove existing coord_clustering recon outputs before re-running
     max_recon_train: [null]   # list of caps on train structures for recon; null = use all
     max_recon_test: [null]   # list of caps on test structures for recon; null = use all
     n_subsample: 150   # number of structures to subsample (FPS) for clustering
     k_mixing: 10   # nearest neighbours for mixing score
     linkage_method: "average"   # scipy linkage method
-    save_data: false   # if true, save clustering data as .npz
+    save_data: true   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies
   distmap_clustering_gen:
-    enabled: false   # if true, run distance-map-based clustering analysis on generated structures (RMSE dendrograms, mixing)
+    enabled: true   # if true, run distance-map-based clustering analysis on generated structures (RMSE dendrograms, mixing)
     overwrite_existing: false   # if true, prompt then remove existing distmap_clustering gen outputs before re-running
     num_samples: [150]   # list of sample counts per run name
     sample_variance: [1.0, 2.0]   # list of latent variances
@@ -160,10 +161,10 @@ analysis:
     linkage_method: "average"   # scipy linkage method
     gen_decode_batch_size: 256   # batch size when decoding latents to structures
     feats_batch_size: 64   # batch size for computing distance-map features (cache and analysis)
-    save_data: false   # if true, save clustering data as .npz
+    save_data: true   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies
   distmap_clustering_recon:
-    enabled: false   # if true, run distance-map-based clustering on reconstructed structures
+    enabled: true   # if true, run distance-map-based clustering on reconstructed structures
     overwrite_existing: false   # if true, prompt then remove existing distmap_clustering recon outputs before re-running
     max_recon_train: [null]   # list of caps on train structures for recon; null = use all
     max_recon_test: [null]   # list of caps on test structures for recon; null = use all
@@ -171,17 +172,17 @@ analysis:
     k_mixing: 10   # nearest neighbours for mixing score
     linkage_method: "average"   # scipy linkage method
     feats_batch_size: 64   # batch size for computing distance-map features
-    save_data: false   # if true, save clustering data as .npz
+    save_data: true   # if true, save clustering data as .npz
     save_pdf_copy: false   # if true, save PDF copies (no per-metric latent; use analysis.latent for analysis/latent/)
   latent:
-    enabled: false   # if true, run latent analysis once per Euclideanizer run (analysis/latent/; uses latent_max_train / latent_max_test above)
+    enabled: true   # if true, run latent analysis once per Euclideanizer run (analysis/latent/; uses latent_max_train / latent_max_test above)
     overwrite_existing: false   # if true, prompt then remove existing latent outputs before re-running
-    save_data: false   # if true, save latent_stats.npz (mean_train, mean_test, std_train, std_test per dimension)
+    save_data: true   # if true, save latent_stats.npz (mean_train, mean_test, std_train, std_test per dimension)
     save_pdf_copy: false   # if true, save PDF copies of latent figures
 
 # Scoring: per-run evaluation (30 components, geometric mean). Reads NPZ from plotting/analysis; when enabled, NPZ are saved for scoring then deleted per block save_data after scoring.
 scoring:
-  enabled: false   # set true to compute per-run scores after analysis
+  enabled: true   # set true to compute per-run scores after analysis
   overwrite_existing: false   # if true, re-run score even when scores.json exists
   save_pdf_copy: false   # if true, save a PDF copy of the scores spider plot (dashboard) when built
 

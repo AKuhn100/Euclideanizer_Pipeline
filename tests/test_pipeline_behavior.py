@@ -1080,6 +1080,19 @@ def test_validate_config_rejects_null_gen_decode_batch_size():
     assert "positive integer" in str(exc_info.value).lower()
 
 
+def test_validate_config_rejects_invalid_plot_dpi():
+    """plotting.plot_dpi must be a positive integer."""
+    cfg = load_config(path=os.path.join(_TEST_DIR, "config_test.yaml"))
+    cfg["plotting"] = dict(cfg["plotting"])
+    cfg["plotting"]["plot_dpi"] = 0
+    with pytest.raises(ValueError) as exc_info:
+        validate_config(cfg)
+    assert "plot_dpi" in str(exc_info.value).lower()
+    cfg["plotting"]["plot_dpi"] = 150.5
+    with pytest.raises(ValueError):
+        validate_config(cfg)
+
+
 # ---------------------------------------------------------------------------
 # Scoring (behavior: score file created, missing components reported)
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ from .plot_config import (
     FONT_FAMILY,
     FONT_SIZE_TITLE,
     FONT_SIZE_AXIS,
+    HIST_FILLED_EDGE_COLOR,
 )
 
 
@@ -148,15 +149,15 @@ def _run_one_min_rmsd(
 
     c0, c1, c2 = GEN_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[0].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[0].set_title("Test → Train (Min RMSD to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].set_xlim(x_min, x_max)
-    axes[1].hist(gen_to_train, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
+    axes[1].hist(gen_to_train, bins=bins, density=True, alpha=0.7, color=c1, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[1].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[1].set_title("Gen → Train (Min RMSD to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].set_xlim(x_min, x_max)
-    axes[2].hist(gen_to_test, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
+    axes[2].hist(gen_to_test, bins=bins, density=True, alpha=0.7, color=c2, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[2].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_xlabel("Min RMSD (Aligned Coords)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_title("Gen → Test (Min RMSD to Test Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
@@ -442,15 +443,15 @@ def _run_one_min_rmsd_recon(
 
     c0, c1, c2 = RECON_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
-    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor="k", linewidth=0.3)
+    axes[0].hist(test_to_train, bins=bins, density=True, alpha=0.7, color=c0, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[0].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[0].set_title("Test → Train (Min RMSD to Train Set)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].set_xlim(x_min, x_max)
-    axes[1].hist(train_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c1, edgecolor="k", linewidth=0.3)
+    axes[1].hist(train_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c1, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[1].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[1].set_title("Train Recon (Aligned RMSD to Original)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].set_xlim(x_min, x_max)
-    axes[2].hist(test_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c2, edgecolor="k", linewidth=0.3)
+    axes[2].hist(test_recon_rmsd, bins=bins, density=True, alpha=0.7, color=c2, edgecolor=HIST_FILLED_EDGE_COLOR)
     axes[2].set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_xlabel("Min RMSD (Aligned Coords)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     axes[2].set_title("Test Recon (Aligned RMSD to Original)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)

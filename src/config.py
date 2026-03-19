@@ -36,6 +36,7 @@ REQUIRED_KEYS = {
         "reconstruction", "bond_rg_scaling", "avg_gen_vs_exp", "bond_length_by_genomic_distance",
         "num_samples", "gen_decode_batch_size", "sample_variance",
         "num_reconstruction_samples",
+        "plot_dpi",
         "max_train", "max_test",
         "save_data", "save_pdf_copy", "save_structures_gro",
     ],
@@ -210,6 +211,10 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
     plot_cfg = cfg.get("plotting") or {}
     if isinstance(plot_cfg, dict) and "gen_decode_batch_size" in plot_cfg:
         _validate_gen_decode_batch_key(plot_cfg["gen_decode_batch_size"], "plotting.gen_decode_batch_size")
+    if isinstance(plot_cfg, dict) and "plot_dpi" in plot_cfg:
+        _pd = plot_cfg["plot_dpi"]
+        if not isinstance(_pd, int) or _pd < 1:
+            raise ValueError(f"plotting.plot_dpi must be a positive integer (PNG/analysis figure DPI), got {_pd!r}.")
     for block_name, sub_keys in REQUIRED_ANALYSIS_SUBKEYS.items():
         block = (cfg.get("analysis") or {}).get(block_name)
         if not isinstance(block, dict):

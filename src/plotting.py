@@ -31,7 +31,18 @@ from .plot_config import (
     FONT_SIZE_SMALL,
     FONT_SIZE_TINY,
     PLOT_DPI,
+    HIST_FILLED_EDGE_COLOR,
+    LINEWIDTH_HIST_STEP,
+    LINEWIDTH_SCALING_LOGLOG,
 )
+
+
+def _legend_train_test_gen(ax, label_gen: str, *, fontsize: float) -> None:
+    """Legend order Train, Test, Gen after plotting Gen filled then Train/Test step."""
+    handles, labels = ax.get_legend_handles_labels()
+    order = ("Train", "Test", label_gen)
+    by_label = dict(zip(labels, handles))
+    ax.legend([by_label[k] for k in order if k in by_label], [k for k in order if k in by_label], fontsize=fontsize)
 
 
 def _save_pdf_copy(fig, png_path: str, save_pdf: bool, display_root: str | None = None) -> None:
@@ -213,27 +224,30 @@ def plot_recon_statistics(
     bmax = max(np.percentile(true_bonds, 99), np.percentile(recon_bonds, 99))
     axes[0].hist(
         recon_bonds, bins=60, alpha=0.42, label=label_recon, density=True, range=(0, bmax),
-        color=recon_color, zorder=1,
+        color=recon_color, zorder=1, edgecolor=HIST_FILLED_EDGE_COLOR,
     )
     axes[0].hist(
         true_bonds, bins=60, label=exp_label, density=True, range=(0, bmax), color=exp_color,
-        histtype="step", lw=2.4, zorder=4,
+        histtype="step", lw=LINEWIDTH_HIST_STEP, zorder=4,
     )
     axes[0].set_title("Bond Lengths", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].legend(fontsize=FONT_SIZE_LEGEND)
     rmax = max(np.percentile(true_rg, 99), np.percentile(recon_rg, 99)) * 1.1
     axes[1].hist(
         recon_rg, bins=40, alpha=0.42, label=label_recon, density=True, range=(0, rmax),
-        color=recon_color, zorder=1,
+        color=recon_color, zorder=1, edgecolor=HIST_FILLED_EDGE_COLOR,
     )
     axes[1].hist(
         true_rg, bins=40, label=exp_label, density=True, range=(0, rmax), color=exp_color,
-        histtype="step", lw=2.4, zorder=4,
+        histtype="step", lw=LINEWIDTH_HIST_STEP, zorder=4,
     )
     axes[1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[1].legend(fontsize=FONT_SIZE_LEGEND)
-    axes[2].loglog(s, recon_sc, label=label_recon, lw=2, ls="--", color=recon_color, alpha=0.85, zorder=1)
-    axes[2].loglog(s, true_sc, label=exp_label, lw=2.6, color=exp_color, zorder=3)
+    axes[2].loglog(
+        s, recon_sc, label=label_recon, lw=LINEWIDTH_SCALING_LOGLOG, ls="--",
+        color=recon_color, alpha=0.85, zorder=1,
+    )
+    axes[2].loglog(s, true_sc, label=exp_label, lw=LINEWIDTH_SCALING_LOGLOG, color=exp_color, zorder=3)
     axes[2].set_title("Spatial Scaling P(s)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[2].legend(fontsize=FONT_SIZE_LEGEND)
     title = "Reconstruction Statistics" + (f" ({exp_label} Set)" if subset_label else " (Test Set)")
@@ -299,30 +313,47 @@ def plot_gen_analysis(
 
     fig, axes = plt.subplots(3, 3, figsize=(20, 16))
 
-    # Row 0: Bonds, Rg, Scaling — Train, Test, Gen only
+    # Row 0: Bonds, Rg, Scaling — Train/Test step outlines; Gen filled (behind) for visibility
     bmax = max(
         np.percentile(train_b, 99), np.percentile(test_b, 99), np.percentile(gen_b, 99),
     )
-    axes[0, 0].hist(train_b, bins=50, alpha=0.4, label="Train", density=True, range=(0, bmax), histtype="step", lw=1.5, color=COLOR_TRAIN)
-    axes[0, 0].hist(test_b, bins=50, alpha=0.4, label="Test", density=True, range=(0, bmax), histtype="step", lw=1.5, color=COLOR_TEST)
-    axes[0, 0].hist(gen_b, bins=50, alpha=0.6, label=label_gen, density=True, range=(0, bmax), color=COLOR_GEN)
-    axes[0, 0].set_title("Bond Lengths", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-    axes[0, 0].legend(fontsize=FONT_SIZE_SMALL)
+    axes[0, 0].hist(
+        gen_b, bins=50, alpha=0.5, label=label_gen, density=True, range=(0, bmax),
+        color=COLOR_GEN, edgecolor=HIST_FILLED_EDGE_COLOR, zorder=1,
+    )
+    axes[0, 0].hist(
+        train_b, bins=50, alpha=0.45, label="Train", density=True, range=(0, bmax),
+        histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TRAIN, zorder=2,
+    )
+    axes[0, 0].hist(
+        test_b, bins=50, alpha=0.45, label="Test", density=True, range=(0, bmax),
+        histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TEST, zorder=3,
+    )
+    _legend_train_test_gen(axes[0, 0], label_gen, fontsize=FONT_SIZE_SMALL)
 
     rmax = max(
         np.percentile(train_rg, 99), np.percentile(test_rg, 99), np.percentile(gen_rg, 99),
     ) * 1.1
-    axes[0, 1].hist(train_rg, bins=30, alpha=0.4, label="Train", density=True, range=(0, rmax), histtype="step", lw=1.5, color=COLOR_TRAIN)
-    axes[0, 1].hist(test_rg, bins=30, alpha=0.4, label="Test", density=True, range=(0, rmax), histtype="step", lw=1.5, color=COLOR_TEST)
-    axes[0, 1].hist(gen_rg, bins=30, alpha=0.6, label=label_gen, density=True, range=(0, rmax), color=COLOR_GEN)
+    axes[0, 1].hist(
+        gen_rg, bins=30, alpha=0.5, label=label_gen, density=True, range=(0, rmax),
+        color=COLOR_GEN, edgecolor=HIST_FILLED_EDGE_COLOR, zorder=1,
+    )
+    axes[0, 1].hist(
+        train_rg, bins=30, alpha=0.45, label="Train", density=True, range=(0, rmax),
+        histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TRAIN, zorder=2,
+    )
+    axes[0, 1].hist(
+        test_rg, bins=30, alpha=0.45, label="Test", density=True, range=(0, rmax),
+        histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TEST, zorder=3,
+    )
     axes[0, 1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-    axes[0, 1].legend(fontsize=FONT_SIZE_SMALL)
+    _legend_train_test_gen(axes[0, 1], label_gen, fontsize=FONT_SIZE_SMALL)
 
     y_lo = min(train_sc.min(), test_sc.min(), gen_sc.min())
     y_hi = max(train_sc.max(), test_sc.max(), gen_sc.max())
-    axes[0, 2].loglog(s, train_sc, label="Train", lw=1.2, ls="--", color=COLOR_TRAIN)
-    axes[0, 2].loglog(s, test_sc, label="Test", lw=1.2, ls="-.", color=COLOR_TEST)
-    axes[0, 2].loglog(s, gen_sc, label=label_gen, lw=1.5, ls=":", color=COLOR_GEN)
+    axes[0, 2].loglog(s, train_sc, label="Train", lw=LINEWIDTH_SCALING_LOGLOG, ls="--", color=COLOR_TRAIN)
+    axes[0, 2].loglog(s, test_sc, label="Test", lw=LINEWIDTH_SCALING_LOGLOG, ls="-.", color=COLOR_TEST)
+    axes[0, 2].loglog(s, gen_sc, label=label_gen, lw=LINEWIDTH_SCALING_LOGLOG, ls=":", color=COLOR_GEN)
     axes[0, 2].set_ylim(y_lo * 0.9, y_hi * 1.1)
     axes[0, 2].set_title("Spatial Scaling P(s)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0, 2].legend(fontsize=FONT_SIZE_SMALL)
@@ -434,7 +465,7 @@ def plot_bond_length_by_genomic_distance(
 ) -> None:
     """
     Plot distribution of pairwise distance d(i, i+k) for up to num_k lags k (evenly spaced).
-    5x4 grid; each subplot overlays train, test, and gen histograms (same style as gen_analysis).
+    5x4 grid; Gen filled (behind), Train and Test step outlines (same as gen_variance bond/Rg).
     """
     N = train_dm.shape[1]
     k_values = _k_values_evenly_spaced(N, num_k)
@@ -457,12 +488,21 @@ def plot_bond_length_by_genomic_distance(
         x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
         x_max = max(x_max, 1e-6)
         bins = 50
-        ax.hist(train_vals, bins=bins, alpha=0.4, label="Train", density=True, range=(0, x_max), histtype="step", lw=1.5, color=COLOR_TRAIN)
-        ax.hist(test_vals, bins=bins, alpha=0.4, label="Test", density=True, range=(0, x_max), histtype="step", lw=1.5, color=COLOR_TEST)
-        ax.hist(gen_vals, bins=bins, alpha=0.6, label=label_gen, density=True, range=(0, x_max), color=COLOR_GEN)
+        ax.hist(
+            gen_vals, bins=bins, alpha=0.5, label=label_gen, density=True, range=(0, x_max),
+            color=COLOR_GEN, edgecolor=HIST_FILLED_EDGE_COLOR, zorder=1,
+        )
+        ax.hist(
+            train_vals, bins=bins, alpha=0.45, label="Train", density=True, range=(0, x_max),
+            histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TRAIN, zorder=2,
+        )
+        ax.hist(
+            test_vals, bins=bins, alpha=0.45, label="Test", density=True, range=(0, x_max),
+            histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TEST, zorder=3,
+        )
         ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
         ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
-        ax.legend(fontsize=FONT_SIZE_TINY)
+        _legend_train_test_gen(ax, label_gen, fontsize=FONT_SIZE_TINY)
     for idx in range(n_plots, len(axes_flat)):
         axes_flat[idx].set_visible(False)
     plt.suptitle(
@@ -535,11 +575,11 @@ def plot_pairwise_distance_by_lag_exp_vs_recon(
         x_max = max(x_max, 1e-6)
         ax.hist(
             recon_vals, bins=bins, alpha=0.42, label=recon_label, density=True, range=(0, x_max),
-            color=recon_color, zorder=1,
+            color=recon_color, zorder=1, edgecolor=HIST_FILLED_EDGE_COLOR,
         )
         ax.hist(
             exp_vals, bins=bins, label=exp_label, density=True, range=(0, x_max), color=exp_color,
-            histtype="step", lw=2.2, zorder=4,
+            histtype="step", lw=LINEWIDTH_HIST_STEP, zorder=4,
         )
         ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
         ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)

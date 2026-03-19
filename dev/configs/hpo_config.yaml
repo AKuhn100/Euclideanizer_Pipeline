@@ -1,6 +1,6 @@
-output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs_Slurm_Better_Coord_Clustering/3-17"
+output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs_Slurm_Better_Coord_Clustering_Chrom2/3-17"
 
-data_path: /scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz
+data_path: /scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome2.npz
 seed: 15
 
 epoch_cap: 500

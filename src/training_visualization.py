@@ -15,6 +15,8 @@ import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
 from scipy.spatial.transform import Rotation
 
+from .plot_config import HIST_FILLED_EDGE_COLOR, LINEWIDTH_SCALING_LOGLOG
+
 # Visual theme for training video frames (dark background, accent colors).
 # Note: ACC_EXP/ACC_GEN here differ from plot_config (COLOR_TRAIN/COLOR_GEN) for contrast on dark BG.
 BG = "#0d1117"
@@ -184,9 +186,11 @@ def _placeholder(ax, msg="Phase 2\nonly"):
 
 
 def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen_ks, gen_sc, loss_history, val_history, epoch, rg_xlim, rg_ylim=None, epoch_for_loss_line=None):
-    ax_sc.loglog(exp_ks, exp_sc, lw=1.5, color=ACC_EXP, label="Exp", zorder=3)
+    ax_sc.loglog(exp_ks, exp_sc, lw=LINEWIDTH_SCALING_LOGLOG, color=ACC_EXP, label="Exp", zorder=3)
     if gen_sc is not None:
-        ax_sc.loglog(gen_ks, gen_sc, lw=1.5, color=ACC_GEN, ls="--", label="Gen", zorder=3)
+        ax_sc.loglog(
+            gen_ks, gen_sc, lw=LINEWIDTH_SCALING_LOGLOG, color=ACC_GEN, ls="--", label="Gen", zorder=3,
+        )
     ax_sc.set_xlabel("Genomic Sep", fontsize=7, color=FG)
     ax_sc.set_ylabel("Mean Dist", fontsize=7, color=FG)
     ax_sc.set_title("Genomic Scaling", fontsize=8, color=FG, pad=3)
@@ -196,11 +200,17 @@ def _plot_right_panel(ax_sc, ax_rg, ax_loss, exp_rg, exp_ks, exp_sc, gen_rg, gen
     bins = np.linspace(rg_xlim[0], rg_xlim[1], 35)
     _exp_ok = exp_rg[np.isfinite(exp_rg)]
     if len(_exp_ok) > 1:
-        ax_rg.hist(_exp_ok, bins=bins, density=True, alpha=0.55, color=ACC_EXP, label="Exp")
+        ax_rg.hist(
+            _exp_ok, bins=bins, density=True, alpha=0.55, color=ACC_EXP, label="Exp",
+            edgecolor=HIST_FILLED_EDGE_COLOR,
+        )
     if gen_rg is not None and len(gen_rg) > 1:
         _gen_ok = gen_rg[np.isfinite(gen_rg)]
         if len(_gen_ok) > 1:
-            ax_rg.hist(_gen_ok, bins=bins, density=True, alpha=0.55, color=ACC_GEN, label="Gen")
+            ax_rg.hist(
+                _gen_ok, bins=bins, density=True, alpha=0.55, color=ACC_GEN, label="Gen",
+                edgecolor=HIST_FILLED_EDGE_COLOR,
+            )
     ax_rg.set_xlim(rg_xlim)
     if rg_ylim is not None:
         ax_rg.set_ylim(rg_ylim)

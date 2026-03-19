@@ -72,6 +72,7 @@ plotting:
   gen_decode_batch_size: 256
   sample_variance: [1]   # scoring uses variance 1 only
   num_reconstruction_samples: 5
+  plot_dpi: 150   # DPI for saved PNGs (plotting + analysis figures)
   max_train: 5000
   max_test: 5000
   save_data: true
