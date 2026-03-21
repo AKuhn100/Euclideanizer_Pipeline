@@ -31,6 +31,7 @@ from .plot_config import (
     FONT_SIZE_SMALL,
     FONT_SIZE_TINY,
     PLOT_DPI,
+    HIST_BINS_DEFAULT,
     HIST_FILLED_EDGE_COLOR,
     LINEWIDTH_HIST_STEP,
     LINEWIDTH_SCALING_LOGLOG,
@@ -223,22 +224,22 @@ def plot_recon_statistics(
     fig, axes = plt.subplots(1, 3, figsize=(21, 6))
     bmax = max(np.percentile(true_bonds, 99), np.percentile(recon_bonds, 99))
     axes[0].hist(
-        recon_bonds, bins=60, alpha=0.42, label=label_recon, density=True, range=(0, bmax),
+        recon_bonds, bins=HIST_BINS_DEFAULT, alpha=0.42, label=label_recon, density=True, range=(0, bmax),
         color=recon_color, zorder=1, edgecolor=HIST_FILLED_EDGE_COLOR,
     )
     axes[0].hist(
-        true_bonds, bins=60, label=exp_label, density=True, range=(0, bmax), color=exp_color,
+        true_bonds, bins=HIST_BINS_DEFAULT, label=exp_label, density=True, range=(0, bmax), color=exp_color,
         histtype="step", lw=LINEWIDTH_HIST_STEP, zorder=4,
     )
     axes[0].set_title("Bond Lengths", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[0].legend(fontsize=FONT_SIZE_LEGEND)
     rmax = max(np.percentile(true_rg, 99), np.percentile(recon_rg, 99)) * 1.1
     axes[1].hist(
-        recon_rg, bins=40, alpha=0.42, label=label_recon, density=True, range=(0, rmax),
+        recon_rg, bins=HIST_BINS_DEFAULT, alpha=0.42, label=label_recon, density=True, range=(0, rmax),
         color=recon_color, zorder=1, edgecolor=HIST_FILLED_EDGE_COLOR,
     )
     axes[1].hist(
-        true_rg, bins=40, label=exp_label, density=True, range=(0, rmax), color=exp_color,
+        true_rg, bins=HIST_BINS_DEFAULT, label=exp_label, density=True, range=(0, rmax), color=exp_color,
         histtype="step", lw=LINEWIDTH_HIST_STEP, zorder=4,
     )
     axes[1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
@@ -318,15 +319,15 @@ def plot_gen_analysis(
         np.percentile(train_b, 99), np.percentile(test_b, 99), np.percentile(gen_b, 99),
     )
     axes[0, 0].hist(
-        gen_b, bins=50, alpha=0.5, label=label_gen, density=True, range=(0, bmax),
+        gen_b, bins=HIST_BINS_DEFAULT, alpha=0.5, label=label_gen, density=True, range=(0, bmax),
         color=COLOR_GEN, edgecolor=HIST_FILLED_EDGE_COLOR, zorder=1,
     )
     axes[0, 0].hist(
-        train_b, bins=50, alpha=0.45, label="Train", density=True, range=(0, bmax),
+        train_b, bins=HIST_BINS_DEFAULT, alpha=0.45, label="Train", density=True, range=(0, bmax),
         histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TRAIN, zorder=2,
     )
     axes[0, 0].hist(
-        test_b, bins=50, alpha=0.45, label="Test", density=True, range=(0, bmax),
+        test_b, bins=HIST_BINS_DEFAULT, alpha=0.45, label="Test", density=True, range=(0, bmax),
         histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TEST, zorder=3,
     )
     _legend_train_test_gen(axes[0, 0], label_gen, fontsize=FONT_SIZE_SMALL)
@@ -335,15 +336,15 @@ def plot_gen_analysis(
         np.percentile(train_rg, 99), np.percentile(test_rg, 99), np.percentile(gen_rg, 99),
     ) * 1.1
     axes[0, 1].hist(
-        gen_rg, bins=30, alpha=0.5, label=label_gen, density=True, range=(0, rmax),
+        gen_rg, bins=HIST_BINS_DEFAULT, alpha=0.5, label=label_gen, density=True, range=(0, rmax),
         color=COLOR_GEN, edgecolor=HIST_FILLED_EDGE_COLOR, zorder=1,
     )
     axes[0, 1].hist(
-        train_rg, bins=30, alpha=0.45, label="Train", density=True, range=(0, rmax),
+        train_rg, bins=HIST_BINS_DEFAULT, alpha=0.45, label="Train", density=True, range=(0, rmax),
         histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TRAIN, zorder=2,
     )
     axes[0, 1].hist(
-        test_rg, bins=30, alpha=0.45, label="Test", density=True, range=(0, rmax),
+        test_rg, bins=HIST_BINS_DEFAULT, alpha=0.45, label="Test", density=True, range=(0, rmax),
         histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TEST, zorder=3,
     )
     axes[0, 1].set_title("Radius of Gyration", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
@@ -487,7 +488,7 @@ def plot_bond_length_by_genomic_distance(
             continue
         x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
         x_max = max(x_max, 1e-6)
-        bins = 50
+        bins = HIST_BINS_DEFAULT
         ax.hist(
             gen_vals, bins=bins, alpha=0.5, label=label_gen, density=True, range=(0, x_max),
             color=COLOR_GEN, edgecolor=HIST_FILLED_EDGE_COLOR, zorder=1,
@@ -562,7 +563,7 @@ def plot_pairwise_distance_by_lag_exp_vs_recon(
     nrows, ncols = GRID_SHAPE
     fig, axes_flat = plt.subplots(nrows, ncols, figsize=(4 * ncols, 4 * nrows))
     axes_flat = np.asarray(axes_flat).flatten()
-    bins = 50
+    bins = HIST_BINS_DEFAULT
     for idx, k in enumerate(k_values):
         ax = axes_flat[idx]
         exp_vals = distmap_distances_at_lag(exp_dm, int(k))

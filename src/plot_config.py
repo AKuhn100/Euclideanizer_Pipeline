@@ -40,10 +40,32 @@ PLOT_DPI = 150
 # Filled bar histograms: no outlines (matches recon_statistics; RMSD/Q/analysis use this)
 HIST_FILLED_EDGE_COLOR = "none"
 
-# Step-outline histograms (train/test/gen overlays; exp outline on recon_statistics)
+# Default bin count for 1D density histograms (recon_statistics, gen analysis, lag grids, RMSD/Q analysis, generative_capacity, …)
+HIST_BINS_DEFAULT = 50
+
+# Step-outline histograms (train/test/gen overlays; exp outline on recon_statistics; generative capacity overlays)
 LINEWIDTH_HIST_STEP = 2.4
 # Log-log scaling P(s) and comparable curve overlays (train/test/gen; recon vs exp)
 LINEWIDTH_SCALING_LOGLOG = 2.4
+
+# Generative capacity (stacked filled): one row per n_structures; vertical colorbar on the right.
+GEN_CAP_STACKED_FIGWIDTH = 11.0
+GEN_CAP_STACKED_ROW_HEIGHT = 3.05
+
+# Legacy overlay layout (tests / reference only; main pipeline uses stacked filled).
+GEN_CAP_FIGSIZE = (8.0, 3.7)
+GEN_CAP_GRIDSPEC_HEIGHT_RATIOS = (1, 6)
+GEN_CAP_GRIDSPEC_HSPACE = 0.22
+GEN_CAP_SUBPLOT_MARGINS = dict(left=0.11, right=0.96, top=0.86, bottom=0.14)
+
+# Sufficiency meta-analysis: horizontal colorbars (width = fraction of combined axes span).
+META_CBAR_WIDTH_FRAC = 0.75
+META_CBAR_HEIGHT_FRAC = 0.028
+META_DIST_CB_GAP = 0.075
+META_HEATMAP_CB_GAP = 0.21
+SUFFICIENCY_DIST_FIG_WIDTH = 14.0
+SUFFICIENCY_DIST_ROW_HEIGHT = 3.05
+SUFFICIENCY_HEATMAP_CELL_IN = 0.82
 
 # ---------------------------------------------------------------------------
 # Font and font sizes (use in every plotting call for consistency)

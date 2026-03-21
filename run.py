@@ -61,7 +61,12 @@ from src.config import (
     pipeline_config_path,
     TRAINING_CRITICAL_KEYS,
 )
-from src.metrics import compute_exp_statistics
+from src.metrics import (
+    compute_exp_statistics,
+    distmap_bond_lengths,
+    distmap_rg,
+    distmap_scaling,
+)
 from src.train_distmap import train_distmap
 from src.train_euclideanizer import train_euclideanizer
 from src.plotting import (
@@ -812,6 +817,34 @@ def _seed_split_dir_name(
     return "_".join(parts)
 
 
+def _ensure_per_seed_pipeline_config(
+    *,
+    need_train: bool,
+    output_dir: str,
+    cfg: dict,
+    seed: int,
+    training_split: float,
+    max_data: int | None,
+) -> None:
+    """Write per-seed ``pipeline_config.yaml`` before any code creates subdirs under ``output_dir``.
+
+    Seed-level caches (train/test exp stats, test→train RMSD/Q, etc.) call ``os.makedirs`` under
+    ``output_dir``. If that happens before this file exists, resume validation sees a directory
+    without a config and aborts. Call this at the start of any path that may materialize
+    ``output_dir`` (single-GPU seed runs, multi-GPU main-process precompute, worker setup).
+    """
+    if not need_train:
+        return
+    if os.path.isfile(pipeline_config_path(output_dir)):
+        return
+    effective_cfg = {
+        **cfg,
+        "output_dir": output_dir,
+        "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data},
+    }
+    save_pipeline_config(effective_cfg, output_dir)
+
+
 EXP_STATS_CACHE_DIR = "experimental_statistics"
 EXP_STATS_META = "meta.json"
 EXP_STATS_NPZ = "exp_stats.npz"
@@ -822,6 +855,48 @@ EXP_STATS_SPLIT_META = "split_meta.json"
 
 def _exp_stats_cache_dir(output_dir: str) -> str:
     return os.path.join(output_dir, EXP_STATS_CACHE_DIR)
+
+
+def _distmaps_to_upper(distmaps: np.ndarray) -> np.ndarray:
+    """(B,N,N) -> (B,tri) upper triangles for compact cache storage."""
+    n = distmaps.shape[-1]
+    ii, jj = np.triu_indices(n, k=1)
+    return distmaps[:, ii, jj].astype(np.float32, copy=False)
+
+
+def _upper_to_distmaps(upper: np.ndarray, num_atoms: int) -> np.ndarray:
+    """(B,tri) -> (B,N,N) symmetric distance maps."""
+    b = upper.shape[0]
+    out = np.zeros((b, num_atoms, num_atoms), dtype=np.float32)
+    ii, jj = np.triu_indices(num_atoms, k=1)
+    out[:, ii, jj] = upper
+    out[:, jj, ii] = upper
+    return out
+
+
+def _materialize_exp_stats_distmaps(stats: dict) -> dict:
+    """Ensure loaded cache dict has 'exp_distmaps' in full symmetric form."""
+    if "exp_distmaps" in stats:
+        return stats
+    if "exp_distmaps_upper" in stats:
+        num_atoms = int(stats["num_atoms_in_stats"]) if "num_atoms_in_stats" in stats else None
+        if num_atoms is None:
+            raise ValueError("Cached stats missing num_atoms_in_stats for exp_distmaps_upper.")
+        out = dict(stats)
+        out["exp_distmaps"] = _upper_to_distmaps(np.asarray(stats["exp_distmaps_upper"]), num_atoms)
+        return out
+    return stats
+
+
+def _compress_exp_stats_for_cache(stats: dict) -> dict:
+    """Convert exp_distmaps -> exp_distmaps_upper for on-disk cache."""
+    out = dict(stats)
+    if "exp_distmaps" in out:
+        dm = np.asarray(out["exp_distmaps"], dtype=np.float32)
+        out["exp_distmaps_upper"] = _distmaps_to_upper(dm)
+        out["num_atoms_in_stats"] = np.int32(dm.shape[-1])
+        del out["exp_distmaps"]
+    return out
 
 
 def _output_dir_has_pipeline_content(output_dir: str) -> bool:
@@ -877,7 +952,7 @@ def _load_exp_stats_cache(output_dir: str, data_path: str, num_structures: int, 
         if meta.get("num_structures") != num_structures or meta.get("num_atoms") != num_atoms:
             return None
         with np.load(npz_path, allow_pickle=False) as data:
-            return {k: data[k] for k in data.files}
+            return _materialize_exp_stats_distmaps({k: data[k] for k in data.files})
     except (json.JSONDecodeError, OSError, KeyError, zlib.error, zipfile.BadZipFile):
         return None
 
@@ -906,14 +981,15 @@ def _try_load_stats_only(
         return None, None, None
     try:
         with np.load(npz_path, allow_pickle=False) as data:
-            exp_stats = {k: data[k] for k in data.files}
+            exp_stats = _materialize_exp_stats_distmaps({k: data[k] for k in data.files})
     except (OSError, zlib.error, zipfile.BadZipFile):
         return None, None, None
     for entry in run_entries:
         seed, training_split, max_data = _entry_seed_split_max(entry)
         output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+        expected_n = num_structures if max_data is None else min(num_structures, int(max_data))
         train_s, test_s = _load_exp_stats_split_cache(
-            output_dir, data_path, num_structures, num_atoms, seed, training_split,
+            output_dir, data_path, expected_n, num_atoms, seed, training_split,
             max_train=max_train, max_test=max_test,
         )
         if train_s is None or test_s is None:
@@ -934,7 +1010,7 @@ def _save_exp_stats_cache(output_dir: str, data_path: str, num_structures: int, 
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
     npz_path = os.path.join(cache_dir, EXP_STATS_NPZ)
-    np.savez_compressed(npz_path, **exp_stats)
+    np.savez_compressed(npz_path, **_compress_exp_stats_for_cache(exp_stats))
 
 
 def _load_exp_stats_split_cache(
@@ -969,9 +1045,9 @@ def _load_exp_stats_split_cache(
         if cached_mt != max_train or cached_mc != max_test:
             return None, None
         with np.load(train_path, allow_pickle=False) as data:
-            train_stats = {k: data[k] for k in data.files}
+            train_stats = _materialize_exp_stats_distmaps({k: data[k] for k in data.files})
         with np.load(test_path, allow_pickle=False) as data:
-            test_stats = {k: data[k] for k in data.files}
+            test_stats = _materialize_exp_stats_distmaps({k: data[k] for k in data.files})
         return train_stats, test_stats
     except (json.JSONDecodeError, OSError, KeyError, zlib.error, zipfile.BadZipFile):
         return None, None
@@ -1004,8 +1080,8 @@ def _save_exp_stats_split_cache(
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
-    np.savez_compressed(os.path.join(cache_dir, EXP_STATS_TRAIN_NPZ), **train_stats)
-    np.savez_compressed(os.path.join(cache_dir, EXP_STATS_TEST_NPZ), **test_stats)
+    np.savez_compressed(os.path.join(cache_dir, EXP_STATS_TRAIN_NPZ), **_compress_exp_stats_for_cache(train_stats))
+    np.savez_compressed(os.path.join(cache_dir, EXP_STATS_TEST_NPZ), **_compress_exp_stats_for_cache(test_stats))
 
 
 def _model_dir(run_root: str) -> str:
@@ -1379,64 +1455,17 @@ def _euclideanizer_plotting_all_present(
 def _euclideanizer_analysis_all_present(
     run_dir_eu: str,
     resume: bool,
-    analysis_cfg: dict | None = None,
+    analysis_cfg: dict,
     metrics: list | None = None,
-    *,
-    do_rmsd: bool = False,
-    variance_list: list | None = None,
-    num_samples_list: list | None = None,
-    do_rmsd_recon: bool = False,
-    max_recon_train_list: list | None = None,
-    max_recon_test_list: list | None = None,
-    do_q: bool = False,
-    do_q_recon: bool = False,
-    q_variance_list: list | None = None,
-    q_num_samples_list: list | None = None,
-    q_max_recon_train_list: list | None = None,
-    q_max_recon_test_list: list | None = None,
-    do_coord_clustering_gen: bool = False,
-    do_coord_clustering_recon: bool = False,
-    coord_clustering_variance_list: list | None = None,
-    coord_clustering_num_samples_list: list | None = None,
-    coord_clustering_max_recon_train_list: list | None = None,
-    coord_clustering_max_recon_test_list: list | None = None,
-    do_distmap_clustering_gen: bool = False,
-    do_distmap_clustering_recon: bool = False,
-    distmap_clustering_variance_list: list | None = None,
-    distmap_clustering_num_samples_list: list | None = None,
-    distmap_clustering_max_recon_train_list: list | None = None,
-    distmap_clustering_max_recon_test_list: list | None = None,
 ) -> bool:
-    """True if resume and all enabled metric (rmsd, q, coord_clustering, distmap_clustering, latent) analysis outputs we would generate already exist."""
+    """True if resume and all enabled metric (rmsd, q, clustering, latent, generative capacity) outputs already exist.
+
+    Callers must pass the same-shaped ``analysis_cfg`` as pipeline config (or use
+    ``_analysis_cfg_from_need_data_kwargs`` for tests / need-data scans); there is no separate
+    flattened-kw API so latent/GC toggles cannot be accidentally omitted.
+    """
     if not resume:
         return True
-    if analysis_cfg is None:
-        analysis_cfg = _analysis_cfg_from_need_data_kwargs({
-            "do_rmsd": do_rmsd,
-            "variance_list": variance_list or [],
-            "num_samples_list": num_samples_list or [],
-            "do_rmsd_recon": do_rmsd_recon,
-            "max_recon_train_list": max_recon_train_list,
-            "max_recon_test_list": max_recon_test_list,
-            "do_q": do_q,
-            "do_q_recon": do_q_recon,
-            "q_variance_list": q_variance_list or [],
-            "q_num_samples_list": q_num_samples_list or [],
-            "q_max_recon_train_list": q_max_recon_train_list,
-            "q_max_recon_test_list": q_max_recon_test_list,
-            "do_coord_clustering_gen": do_coord_clustering_gen,
-            "do_coord_clustering_recon": do_coord_clustering_recon,
-            "coord_clustering_variance_list": coord_clustering_variance_list or [],
-            "coord_clustering_num_samples_list": coord_clustering_num_samples_list or [],
-            "coord_clustering_max_recon_train_list": coord_clustering_max_recon_train_list,
-            "coord_clustering_max_recon_test_list": coord_clustering_max_recon_test_list,
-            "do_distmap_clustering_gen": do_distmap_clustering_gen,
-            "do_distmap_clustering_recon": do_distmap_clustering_recon,
-            "distmap_clustering_variance_list": distmap_clustering_variance_list or [],
-            "distmap_clustering_num_samples_list": distmap_clustering_num_samples_list or [],
-            "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
-            "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
-        })
     specs = metrics if metrics is not None else ANALYSIS_METRICS
     for spec in specs:
         gen_cfg = analysis_cfg[spec.gen_key]
@@ -1516,6 +1545,8 @@ def _pipeline_need_data(
     q_num_samples_list: list | None = None,
     q_max_recon_train_list: list | None = None,
     q_max_recon_test_list: list | None = None,
+    do_generative_capacity_rmsd: bool = False,
+    do_generative_capacity_q: bool = False,
 ) -> bool:
     """True if any run is incomplete or any plot/analysis output is missing (so we must load something)."""
     return _pipeline_data_needs(
@@ -1527,6 +1558,8 @@ def _pipeline_need_data(
         do_q=do_q, do_q_recon=do_q_recon,
         q_variance_list=q_variance_list or [], q_num_samples_list=q_num_samples_list or [],
         q_max_recon_train_list=q_max_recon_train_list or [], q_max_recon_test_list=q_max_recon_test_list or [],
+        do_generative_capacity_rmsd=do_generative_capacity_rmsd,
+        do_generative_capacity_q=do_generative_capacity_q,
     ).need_any()
 
 
@@ -1580,10 +1613,12 @@ def _pipeline_data_needs(
     distmap_clustering_max_recon_train_list: list | None = None,
     distmap_clustering_max_recon_test_list: list | None = None,
     do_latent: bool = False,
+    do_generative_capacity_rmsd: bool = False,
+    do_generative_capacity_q: bool = False,
 ) -> PipelineDataNeeds:
     """
     Scan pipeline outputs and return which data is required.
-    - need_coords: any run incomplete, or any reconstruction / recon_statistics / rmsd / q analysis missing.
+    - need_coords: any run incomplete, or any reconstruction / recon_statistics / rmsd / q / generative capacity / … analysis missing.
     - need_exp_stats: any gen_variance plot missing.
     - need_train_test_stats: any recon_statistics or gen_variance missing.
     """
@@ -1616,6 +1651,8 @@ def _pipeline_data_needs(
         "distmap_clustering_max_recon_train_list": distmap_clustering_max_recon_train_list,
         "distmap_clustering_max_recon_test_list": distmap_clustering_max_recon_test_list,
         "do_latent": do_latent,
+        "do_generative_capacity_rmsd": do_generative_capacity_rmsd,
+        "do_generative_capacity_q": do_generative_capacity_q,
     })
     for entry in run_entries:
         seed, training_split, max_data = _entry_seed_split_max(entry)
@@ -2733,6 +2770,34 @@ def _apply_max_data_subset(coords_np: np.ndarray, max_data: int | None, seed: in
     return coords_np[idx]
 
 
+def _max_data_indices(total_n: int, max_data: int | None, seed: int) -> np.ndarray:
+    if max_data is None or max_data >= total_n:
+        return np.arange(total_n, dtype=np.int64)
+    rng = np.random.default_rng(int(seed))
+    return rng.choice(total_n, size=max_data, replace=False).astype(np.int64)
+
+
+def _derive_stats_from_global_exp(
+    global_exp_stats: dict,
+    indices: np.ndarray,
+    *,
+    max_sep: int,
+    avg_map_sample: int,
+) -> dict:
+    """Derive exp stats for a subset by slicing global exp_distmaps."""
+    sub_dm = np.asarray(global_exp_stats["exp_distmaps"])[np.asarray(indices)]
+    s, sc = distmap_scaling(sub_dm, max_sep)
+    n_sample = min(avg_map_sample, len(sub_dm))
+    return {
+        "exp_distmaps": sub_dm,
+        "exp_bonds": distmap_bond_lengths(sub_dm),
+        "exp_rg": distmap_rg(sub_dm),
+        "genomic_distances": s,
+        "exp_scaling": sc,
+        "avg_exp_map": np.mean(sub_dm[:n_sample], axis=0),
+    }
+
+
 def _run_one_distmap_group(
     seed: int,
     max_data: int | None,
@@ -3515,6 +3580,9 @@ def _run_one_seed(
 ) -> None:
     """Run the full pipeline for a single (seed, training_split): DistMap segments, Euclideanizer segments, plotting, analysis."""
     output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+    subset_indices_global = None
+    if exp_stats is not None and "exp_distmaps" in exp_stats:
+        subset_indices_global = _max_data_indices(np.asarray(exp_stats["exp_distmaps"]).shape[0], max_data, seed)
     if coords_np is not None and coords is not None:
         coords_np = _apply_max_data_subset(coords_np, max_data, seed)
         coords = torch.tensor(coords_np, dtype=torch.float32).to(device)
@@ -3523,8 +3591,14 @@ def _run_one_seed(
     split_seed = seed
     effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data}}
 
-    if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
-        save_pipeline_config(effective_cfg, output_dir)
+    _ensure_per_seed_pipeline_config(
+        need_train=need_train,
+        output_dir=output_dir,
+        cfg=cfg,
+        seed=seed,
+        training_split=training_split,
+        max_data=max_data,
+    )
 
     if data_path:
         torch.manual_seed(split_seed)
@@ -3547,10 +3621,25 @@ def _run_one_seed(
                     train_indices = train_indices[: plot_max_train]
                 if plot_max_test is not None:
                     test_indices = test_indices[: plot_max_test]
-                _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
                 data_cfg = cfg["data"]
-                train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
+                if exp_stats is not None and subset_indices_global is not None:
+                    _log("Deriving train/test experimental statistics from global cache...", since_start=time.time() - pipeline_start, style="info")
+                    train_global_idx = subset_indices_global[train_indices]
+                    test_global_idx = subset_indices_global[test_indices]
+                    train_stats = _derive_stats_from_global_exp(
+                        exp_stats, train_global_idx,
+                        max_sep=min(num_atoms - 1, 999),
+                        avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                    )
+                    test_stats = _derive_stats_from_global_exp(
+                        exp_stats, test_global_idx,
+                        max_sep=min(num_atoms - 1, 999),
+                        avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                    )
+                else:
+                    _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
+                    train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                    test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
                     train_stats, test_stats,
@@ -3682,12 +3771,25 @@ def _worker(
                     if plot_mc is not None:
                         test_indices = test_indices[: plot_mc]
                     data_cfg = shared_args["cfg"]["data"]
-                    train_stats = compute_exp_statistics(
-                        coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices
-                    )
-                    test_stats = compute_exp_statistics(
-                        coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices
-                    )
+                    if exp_stats is not None and "exp_distmaps" in exp_stats:
+                        subset_idx = _max_data_indices(np.asarray(exp_stats["exp_distmaps"]).shape[0], max_data, seed)
+                        train_stats = _derive_stats_from_global_exp(
+                            exp_stats, subset_idx[train_indices],
+                            max_sep=min(num_atoms_run - 1, 999),
+                            avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                        )
+                        test_stats = _derive_stats_from_global_exp(
+                            exp_stats, subset_idx[test_indices],
+                            max_sep=min(num_atoms_run - 1, 999),
+                            avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                        )
+                    else:
+                        train_stats = compute_exp_statistics(
+                            coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices
+                        )
+                        test_stats = compute_exp_statistics(
+                            coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices
+                        )
                     _save_exp_stats_split_cache(
                         output_dir, data_path, num_structures_run, num_atoms_run,
                         seed, training_split,
@@ -3815,9 +3917,14 @@ def _run_multi_gpu_tasks(
         coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device) if coords_np_run is not None else None
         num_structures_run = len(coords_np_run) if coords_np_run is not None else num_structures
         num_atoms_run = coords_run.size(1) if coords_run is not None else num_atoms
-        effective_cfg = {**cfg, "output_dir": output_dir, "data": {**cfg["data"], "split_seed": seed, "training_split": training_split, "max_data": max_data}}
-        if need_train and (not os.path.isdir(output_dir) or not os.path.isfile(pipeline_config_path(output_dir))):
-            save_pipeline_config(effective_cfg, output_dir)
+        _ensure_per_seed_pipeline_config(
+            need_train=need_train,
+            output_dir=output_dir,
+            cfg=cfg,
+            seed=seed,
+            training_split=training_split,
+            max_data=max_data,
+        )
         if data_path and coords is not None and (do_plot or do_rmsd or do_q or do_q_recon):
             plot_mt = plot_cfg["max_train"]
             plot_mc = plot_cfg["max_test"]
@@ -4307,7 +4414,20 @@ def main():
         do_rmsd_recon = analysis_cfg["rmsd_recon"]["enabled"]
         do_q_recon = analysis_cfg["q_recon"]["enabled"]
         needs = PipelineDataNeeds(
-            need_coords=(need_train or do_plot or do_rmsd or do_rmsd_recon or do_q or do_q_recon or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg),
+            need_coords=(
+                need_train
+                or do_plot
+                or do_rmsd
+                or do_rmsd_recon
+                or do_q
+                or do_q_recon
+                or do_coord_clustering_gen
+                or do_coord_clustering_recon_cfg
+                or do_distmap_clustering_gen
+                or do_distmap_clustering_recon_cfg
+                or do_gc_rmsd
+                or do_gc_q
+            ),
             need_exp_stats=do_plot,
             need_train_test_stats=do_plot,
         ) if data_path else PipelineDataNeeds(need_coords=False, need_exp_stats=False, need_train_test_stats=False)
@@ -4328,6 +4448,8 @@ def main():
             distmap_clustering_variance_list=distmap_clustering_variance_list, distmap_clustering_num_samples_list=distmap_clustering_num_samples_list,
             distmap_clustering_max_recon_train_list=distmap_clustering_max_recon_train_list, distmap_clustering_max_recon_test_list=distmap_clustering_max_recon_test_list,
             do_latent=analysis_cfg["latent"]["enabled"],
+            do_generative_capacity_rmsd=do_gc_rmsd,
+            do_generative_capacity_q=do_gc_q,
         )
     # Run pipeline when any output is missing (same as plotting/analysis: overwrite is handled by upfront delete, then need = output missing)
     scoring_needs_run = scoring_enabled and not _has_any_scoring_output(base_output_dir, run_entries)
@@ -4342,9 +4464,22 @@ def main():
     if need_any and (do_plot or do_rmsd or do_rmsd_recon_cfg or do_q or do_q_recon_cfg or do_gc_rmsd or do_gc_q or do_coord_clustering_gen or do_coord_clustering_recon_cfg or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg or scoring_needs_run or meta_needs_run):
         _delete_dashboard(base_output_dir)
 
-    # Scoring-only: no coords/stats needed; run scoring for every run without loading data
-    scoring_only = need_any and scoring_needs_run and not needs.need_any()
-    meta_only = need_any and meta_needs_run and not needs.need_any() and not scoring_needs_run
+    # Scoring-only: no coords/stats needed; run scoring for every run without loading data.
+    # Not "scoring only" if generative capacity must run (needs coords + models on the full seed loop).
+    scoring_only = (
+        need_any
+        and scoring_needs_run
+        and not needs.need_any()
+        and not gc_needs_run
+    )
+    # Not "meta only" if generative capacity (or scoring) must run — those require the normal seed loop / data load.
+    meta_only = (
+        need_any
+        and meta_needs_run
+        and not needs.need_any()
+        and not scoring_needs_run
+        and not gc_needs_run
+    )
 
     stats_only_ok = False
     if need_any and not scoring_only and not needs.need_coords and (needs.need_exp_stats or needs.need_train_test_stats):
@@ -4487,6 +4622,14 @@ def main():
         for entry in run_entries:
             seed, training_split, max_data = _entry_seed_split_max(entry)
             output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+            _ensure_per_seed_pipeline_config(
+                need_train=need_train,
+                output_dir=output_dir,
+                cfg=cfg,
+                seed=seed,
+                training_split=training_split,
+                max_data=max_data,
+            )
             coords_np_run = _apply_max_data_subset(coords_np, max_data, seed)
             coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
             num_structures_run = len(coords_np_run)
@@ -4504,8 +4647,21 @@ def main():
                 if plot_mc is not None:
                     test_indices = test_indices[: plot_mc]
                 data_cfg = cfg["data"]
-                train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
+                if exp_stats is not None and "exp_distmaps" in exp_stats:
+                    subset_idx = _max_data_indices(np.asarray(exp_stats["exp_distmaps"]).shape[0], max_data, seed)
+                    train_stats = _derive_stats_from_global_exp(
+                        exp_stats, subset_idx[train_indices],
+                        max_sep=min(num_atoms_run - 1, 999),
+                        avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                    )
+                    test_stats = _derive_stats_from_global_exp(
+                        exp_stats, subset_idx[test_indices],
+                        max_sep=min(num_atoms_run - 1, 999),
+                        avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                    )
+                else:
+                    train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                    test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                     train_stats, test_stats,
@@ -4524,6 +4680,14 @@ def main():
             for entry in run_entries:
                 seed, training_split, max_data = _entry_seed_split_max(entry)
                 output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+                _ensure_per_seed_pipeline_config(
+                    need_train=need_train,
+                    output_dir=output_dir,
+                    cfg=cfg,
+                    seed=seed,
+                    training_split=training_split,
+                    max_data=max_data,
+                )
                 coords_np_run = _apply_max_data_subset(coords_np, max_data, seed)
                 coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
                 cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, _ref_mt, _ref_mc))

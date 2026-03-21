@@ -1,6 +1,25 @@
 # Changelog
 
+## 2026-03-21
+
+- **Sufficiency heatmap colorbar:** Label is **“Normalized Median”** only (removed long parenthetical). (`meta_analysis.py`, `synthetic_plot_sandbox/generate_synthetic_plots.py`, `DATA_SUFFICIENCY_META_ANALYSIS.md`)
+
+- **Dashboard Meta-Analysis view:** New **View → Meta-Analysis** page: full-width heatmap + stacked distribution figures per seed; manifest field **`sufficiency_meta`** with copied asset paths (`dashboard.py` scan + `_copy_assets_and_update_paths`; tests in `test_dashboard.py`).
+
+- **Sufficiency distribution figures:** Training split **%** label drawn **top-left on both** RMSD and Q columns (`meta_analysis.py`; `synthetic_plot_sandbox/generate_synthetic_plots.py`). **Meta-analysis dashboard sandbox:** full-width layout and **Title Case** UI labels (`dashboard_sandbox/build_meta_analysis_page.py`).
+
+- **Dashboard:** Euclideanizer **detail** view block order matches **analysis** config: coord/distmap clusterings → **generative capacity** → **latent** → **meta_analysis_sufficiency** (JS `blockTypeOrder`; `_blocks_for_euclideanizer_run` appends latent after GC). **`dashboard_sandbox/`** — `build_meta_analysis_page.py` builds a static **Meta-Analysis** preview (`outputs/meta_analysis/index.html` + copied assets); **`dashboard_sandbox/README.md`**. (`dashboard.py`, CHANGELOG, STYLE_GUIDE)
+
+## 2026-03-20
+
+- **Sufficiency meta-analysis figures:** Distributions are **stacked filled** histograms (one row per `training_split`, two columns RMSD|Q), **horizontal** training-split colorbar **below** panels (~75% width, label above strip). Heatmaps: **`aspect="equal"`**, x-label **“Max Structures”**, **per-panel** min–max normalization to shared viridis **0–1** with explanatory colorbar label. (`meta_analysis.py`, `plot_config.py` additions `META_*`, `SUFFICIENCY_*`; `DATA_SUFFICIENCY_META_ANALYSIS.md`, STYLE_GUIDE)
+- **Generative capacity figures:** Main pipeline uses **stacked filled** histograms (largest `n` top), **vertical** `log10(n)` colorbar right of stack; no figure suptitle. **`GEN_CAP_STACKED_*`** in `plot_config.py`; legacy **`GEN_CAP_FIGSIZE`** / gridspec kept for reference. **`_distribution_panel`** retained for **`test_generative_capacity`**. (`generative_capacity.py`, `GENERATIVE_CAPACITY_ANALYSIS.md`, `README.md`, STYLE_GUIDE)
+
 ## 2026-03-19
+
+- **Resume / data needs (generative capacity + meta-analysis):** `_pipeline_data_needs` now passes **`do_generative_capacity_rmsd` / `do_generative_capacity_q`** into `_analysis_cfg_from_need_data_kwargs`, so missing GC figures set **`need_coords`** like other analysis. Fixes overwrite/regen GC together with sufficiency meta-analysis incorrectly taking the **meta-only** branch (no data load, GC never re-run). **`meta_only` / `scoring_only`** also require **`not gc_needs_run`**. Non-resume `PipelineDataNeeds` includes **`do_gc_rmsd` / `do_gc_q`** in `need_coords`. **`_euclideanizer_analysis_all_present`** no longer accepts flattened kwargs when `analysis_cfg` is omitted (tests use **`_analysis_cfg_for_presence`**). (`run.py`, `tests/test_pipeline_behavior.py`, STYLE_GUIDE)
+
+- **Generative capacity figures:** **`GEN_CAP_FIGSIZE`** (8"×~3.7") and gridspec margins match RMSD/Q **width** and ~**one panel** height; **horizontal** full-width colorbar **above** the histogram with Title Case label on top of the strip; plain axis formatting (no `1e7` offset). Overlapping **step** histograms (`LINEWIDTH_HIST_STEP`); **`HIST_BINS_DEFAULT`**. (`plot_config.py`, `generative_capacity.py`; removed `COLORBAR_VERTICAL_*`.)
 
 - **Implementation (Sufficiency meta-analysis):** Added pipeline support for `meta_analysis.sufficiency` and `max_data` config keys. New module `src/meta_analysis.py` builds per-seed sufficiency outputs under `meta_analysis/sufficiency/seed_<n>/` (`distributions/max_data_*/distributions_rmsd_q.png` and `heatmap/sufficiency_heatmap_rmsd_q.png`, plus optional PDF copies). `run.py` now supports deferred post-scoring NPZ cleanup for required RMSD/Q gen inputs when sufficiency meta-analysis is enabled, runs sufficiency meta-analysis near pipeline end, and finalizes deferred cleanup afterward.
 - **Config schema cleanup:** Moved `max_data` from top-level config into `data.max_data` (no backward-compat path), updated schema validation and helper access in `src/config.py`, and updated all sample/test/dev config YAMLs plus the sufficiency spec YAML examples to use `data.max_data`.
@@ -15,6 +34,8 @@
 - **Schema + docs + dashboard/tests:** Updated `src/config.py` required analysis keys/validation for generative capacity blocks; updated `src/dashboard.py` to scan and render `generative_capacity_rmsd` / `generative_capacity_q` blocks; added `tests/test_generative_capacity.py` (nested subsampling monotonicity) and dashboard coverage for new block discovery. Updated `README.md`, `dev/STYLE_GUIDE.md`, and config YAMLs in `samples/`, `tests/`, and `dev/configs/` to include the new blocks.
 - **Config ordering cleanup:** Reordered analysis blocks in all pipeline YAML configs so `generative_capacity_rmsd` and `generative_capacity_q` appear directly before `latent` for consistent readability (`samples/`, `tests/`, and `dev/configs/` files).
 - **Max-data sweep support:** Removed the single-value guard for `data.max_data` and enabled full `seed × training_split × max_data` run matrix behavior in `run.py`. Seed run directories now include a max-data suffix when sweeping (e.g. `seed_15_split_0.9_maxdata_500`), with matching dashboard scan support and a dashboard test for split+max_data directory parsing.
+- **Experimental statistics cache optimization:** Updated split-cache generation to derive train/test stats from global `exp_stats` on cache miss by slicing global `exp_distmaps` indices, then recomputing derived arrays (`exp_bonds`, `exp_rg`, `exp_scaling`, `avg_exp_map`) for that slice. Added compact cache storage for distance maps as upper triangles (`exp_distmaps_upper` + `num_atoms_in_stats`) in both global and split caches, with automatic materialization back to full `exp_distmaps` on load so downstream plotting/scoring invocations remain compatible.
+- **Resume / multi-GPU:** Per-seed directories could exist with only `experimental_statistics/` (cache precompute) and no `pipeline_config.yaml`, so resume failed before data load. Added `_ensure_per_seed_pipeline_config()` so each seed’s `pipeline_config.yaml` is written before any cache subdirs are created. (`run.py`, `tests/test_pipeline_behavior.py`, `dev/STYLE_GUIDE.md`, README)
 
 ## 2026-03-18
 

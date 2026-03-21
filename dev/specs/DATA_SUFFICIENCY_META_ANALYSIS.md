@@ -183,17 +183,13 @@ usual `save_data` flags of those analysis blocks:
 ## 6. Distribution Figures
 
 For each seed directory and each `max_data` condition that has the required analysis
-NPZ files for **both** metrics, the block produces a **single combined 2-panel
-distribution figure**:
-
-- Left panel: KDE of per-test-structure `min_rmsd` values (`gen_to_test` from
-  `analysis/rmsd/.../rmsd_data.npz`)
-- Right panel: KDE of per-test-structure `max_q` values (`gen_to_test` from
-  `analysis/q/.../q_data.npz`)
-
-Inside the combined figure, one KDE curve per available `training_split` value is
-overlaid. RMSD and Q use the **same** viridis colormap and the **same**
-normalization range `[0, 1]`.
+NPZ files for **both** metrics, the block produces a **single combined figure** with
+**two columns** (min-RMSD | max-Q) and **one row per `training_split`** (largest split
+at the top). Each row uses **borderless filled** density histograms
+(`HIST_BINS_DEFAULT` bins; edges from the 1st–99th percentile pooled over splits for
+that `max_data`). Row color encodes `training_split` via viridis on `[0, 1]`; a
+percentage label appears in the top-left of the left panel for that row. Y limits are
+matched within each column so rows are comparable.
 
 Saved as:
 
@@ -202,31 +198,20 @@ Saved as:
 
 ### Layout
 
-**Left panel (min-RMSD):**
+**Columns:**
 
-- X axis: `min-RMSD` (Å)
-- Y axis: density
-- KDE curve color: viridis mapped from `training_split` (normalized to `[0, 1]`)
-- Fill under KDE: same color, alpha=0.12
-- Panel title: `"Min RMSD | max_data={max_data}"`
+- Left: histogram of per-test-structure `min_rmsd` (`gen_to_test` from
+  `analysis/rmsd/.../rmsd_data.npz`); x label on the bottom row only.
+- Right: histogram of per-test-structure `max_q` (`gen_to_test` from
+  `analysis/q/.../q_data.npz`); Q axis range clipped to `[0, 1]` where needed.
 
-**Right panel (max-Q):**
+**Titles (top row):** `"Min RMSD | Max Data={max_data}"` and `"Max Q | Max Data={max_data}"`.
 
-- X axis: `max-Q` (0–1)
-- Y axis: density
-- KDE curve color: viridis mapped from `training_split` (normalized to `[0, 1]`)
-- Fill under KDE: same color, alpha=0.12
-- Panel title: `"Max Q | max_data={max_data}"`
+**Training-split colorbar:**
 
-**Shared viridis colormap + colorbar:**
-
-- Normalize `training_split` linearly to `[0, 1]` across the available
-  `training_split` set for this seed.
-- Use the normalized value as the input to viridis so the colormap is effectively
-  used from 0 to 1.
-- Colorbar along the bottom of the combined figure:
-  - Label: `"Training Split"`
-  - Ticks at each available `training_split` value formatted as percentages.
+- Horizontal strip **below** the bottom row of panels, **~75%** of the combined axes
+  width, centered; label **“Training Split”** **above** the strip; ticks **0%** and
+  **100%** (colormap spans the full viridis range).
 
 **Missing-condition behavior:**
 
@@ -235,13 +220,6 @@ Saved as:
   file(s).
 - If no `(max_data, training_split)` combos have both metrics for a given `max_data`,
   skip the combined distribution figure for that `max_data`.
-
-### KDE parameters
-
-- Bandwidth: Scott's rule
-- X range: clipped at the 1st and 99th percentile computed over the available
-  `training_split` values for that metric (for this fixed `max_data`), to prevent
-  long tails from compressing the region of interest.
 
 ---
 
@@ -265,20 +243,19 @@ Saved as:
 
 ### Layout
 
-- X axis: `max_data` values (ordered numerically)
-- Y axis: `training_split` values (formatted as percentages, ordered from low to high)
+- X axis label on **each** panel: **“Max Structures”** (tick labels are the numeric
+  `max_data` values, ordered).
+- Y axis: `training_split` (percentages, low at bottom, high at top).
+- **`imshow` aspect:** `equal` so cells are square; figure width scales with grid size
+  (`plot_config.SUFFICIENCY_HEATMAP_CELL_IN`).
 
 **Shared colorbar + viridis normalization:**
 
-- Use viridis with a single shared colorbar along the bottom of the combined
-  heatmap figure.
-- Both heatmap panels use a fixed color scale range of `0` to `1`:
-  - Right panel (median max-Q): values are naturally in `[0, 1]`.
-  - Left panel (median min-RMSD): values use the original RMSD units (no
-    normalization). Values below 0 are clipped to 0 and values above 1 are clipped
-    to 1 for coloring.
-- This preserves direct interpretation of median min-RMSD values in the
-  scientifically relevant range `[0, 1]`, while saturating values >1.
+- One horizontal colorbar below both panels; viridis on **`0` … `1`**.
+- **Per-panel normalization:** within each heatmap, finite medians are linearly
+  mapped to `[0, 1]` using that panel’s min and max (masked cells excluded), so the
+  two panels are comparable in *relative* terms. Colorbar label: **“Normalized Median”**
+  (no extra caption on the figure).
 
 Panel titles:
 
@@ -289,21 +266,20 @@ Panel titles:
 
 ## 8. Dashboard Integration
 
-Add a **"Meta-Analysis"** page to the dashboard.
+The pipeline dashboard includes a **Meta-Analysis** view (View → **Meta-Analysis**):
 
-### Layout
+- **Full-width layout** per seed: median heatmap (`sufficiency_heatmap_rmsd_q.png`)
+  and, when present, **all** `distributions/max_data_*/distributions_rmsd_q.png`
+  figures in a vertical stack (Title Case section labels in the UI).
+- Assets are copied into `dashboard/assets/` like other dashboard figures; the
+  manifest carries a per-seed **`sufficiency_meta`** object with `heatmap` and
+  `distributions` paths.
 
-For each `seed_{seed}` directory, show **one static combined panel** that loads the
-heatmap image:
+**Seed detail** view still lists the sufficiency heatmap as a normal block (and
+aggregated child-run blocks) when the user opens that seed from Browse.
 
-- `meta_analysis/sufficiency/seed_{seed}/heatmap/sufficiency_heatmap_rmsd_q.png`
-
-This results in one dashboard panel per seed directory.
-
-Figures are static images loaded from disk. If a seed heatmap figure does not
-exist, show a placeholder panel:
-
-`"No data available"`
+If no sufficiency outputs exist for any seed, the Meta-Analysis view shows an
+empty state instead of placeholder panels.
 
 ---
 

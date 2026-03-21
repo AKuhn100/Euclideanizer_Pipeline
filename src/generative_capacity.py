@@ -15,18 +15,36 @@ from typing import Callable
 
 import numpy as np
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from matplotlib import cm
 from matplotlib.colors import Normalize
-from scipy.stats import gaussian_kde
 import torch
 
 from .plotting import _save_pdf_copy
-from .plot_config import PLOT_DPI
+from .plot_config import (
+    PLOT_DPI,
+    FONT_FAMILY,
+    FONT_SIZE_AXIS,
+    FONT_SIZE_TICK,
+    HIST_BINS_DEFAULT,
+    HIST_FILLED_EDGE_COLOR,
+    LINEWIDTH_HIST_STEP,
+    GEN_CAP_STACKED_FIGWIDTH,
+    GEN_CAP_STACKED_ROW_HEIGHT,
+)
 from .distmap.sample import generate_samples
 from . import rmsd as rmsd_module
 from . import q_analysis as q_module
+
+
+def _get_cmap(name: str = "viridis"):
+    reg = getattr(matplotlib, "colormaps", None)
+    if reg is not None:
+        return reg[name]
+    return cm.get_cmap(name)
 
 
 def _as_sorted_unique_ints(values) -> list[int]:
@@ -94,45 +112,208 @@ def _compute_pairwise_matrix_to_disk(
     return mat
 
 
-def _distribution_panel(ax, by_n: dict[int, np.ndarray], x_label: str) -> None:
-    n_vals = sorted(by_n.keys())
-    cmap = cm.get_cmap("viridis")
-    norm = Normalize(vmin=np.log10(min(n_vals)), vmax=np.log10(max(n_vals)))
-    all_vals = np.concatenate([by_n[n] for n in n_vals], axis=0)
-    lo = float(np.percentile(all_vals, 1))
-    hi = float(np.percentile(all_vals, 99))
-    x = np.linspace(lo, hi, 400)
-    for n in n_vals:
-        vals = by_n[n].astype(np.float64)
-        if vals.size < 2:
-            continue
-        kde = gaussian_kde(vals)
-        y = kde(x)
-        color = cmap(norm(np.log10(n)))
-        ax.plot(x, y, color=color, linewidth=1.8)
-        ax.fill_between(x, 0.0, y, color=color, alpha=0.12)
-    ax.set_xlabel(x_label)
-    ax.set_ylabel("Density")
+def _apply_plain_number_axes(ax) -> None:
+    """Avoid ``1e7``-style offsets and scientific tick notation on value axes."""
+    for axis in (ax.xaxis, ax.yaxis):
+        fmt = mticker.ScalarFormatter(useOffset=False)
+        fmt.set_scientific(False)
+        axis.set_major_formatter(fmt)
+
+
+def _add_horizontal_n_colorbar(fig, cbar_ax, *, norm, cmap, n_min: int, n_max: int) -> None:
+    """Horizontal colorbar for step-overlay tests / legacy layout."""
     sm = cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
-    cbar = plt.colorbar(sm, ax=ax, orientation="horizontal", fraction=0.08, pad=0.2)
-    cbar.set_label("Number Of Generated Structures")
-    cbar.set_ticks([np.log10(n) for n in n_vals])
-    cbar.set_ticklabels([str(n) for n in n_vals])
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.ax.xaxis.set_ticks_position("bottom")
+    cbar.set_label(
+        "Number Of Generated Structures",
+        fontsize=FONT_SIZE_AXIS,
+        labelpad=4,
+        family=FONT_FAMILY,
+    )
+    lo = float(np.log10(n_min))
+    hi = float(np.log10(n_max))
+    cbar.set_ticks([lo, hi])
+    cbar.set_ticklabels([str(n_min), str(n_max)])
+    cbar.ax.tick_params(labelsize=FONT_SIZE_TICK)
 
 
-def _curve_panel(ax, by_n: dict[int, np.ndarray], y_label: str) -> None:
+def _global_xlim_bins(by_n: dict[int, np.ndarray], n_bins: int) -> tuple[float, float, np.ndarray]:
+    pieces = [by_n[n].ravel() for n in sorted(by_n.keys()) if by_n[n].size > 0]
+    if not pieces:
+        bins = np.linspace(0.0, 1.0, int(n_bins) + 1)
+        return 0.0, 1.0, bins
+    all_vals = np.concatenate(pieces, axis=0)
+    lo = float(np.percentile(all_vals, 1))
+    hi = float(np.percentile(all_vals, 99))
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        lo, hi = float(np.nanmin(all_vals)), float(np.nanmax(all_vals))
+    if hi <= lo:
+        span = max(abs(lo), 1.0) * 1e-6 + 1e-9
+        lo, hi = lo - span, hi + span
+    bins = np.linspace(lo, hi, int(n_bins) + 1)
+    return lo, hi, bins
+
+
+def _add_n_colorbar_right_of_stacked(
+    fig,
+    axes: list,
+    *,
+    norm,
+    cmap,
+    n_min: int,
+    n_max: int,
+    cbar_width: float = 0.02,
+    gap: float = 0.01,
+) -> None:
+    fig.canvas.draw()
+    p_top = axes[0].get_position()
+    p_bot = axes[-1].get_position()
+    x0 = p_top.x1 + gap
+    y0 = p_bot.y0
+    h = p_top.y1 - p_bot.y0
+    cbar_ax = fig.add_axes([x0, y0, cbar_width, h])
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cbar_ax, orientation="vertical")
+    cbar.ax.yaxis.set_ticks_position("right")
+    cbar.set_label(
+        "Number Of Generated Structures",
+        fontsize=FONT_SIZE_TICK,
+        family=FONT_FAMILY,
+        labelpad=-6,
+        rotation=270,
+    )
+    cbar.ax.yaxis.set_label_position("right")
+    lo = float(np.log10(n_min))
+    hi = float(np.log10(n_max))
+    cbar.set_ticks([lo, hi])
+    cbar.set_ticklabels([str(n_min), str(n_max)])
+    cbar.ax.tick_params(labelsize=FONT_SIZE_TICK)
+
+
+def _generative_capacity_stacked_filled_figure(
+    by_n: dict[int, np.ndarray],
+    *,
+    x_label: str,
+    n_bins: int,
+) -> plt.Figure:
+    """One row per ``n`` (largest ``n`` at top); shared x; vertical ``log10(n)`` colorbar."""
     n_vals = sorted(by_n.keys())
-    med = np.array([np.median(by_n[n]) for n in n_vals], dtype=np.float32)
-    p25 = np.array([np.percentile(by_n[n], 25) for n in n_vals], dtype=np.float32)
-    p75 = np.array([np.percentile(by_n[n], 75) for n in n_vals], dtype=np.float32)
-    ax.plot(n_vals, med, marker="o", linewidth=2.0, color="#2a6fbb")
-    ax.fill_between(n_vals, p25, p75, color="#2a6fbb", alpha=0.2)
-    ax.set_xscale("log")
-    ax.set_xticks(n_vals)
-    ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda v, _p: str(int(v)) if v in n_vals else ""))
-    ax.set_xlabel("Number Of Generated Structures")
-    ax.set_ylabel(y_label)
+    lo, hi, bins = _global_xlim_bins(by_n, n_bins)
+    cmap = _get_cmap("viridis")
+    n_min, n_max = min(n_vals), max(n_vals)
+    norm = Normalize(vmin=np.log10(n_min), vmax=np.log10(n_max))
+
+    fig_h = max(3.0, GEN_CAP_STACKED_ROW_HEIGHT * len(n_vals))
+    fig, axes = plt.subplots(len(n_vals), 1, figsize=(GEN_CAP_STACKED_FIGWIDTH, fig_h), sharex=True)
+    if len(n_vals) == 1:
+        axes = [axes]
+    for ax, n in zip(axes, reversed(n_vals)):
+        vals = by_n[n].astype(np.float64).ravel()
+        color = cmap(norm(np.log10(n)))
+        ax.hist(
+            vals,
+            bins=bins,
+            density=True,
+            alpha=0.75,
+            color=color,
+            edgecolor=HIST_FILLED_EDGE_COLOR,
+        )
+        ax.set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.set_xlim(lo, hi)
+        _apply_plain_number_axes(ax)
+
+    axes[-1].set_xlabel(x_label, fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ymax = max(ax.get_ylim()[1] for ax in axes)
+    for ax in axes:
+        ax.set_ylim(0, ymax * 1.05)
+    margin = 0.03
+    for ax, n in zip(axes, reversed(n_vals)):
+        ax.text(
+            margin,
+            1.0 - margin,
+            f"N = {n}",
+            transform=ax.transAxes,
+            ha="left",
+            va="top",
+            fontsize=FONT_SIZE_TICK,
+            fontweight="normal",
+            family=FONT_FAMILY,
+            color="0.15",
+            zorder=8,
+        )
+    right = 0.88 if len(n_vals) >= 2 else 0.97
+    fig.subplots_adjust(left=0.12, right=right, top=0.98, bottom=0.12)
+    fig.canvas.draw()
+    if len(n_vals) >= 2:
+        _add_n_colorbar_right_of_stacked(fig, axes, norm=norm, cmap=cmap, n_min=n_min, n_max=n_max)
+    return fig
+
+
+def _distribution_panel(
+    ax,
+    by_n: dict[int, np.ndarray],
+    x_label: str,
+    *,
+    n_bins: int,
+    cbar_ax=None,
+) -> None:
+    """Overlapping step density histograms per `n` (``LINEWIDTH_HIST_STEP``); viridis by ``log10(n)``; optional top horizontal colorbar on ``cbar_ax``."""
+    n_vals = sorted(by_n.keys())
+    cmap = _get_cmap("viridis")
+    n_min, n_max = min(n_vals), max(n_vals)
+    norm = Normalize(vmin=np.log10(n_min), vmax=np.log10(n_max))
+    fig = ax.figure
+
+    pieces = [by_n[n].ravel() for n in n_vals if by_n[n].size > 0]
+    if not pieces:
+        ax.set_xlabel(x_label, fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        _apply_plain_number_axes(ax)
+        if cbar_ax is not None:
+            if len(n_vals) >= 2:
+                _add_horizontal_n_colorbar(fig, cbar_ax, norm=norm, cmap=cmap, n_min=n_min, n_max=n_max)
+            else:
+                cbar_ax.set_visible(False)
+        return
+
+    all_vals = np.concatenate(pieces, axis=0)
+    lo = float(np.percentile(all_vals, 1))
+    hi = float(np.percentile(all_vals, 99))
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        lo, hi = float(np.nanmin(all_vals)), float(np.nanmax(all_vals))
+    if hi <= lo:
+        span = max(abs(lo), 1.0) * 1e-6 + 1e-9
+        lo, hi = lo - span, hi + span
+
+    bins = np.linspace(lo, hi, int(n_bins) + 1)
+
+    for zi, n in enumerate(n_vals):
+        vals = by_n[n].astype(np.float64).ravel()
+        if vals.size == 0:
+            continue
+        color = cmap(norm(np.log10(n)))
+        ax.hist(
+            vals,
+            bins=bins,
+            density=True,
+            color=color,
+            histtype="step",
+            lw=LINEWIDTH_HIST_STEP,
+            zorder=zi + 1,
+        )
+
+    ax.set_xlabel(x_label, fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax.set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    _apply_plain_number_axes(ax)
+    if cbar_ax is not None:
+        if len(n_vals) >= 2:
+            _add_horizontal_n_colorbar(fig, cbar_ax, norm=norm, cmap=cmap, n_min=n_min, n_max=n_max)
+        else:
+            cbar_ax.set_visible(False)
 
 
 def _save_per_n_npz(out_data_dir: str, filename_fn: Callable[[int], str], by_n: dict[int, np.ndarray], seed: int) -> None:
@@ -198,14 +379,14 @@ def run_generative_capacity_rmsd(
     if save_data:
         _save_per_n_npz(data_dir, lambda n: f"n{n}_min_rmsd.npz", by_n, seed=seed)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-    _distribution_panel(axes[0], by_n, "Min RMSD To Nearest Generated Structure (A)")
-    _curve_panel(axes[1], by_n, "Median Min RMSD (A)")
-    fig.suptitle(f"Generative Capacity - Min RMSD | Seed={seed}")
-    fig.tight_layout()
+    fig = _generative_capacity_stacked_filled_figure(
+        by_n,
+        x_label="Min RMSD To Nearest Generated Structure (Å)",
+        n_bins=HIST_BINS_DEFAULT,
+    )
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "generative_capacity_rmsd.png")
-    fig.savefig(out_path, dpi=PLOT_DPI)
+    fig.savefig(out_path, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.15)
     if save_pdf_copy:
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
     plt.close(fig)
@@ -265,14 +446,14 @@ def run_generative_capacity_q(
     if save_data:
         _save_per_n_npz(data_dir, lambda n: f"n{n}_max_q.npz", by_n, seed=seed)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-    _distribution_panel(axes[0], by_n, "Max Q To Nearest Generated Structure")
-    _curve_panel(axes[1], by_n, "Median Max Q")
-    fig.suptitle(f"Generative Capacity - Max Q | Seed={seed}")
-    fig.tight_layout()
+    fig = _generative_capacity_stacked_filled_figure(
+        by_n,
+        x_label="Max Q To Nearest Generated Structure",
+        n_bins=HIST_BINS_DEFAULT,
+    )
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, "generative_capacity_q.png")
-    fig.savefig(out_path, dpi=PLOT_DPI)
+    fig.savefig(out_path, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.15)
     if save_pdf_copy:
         _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
     plt.close(fig)

@@ -4,10 +4,30 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
-from matplotlib import pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import Normalize
+
+from .plot_config import (
+    FONT_FAMILY,
+    FONT_SIZE_AXIS,
+    FONT_SIZE_TITLE,
+    FONT_SIZE_TICK,
+    HIST_BINS_DEFAULT,
+    META_CBAR_HEIGHT_FRAC,
+    META_CBAR_WIDTH_FRAC,
+    META_DIST_CB_GAP,
+    META_HEATMAP_CB_GAP,
+    PLOT_DPI,
+    SUFFICIENCY_DIST_FIG_WIDTH,
+    SUFFICIENCY_DIST_ROW_HEIGHT,
+    SUFFICIENCY_HEATMAP_CELL_IN,
+)
 
 
 @dataclass
@@ -17,6 +37,13 @@ class SufficiencyPoint:
     training_split: float
     rmsd_values: np.ndarray
     q_values: np.ndarray
+
+
+def _get_cmap(name: str = "viridis"):
+    reg = getattr(matplotlib, "colormaps", None)
+    if reg is not None:
+        return reg[name]
+    return cm.get_cmap(name)
 
 
 def _parse_seed_and_split(seed_name: str) -> tuple[int, float | None] | None:
@@ -94,21 +121,6 @@ def _load_gen_metric_array(seed_dir: str, metric: str) -> np.ndarray | None:
     return None
 
 
-def _kde_curve(values: np.ndarray, x_min: float, x_max: float) -> tuple[np.ndarray, np.ndarray]:
-    # Lightweight KDE fallback that avoids scipy hard dependency in this module.
-    # Uses Gaussian kernel with Scott-like bandwidth.
-    x = np.linspace(x_min, x_max, 400, dtype=np.float64)
-    v = np.asarray(values, dtype=np.float64).ravel()
-    if len(v) < 2:
-        return x, np.zeros_like(x)
-    std = np.std(v)
-    bw = (std if std > 1e-12 else 1e-6) * (len(v) ** (-1.0 / 5.0))
-    bw = max(bw, 1e-6)
-    diffs = (x[:, None] - v[None, :]) / bw
-    dens = np.exp(-0.5 * diffs * diffs).sum(axis=1) / (len(v) * bw * np.sqrt(2.0 * np.pi))
-    return x, dens
-
-
 def _max_data_from_seed_dir(seed_dir: str, fallback_max_data: int | None) -> int | None:
     cfg_path = os.path.join(seed_dir, "pipeline_config.yaml")
     if not os.path.isfile(cfg_path):
@@ -133,6 +145,76 @@ def _save_pdf_if_enabled(fig, png_path: str, enabled: bool) -> None:
         return
     base, _ = os.path.splitext(png_path)
     fig.savefig(base + ".pdf")
+
+
+def _apply_plain_number_axes(ax) -> None:
+    for axis in (ax.xaxis, ax.yaxis):
+        fmt = mticker.ScalarFormatter(useOffset=False)
+        fmt.set_scientific(False)
+        axis.set_major_formatter(fmt)
+
+
+def _horizontal_cbar_axes_in_span(
+    fig,
+    x_left: float,
+    x_right: float,
+    y_bottom: float,
+    height_frac: float,
+    *,
+    width_frac: float = META_CBAR_WIDTH_FRAC,
+):
+    span = max(x_right - x_left, 1e-6)
+    w = span * width_frac
+    x0 = x_left + 0.5 * (span - w)
+    return fig.add_axes([x0, y_bottom, w, height_frac])
+
+
+def _style_horizontal_meta_colorbar(cbar, label: str, *, labelpad: int = 3) -> None:
+    cbar.ax.xaxis.set_ticks_position("bottom")
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.set_label(label, fontsize=FONT_SIZE_TICK, family=FONT_FAMILY, labelpad=labelpad)
+    cbar.ax.tick_params(labelsize=FONT_SIZE_TICK)
+
+
+def _training_split_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, height_frac: float) -> None:
+    fig.canvas.draw()
+    p0, p1 = ax_left.get_position(), ax_right.get_position()
+    row_bottom = min(p0.y0, p1.y0)
+    y = max(0.02, row_bottom - META_DIST_CB_GAP - height_frac)
+    cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, height_frac)
+    sm = cm.ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
+    cbar.set_ticks([0.0, 1.0])
+    cbar.set_ticklabels(["0%", "100%"])
+    _style_horizontal_meta_colorbar(cbar, "Training Split", labelpad=3)
+
+
+def _heatmap_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, vmin: float, vmax: float, label: str) -> None:
+    fig.canvas.draw()
+    p0, p1 = ax_left.get_position(), ax_right.get_position()
+    row_bottom = min(p0.y0, p1.y0)
+    y = max(0.02, row_bottom - META_HEATMAP_CB_GAP - META_CBAR_HEIGHT_FRAC)
+    cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, META_CBAR_HEIGHT_FRAC)
+    sm = cm.ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax), cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
+    _style_horizontal_meta_colorbar(cbar, label, labelpad=4)
+
+
+def _norm01_per_grid(grid: np.ndarray) -> np.ma.MaskedArray:
+    g = np.asarray(grid, dtype=np.float64)
+    mask = ~np.isfinite(g)
+    if mask.all():
+        return np.ma.masked_invalid(g)
+    lo = np.nanmin(g)
+    hi = np.nanmax(g)
+    if hi <= lo:
+        out = np.zeros_like(g)
+        return np.ma.array(out, mask=mask)
+    out = (g - lo) / (hi - lo)
+    out = np.clip(out, 0.0, 1.0)
+    return np.ma.array(out, mask=mask)
 
 
 def run_sufficiency_meta_analysis(
@@ -182,6 +264,9 @@ def run_sufficiency_meta_analysis(
     out_root = os.path.join(base_output_dir, "meta_analysis", "sufficiency")
     os.makedirs(out_root, exist_ok=True)
     made_any = False
+    cmap = _get_cmap("viridis")
+    split_norm = Normalize(vmin=0.0, vmax=1.0)
+
     for seed, points in sorted(points_by_seed.items()):
         seed_out = os.path.join(out_root, f"seed_{seed}")
         dist_root = os.path.join(seed_out, "distributions")
@@ -191,54 +276,85 @@ def run_sufficiency_meta_analysis(
 
         max_data_set = sorted({p.max_data for p in points}, key=lambda x: (-1 if x is None else x))
         split_set = sorted({p.training_split for p in points})
-        split_norm = Normalize(vmin=0.0, vmax=1.0)
-        cmap = cm.get_cmap("viridis")
 
         for md in max_data_set:
             subset = [p for p in points if p.max_data == md]
             if not subset:
                 continue
-            fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-            ax_r, ax_q = axes
+            splits_ordered = list(reversed(sorted({p.training_split for p in subset})))
+            n_splits_local = len(splits_ordered)
+
             all_r = np.concatenate([p.rmsd_values for p in subset], axis=0)
             all_q = np.concatenate([p.q_values for p in subset], axis=0)
-            xr_min, xr_max = np.percentile(all_r, [1, 99])
-            xq_min, xq_max = np.percentile(all_q, [1, 99])
+            xr_min = float(np.percentile(all_r, 1))
+            xr_max = float(np.percentile(all_r, 99))
+            xq_min = float(np.percentile(all_q, 1))
+            xq_max = float(np.percentile(all_q, 99))
             xq_min, xq_max = max(0.0, xq_min), min(1.0, xq_max)
+            bins_r = np.linspace(xr_min, xr_max, HIST_BINS_DEFAULT + 1)
+            bins_q = np.linspace(xq_min, xq_max, HIST_BINS_DEFAULT + 1)
 
-            for p in sorted(subset, key=lambda x: x.training_split):
-                color = cmap(split_norm(p.training_split))
-                xr, dr = _kde_curve(p.rmsd_values, float(xr_min), float(xr_max))
-                xq, dq = _kde_curve(p.q_values, float(xq_min), float(xq_max))
-                label = f"{int(round(p.training_split * 100))}%"
-                ax_r.plot(xr, dr, color=color, label=label)
-                ax_r.fill_between(xr, 0.0, dr, color=color, alpha=0.12)
-                ax_q.plot(xq, dq, color=color, label=label)
-                ax_q.fill_between(xq, 0.0, dq, color=color, alpha=0.12)
+            row_h = SUFFICIENCY_DIST_ROW_HEIGHT
+            fig_h = max(4.0, row_h * n_splits_local)
+            fig, axes = plt.subplots(
+                n_splits_local,
+                2,
+                figsize=(SUFFICIENCY_DIST_FIG_WIDTH, fig_h),
+                sharex="col",
+                gridspec_kw=dict(wspace=0.3),
+            )
+            if n_splits_local == 1:
+                axes = axes[np.newaxis, :]
 
-            ax_r.set_title(f"Min RMSD | max_data={md}")
-            ax_r.set_xlabel("Min RMSD (A)")
-            ax_r.set_ylabel("Density")
-            ax_q.set_title(f"Max Q | max_data={md}")
-            ax_q.set_xlabel("Max Q")
-            ax_q.set_ylabel("Density")
-            sm = cm.ScalarMappable(norm=split_norm, cmap=cmap)
-            sm.set_array([])
-            cbar = fig.colorbar(sm, ax=axes, orientation="horizontal", fraction=0.08, pad=0.15)
-            cbar.set_label("Training Split")
-            cbar.set_ticks(split_set)
-            cbar.set_ticklabels([f"{int(round(s * 100))}%" for s in split_set])
-            fig.tight_layout()
+            for row_i, split in enumerate(splits_ordered):
+                p_match = next((p for p in subset if p.training_split == split), None)
+                color = cmap(split_norm(split))
+                label = f"{int(round(split * 100))}%"
+                for ax, vals, bins in (
+                    (axes[row_i, 0], p_match.rmsd_values if p_match else np.zeros(1), bins_r),
+                    (axes[row_i, 1], p_match.q_values if p_match else np.zeros(1), bins_q),
+                ):
+                    if p_match and vals.size > 0:
+                        ax.hist(vals, bins=bins, density=True, color=color, alpha=0.75, edgecolor="none")
+                    ax.set_ylabel("Density", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+                    _apply_plain_number_axes(ax)
+                for ax_col in (axes[row_i, 0], axes[row_i, 1]):
+                    ax_col.text(
+                        0.02,
+                        0.97,
+                        label,
+                        transform=ax_col.transAxes,
+                        ha="left",
+                        va="top",
+                        fontsize=FONT_SIZE_TICK,
+                        family=FONT_FAMILY,
+                        color="0.15",
+                    )
+
+            for col_i in range(2):
+                col_axes = [axes[r, col_i] for r in range(n_splits_local)]
+                ymax = max(ax.get_ylim()[1] for ax in col_axes)
+                for ax in col_axes:
+                    ax.set_ylim(0, ymax * 1.05)
+
+            axes[0, 0].set_title(f"Min RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[0, 1].set_title(f"Max Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[-1, 0].set_xlabel("Min RMSD (Å)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[-1, 1].set_xlabel("Max Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+
+            fig.subplots_adjust(left=0.1, right=0.97, top=0.92, bottom=0.22)
+            cbar_hfrac = META_CBAR_HEIGHT_FRAC * 6.2 / fig_h
+            _training_split_colorbar_below_panels(fig, axes[-1, 0], axes[-1, 1], cmap=cmap, height_frac=cbar_hfrac)
+
             md_tag = "all" if md is None else str(md)
             out_dir = os.path.join(dist_root, f"max_data_{md_tag}")
             os.makedirs(out_dir, exist_ok=True)
             png_path = os.path.join(out_dir, "distributions_rmsd_q.png")
-            fig.savefig(png_path)
+            fig.savefig(png_path, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.15)
             _save_pdf_if_enabled(fig, png_path, save_pdf_copy)
             plt.close(fig)
             made_any = True
 
-        # Seed heatmap
         md_vals = [m for m in max_data_set if m is not None]
         if not md_vals:
             continue
@@ -253,30 +369,44 @@ def run_sufficiency_meta_analysis(
             j = md_to_j[p.max_data]
             rmsd_grid[i, j] = float(np.median(p.rmsd_values))
             q_grid[i, j] = float(np.median(p.q_values))
-        rmsd_plot = np.clip(rmsd_grid, 0.0, 1.0)
-        q_plot = np.clip(q_grid, 0.0, 1.0)
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+
+        r_plot = _norm01_per_grid(rmsd_grid)
+        q_plot = _norm01_per_grid(q_grid)
+
+        n_r = len(split_set)
+        n_c = len(md_vals)
+        cell_in = SUFFICIENCY_HEATMAP_CELL_IN
+        w_per = max(3.2, cell_in * n_c + 0.55)
+        fig_h = max(4.0, cell_in * n_r + 1.35)
+        gap = 0.15
+        fig_w = 2 * w_per + gap + 0.6
+        fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), gridspec_kw=dict(wspace=0.08))
         ax_r, ax_q = axes
-        ax_r.imshow(rmsd_plot, aspect="auto", cmap="viridis", vmin=0.0, vmax=1.0)
-        ax_q.imshow(q_plot, aspect="auto", cmap="viridis", vmin=0.0, vmax=1.0)
+        ax_r.imshow(r_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0)
+        ax_q.imshow(q_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0)
         for ax, title in ((ax_r, "Median Min RMSD"), (ax_q, "Median Max Q")):
-            ax.set_title(title)
-            ax.set_xlabel("max_data")
+            ax.set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            ax.set_xlabel("Max Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY, labelpad=10)
             ax.set_xticks(np.arange(len(md_vals)))
-            ax.set_xticklabels([str(v) for v in md_vals], rotation=45, ha="right")
+            ax.set_xticklabels([str(v) for v in md_vals], rotation=35, ha="right", fontsize=FONT_SIZE_TICK)
             ax.set_yticks(np.arange(len(split_set)))
-            ax.set_yticklabels([f"{int(round(s * 100))}%" for s in split_set])
-            ax.set_ylabel("Training Split")
-        sm = cm.ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap="viridis")
-        sm.set_array([])
-        cbar = fig.colorbar(sm, ax=axes, orientation="horizontal", fraction=0.08, pad=0.15)
-        cbar.set_label("Value (0-1)")
-        fig.tight_layout()
+            ax.set_yticklabels([f"{int(round(s * 100))}%" for s in split_set], fontsize=FONT_SIZE_TICK)
+            ax.set_ylabel("Training Split", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+
+        fig.subplots_adjust(left=0.12, right=0.96, top=0.88, bottom=0.24)
+        _heatmap_colorbar_below_panels(
+            fig,
+            ax_r,
+            ax_q,
+            cmap=cmap,
+            vmin=0.0,
+            vmax=1.0,
+            label="Normalized Median",
+        )
         heat_png = os.path.join(heat_root, "sufficiency_heatmap_rmsd_q.png")
-        fig.savefig(heat_png)
+        fig.savefig(heat_png, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.2)
         _save_pdf_if_enabled(fig, heat_png, save_pdf_copy)
         plt.close(fig)
         made_any = True
 
     return made_any
-

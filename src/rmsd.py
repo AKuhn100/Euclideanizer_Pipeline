@@ -22,6 +22,7 @@ from .plot_config import (
     FONT_FAMILY,
     FONT_SIZE_TITLE,
     FONT_SIZE_AXIS,
+    HIST_BINS_DEFAULT,
     HIST_FILLED_EDGE_COLOR,
 )
 
@@ -145,7 +146,7 @@ def _run_one_min_rmsd(
     all_vals = np.concatenate([test_to_train, gen_to_train, gen_to_test])
     x_min = max(0.0, np.percentile(all_vals, 0.5) - 0.5)
     x_max = np.percentile(all_vals, 99.5) + 0.5
-    bins = np.linspace(x_min, x_max, 50)
+    bins = np.linspace(x_min, x_max, HIST_BINS_DEFAULT + 1)
 
     c0, c1, c2 = GEN_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
@@ -439,7 +440,7 @@ def _run_one_min_rmsd_recon(
     all_vals = np.concatenate([test_to_train, train_recon_rmsd, test_recon_rmsd])
     x_min = max(0.0, np.percentile(all_vals, 0.5) - 0.5)
     x_max = np.percentile(all_vals, 99.5) + 0.5
-    bins = np.linspace(x_min, x_max, 50)
+    bins = np.linspace(x_min, x_max, HIST_BINS_DEFAULT + 1)
 
     c0, c1, c2 = RECON_PANEL_COLORS
     fig, axes = plt.subplots(3, 1, figsize=(8, 9), sharex=True)

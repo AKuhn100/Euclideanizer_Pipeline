@@ -10,7 +10,7 @@ data:
   training_split: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]   # fraction for training; same for both models, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
-  max_data: [100, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, null]
+  max_data: [500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, null]
 
 output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-19/RANGE_SLURM/Gen_Cap/Chrom_21"
 
@@ -175,7 +175,7 @@ analysis:
   generative_capacity_rmsd:
     enabled: true
     overwrite_existing: false
-    n_structures: [100, 250, 500, 1000]
+    n_structures: [100, 250, 500, 1000, 3000, 5000, 10000]
     gen_decode_batch_size: 256
     query_batch_size: 128
     save_data: true
@@ -183,7 +183,7 @@ analysis:
   generative_capacity_q:
     enabled: true
     overwrite_existing: false
-    n_structures: [100, 250, 500, 1000]
+    n_structures: [100, 250, 500, 1000, 3000, 5000, 10000]
     gen_decode_batch_size: 256
     query_batch_size: 128
     delta: 0.7071

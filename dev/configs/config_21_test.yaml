@@ -6,11 +6,11 @@ calibration_training_batch_cap: 512
 
 data:
   path: "/scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz"   # bundled demo data (run tests/test_data/generate_spheres.py first); or set your own path / use --data
-  split_seed: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
-  training_split: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]   # fraction for training; same for both models, plotting, and analysis
+  split_seed: [1, 2]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
+  training_split: [0.8, 0.9]   # fraction for training; same for both models, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
   exp_stats_avg_map_sample: 1000   # number of structures to average for avg_exp_map in experimental statistics
-  max_data: [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+  max_data: [1000, 2000]
 
 output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-19/RANGE/TEST_SUFFICIENCY_AND_GEN_CAP/Chrom_21"
 
@@ -175,16 +175,16 @@ analysis:
     save_pdf_copy: false
   generative_capacity_rmsd:
     enabled: true
-    overwrite_existing: false
-    n_structures: [10, 25, 50]
+    overwrite_existing: true
+    n_structures: [100, 250, 500, 1000]
     gen_decode_batch_size: 256
     query_batch_size: 128
     save_data: false
     save_pdf_copy: false
   generative_capacity_q:
     enabled: true
-    overwrite_existing: false
-    n_structures: [10, 25, 50]
+    overwrite_existing: true
+    n_structures: [100, 250, 500, 1000]
     gen_decode_batch_size: 256
     query_batch_size: 128
     delta: 0.7071
@@ -205,7 +205,7 @@ scoring:
 meta_analysis:
   sufficiency:
     enabled: true
-    overwrite_existing: false
+    overwrite_existing: true
     save_pdf_copy: false
 
 # Dashboard: interactive HTML report in run root (dashboard/). Disable with --no-dashboard or dashboard.enabled: false.

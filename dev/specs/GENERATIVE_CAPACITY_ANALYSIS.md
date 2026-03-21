@@ -187,26 +187,27 @@ One figure per metric block:
 
 Layout:
 
-- 1 row x 2 columns
-  - left: KDE distributions across `n`
-  - right: median with IQR band vs `n` (log-scale x-axis)
+- **Stacked filled histograms:** one **row per** `n` in `n_structures`, **largest `n` at
+  the top**; **shared** x-axis and **shared** bin edges from pooled data (1st–99th
+  percentile over all `n`). Each row: **borderless filled** bars
+  (`plot_config.HIST_FILLED_EDGE_COLOR`), **`HIST_BINS_DEFAULT`** bins, density
+  normalization, color from viridis on **`log10(n)`**. **`N = {n}`** in the top-left
+  of each row (axes coordinates). Y limits matched across rows. **Vertical** colorbar
+  to the **right** of the stack when **two or more** distinct `n`; ticks at min and max
+  `n`; label **“Number Of Generated Structures”** (Title Case), `rotation=270`,
+  `labelpad=-6`. Single-`n` runs omit the colorbar and use a wider right margin.
+- **Figure width / row height:** **`plot_config.GEN_CAP_STACKED_FIGWIDTH`**,
+  **`plot_config.GEN_CAP_STACKED_ROW_HEIGHT`**.
+- Main axes: plain numeric ticks (**`ScalarFormatter(useOffset=False)`**, no scientific
+  `1e7` styling on value axes).
 
-Left panel:
+Axis labels:
 
-- One KDE per `n`, colored by viridis over `log10(n)`
-- Bottom colorbar labeled `"Number of Generated Structures"`
-- RMSD x-axis: `"Min RMSD to Nearest Generated Structure (A)"`
-- Q x-axis: `"Max Q to Nearest Generated Structure"`
+- RMSD: `"Min RMSD To Nearest Generated Structure (Å)"`
+- Q: `"Max Q To Nearest Generated Structure"`
 
-Right panel:
-
-- X-axis: `n` on log scale
-- Y-axis:
-  - RMSD: `"Median Min RMSD (A)"`
-  - Q: `"Median Max Q"`
-- Line = median, band = p25-p75
-
-No curve fitting, asymptote overlays, or extra annotations.
+No curve fitting, asymptote overlays, or extra annotations. (Legacy **step** overlay +
+horizontal top colorbar remains in **`_distribution_panel`** for unit tests only.)
 
 ---
 

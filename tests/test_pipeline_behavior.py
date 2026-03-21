@@ -17,7 +17,7 @@ Sections:
     later segment), resume_from_prev_last.
   - Config: load config_test.yaml, produce training groups; config mismatch raises before
     data load.
-  - Plotting / analysis all-present: skip loading models when all plot/analysis outputs exist.
+  - Plotting / analysis all-present: `_euclideanizer_analysis_all_present(..., analysis_cfg=…)` (tests build cfg via `_analysis_cfg_for_presence`).
 
 Run from the pipeline root:
   pytest tests/test_pipeline_behavior.py -v
@@ -46,9 +46,12 @@ from src.config import (
     configs_match_exactly,
     config_diff,
     load_pipeline_config,
+    pipeline_config_path,
 )
 from run import (
+    _analysis_cfg_from_need_data_kwargs,
     _capped_train_test_subset,
+    _ensure_per_seed_pipeline_config,
     _run_completed,
     _pipeline_need_data,
     _pipeline_data_needs,
@@ -72,6 +75,41 @@ from run import (
     EXP_STATS_TEST_NPZ,
 )
 from src import scoring as scoring_module
+
+
+def _analysis_cfg_for_presence(**kw: object) -> dict:
+    """Same kwargs shape as ``_pipeline_data_needs`` → ``_analysis_cfg_from_need_data_kwargs`` (latent + GC included)."""
+    defaults: dict = {
+        "do_rmsd": False,
+        "variance_list": [],
+        "num_samples_list": [],
+        "do_rmsd_recon": False,
+        "max_recon_train_list": [],
+        "max_recon_test_list": [],
+        "do_q": False,
+        "do_q_recon": False,
+        "q_variance_list": [],
+        "q_num_samples_list": [],
+        "q_max_recon_train_list": [],
+        "q_max_recon_test_list": [],
+        "do_coord_clustering_gen": False,
+        "do_coord_clustering_recon": False,
+        "coord_clustering_variance_list": [],
+        "coord_clustering_num_samples_list": [],
+        "coord_clustering_max_recon_train_list": [],
+        "coord_clustering_max_recon_test_list": [],
+        "do_distmap_clustering_gen": False,
+        "do_distmap_clustering_recon": False,
+        "distmap_clustering_variance_list": [],
+        "distmap_clustering_num_samples_list": [],
+        "distmap_clustering_max_recon_train_list": [],
+        "distmap_clustering_max_recon_test_list": [],
+        "do_latent": False,
+        "do_generative_capacity_rmsd": False,
+        "do_generative_capacity_q": False,
+    }
+    defaults.update(kw)
+    return _analysis_cfg_from_need_data_kwargs(defaults)
 
 
 def _load_test_config():
@@ -365,7 +403,13 @@ def test_distmap_plotting_all_present_resume_false(tmp_path):
 
 def test_euclideanizer_analysis_all_present_no_rmsd():
     """When rmsd is disabled, analysis is considered all present (nothing to generate)."""
-    assert _euclideanizer_analysis_all_present("/any", resume=True, do_rmsd=False, variance_list=[1.0], num_samples_list=[10]) is True
+    assert _euclideanizer_analysis_all_present(
+        "/any",
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_rmsd=False, variance_list=[1.0], num_samples_list=[10],
+        ),
+    ) is True
 
 
 # ---------------------------------------------------------------------------
@@ -385,6 +429,36 @@ def test_pipeline_config_mismatch_raises(tmp_path, cfg):
         sc = load_pipeline_config(str(output_dir))
         if sc is None or not configs_match_exactly(sc, current):
             raise RuntimeError("Resume is enabled but pipeline config in output_dir does not match current config.")
+
+
+def test_ensure_per_seed_pipeline_config_writes_when_seed_dir_only_has_cache_subdir(tmp_path, cfg):
+    """Multi-GPU precompute can mkdir seed_dir/experimental_statistics/ before workers run; ensure we can still add pipeline_config."""
+    seed_dir = tmp_path / "seed_1_split_0.1_maxdata_10"
+    seed_dir.mkdir(parents=True)
+    (seed_dir / EXP_STATS_CACHE_DIR).mkdir()
+    out = str(seed_dir)
+    assert not os.path.isfile(pipeline_config_path(out))
+    _ensure_per_seed_pipeline_config(
+        need_train=True,
+        output_dir=out,
+        cfg=cfg,
+        seed=1,
+        training_split=0.1,
+        max_data=10,
+    )
+    assert os.path.isfile(pipeline_config_path(out))
+    loaded = load_pipeline_config(out)
+    assert loaded["data"]["split_seed"] == 1
+    assert loaded["data"]["training_split"] == 0.1
+    assert loaded["data"]["max_data"] == 10
+    _ensure_per_seed_pipeline_config(
+        need_train=True,
+        output_dir=out,
+        cfg=cfg,
+        seed=1,
+        training_split=0.1,
+        max_data=10,
+    )
 
 
 def test_config_test_yaml_loads_and_produces_groups(cfg):
@@ -787,15 +861,20 @@ def test_plotting_phase_needed_bond_without_exp_stats():
 def test_euclideanizer_analysis_all_present_true_when_no_rmsd(tmp_path):
     """When do_rmsd is False, analysis is considered all present (no analysis outputs to check)."""
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[1.0], num_samples_list=[10]
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_rmsd=False, variance_list=[1.0], num_samples_list=[10],
+        ),
     ) is True
 
 
 def test_euclideanizer_analysis_all_present_true_when_no_q(tmp_path):
     """When do_q and do_q_recon are False, Q analysis is considered all present (nothing to check)."""
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=False, do_q_recon=False,
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(),
     ) is True
 
 
@@ -805,9 +884,13 @@ def test_euclideanizer_analysis_all_present_true_when_q_gen_outputs_exist(tmp_pa
     run_dir.mkdir(parents=True)
     (run_dir / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=True, do_q_recon=False,
-        q_variance_list=[1.0], q_num_samples_list=[10],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_q=True,
+            q_variance_list=[1.0],
+            q_num_samples_list=[10],
+        ),
     ) is True
 
 
@@ -816,10 +899,16 @@ def test_euclideanizer_analysis_all_present_false_when_q_recon_enabled_but_missi
     (tmp_path / "analysis" / "q" / "gen" / "default_var1.0").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "gen" / "default_var1.0" / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=True, do_q_recon=True,
-        q_variance_list=[1.0], q_num_samples_list=[10],
-        q_max_recon_train_list=[500], q_max_recon_test_list=[200],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_q=True,
+            do_q_recon=True,
+            q_variance_list=[1.0],
+            q_num_samples_list=[10],
+            q_max_recon_train_list=[500],
+            q_max_recon_test_list=[200],
+        ),
     ) is False
 
 
@@ -830,10 +919,16 @@ def test_euclideanizer_analysis_all_present_true_when_q_recon_exists(tmp_path):
     (tmp_path / "analysis" / "q" / "recon").mkdir(parents=True)
     (tmp_path / "analysis" / "q" / "recon" / "q_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=True, do_q_recon=True,
-        q_variance_list=[1.0], q_num_samples_list=[10],
-        q_max_recon_train_list=[500], q_max_recon_test_list=[200],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_q=True,
+            do_q_recon=True,
+            q_variance_list=[1.0],
+            q_num_samples_list=[10],
+            q_max_recon_train_list=[500],
+            q_max_recon_test_list=[200],
+        ),
     ) is True
 
 
@@ -853,6 +948,53 @@ def test_pipeline_data_needs_need_coords_true_when_q_enabled_and_outputs_missing
     assert needs.need_coords is True
 
 
+def test_pipeline_data_needs_need_coords_when_generative_capacity_missing(tmp_path, cfg):
+    """GC blocks must be in the internal analysis_cfg so missing generative_capacity figures set need_coords (not meta-only skip)."""
+    dm_groups, eu_groups = _all_runs_complete_layout(tmp_path, cfg)
+    needs = _pipeline_data_needs(
+        str(tmp_path),
+        [(0, 0.8)],
+        [0.8],
+        dm_groups,
+        eu_groups,
+        resume=True,
+        do_plot=False,
+        do_rmsd=False,
+        do_recon_plot=False,
+        do_bond_rg_scaling=False,
+        do_avg_gen=False,
+        do_bond_length_by_genomic_distance=False,
+        plot_variances=[],
+        variance_list=[],
+        num_samples_list=[],
+        do_rmsd_recon=False,
+        max_recon_train_list=[],
+        max_recon_test_list=[],
+        do_q=False,
+        do_q_recon=False,
+        q_variance_list=[],
+        q_num_samples_list=[],
+        q_max_recon_train_list=[],
+        q_max_recon_test_list=[],
+        do_coord_clustering_gen=False,
+        do_coord_clustering_recon=False,
+        coord_clustering_variance_list=[],
+        coord_clustering_num_samples_list=[],
+        coord_clustering_max_recon_train_list=[],
+        coord_clustering_max_recon_test_list=[],
+        do_distmap_clustering_gen=False,
+        do_distmap_clustering_recon=False,
+        distmap_clustering_variance_list=[],
+        distmap_clustering_num_samples_list=[],
+        distmap_clustering_max_recon_train_list=[],
+        distmap_clustering_max_recon_test_list=[],
+        do_latent=False,
+        do_generative_capacity_rmsd=True,
+        do_generative_capacity_q=False,
+    )
+    assert needs.need_coords is True
+
+
 def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path):
     """When do_rmsd is True and gen outputs exist at analysis/rmsd/gen/<run_name>/, analysis is all present."""
     # Single variance and single num_samples -> run_name is "default_var1.0" (variance always in path)
@@ -860,8 +1002,11 @@ def test_euclideanizer_analysis_all_present_true_when_gen_outputs_exist(tmp_path
     run_dir.mkdir(parents=True)
     (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_rmsd_recon=False,
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
+        ),
     ) is True
 
 
@@ -871,9 +1016,16 @@ def test_euclideanizer_analysis_all_present_false_when_recon_enabled_but_missing
     run_dir.mkdir(parents=True)
     (run_dir / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_rmsd_recon=True,
-        max_recon_train_list=[None], max_recon_test_list=[None],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_rmsd=True,
+            variance_list=[1.0],
+            num_samples_list=[10],
+            do_rmsd_recon=True,
+            max_recon_train_list=[None],
+            max_recon_test_list=[None],
+        ),
     ) is False
 
 
@@ -884,9 +1036,16 @@ def test_euclideanizer_analysis_all_present_true_when_recon_exists(tmp_path):
     (tmp_path / "analysis" / "rmsd" / "recon").mkdir(parents=True)
     (tmp_path / "analysis" / "rmsd" / "recon" / "rmsd_distributions.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=True, variance_list=[1.0], num_samples_list=[10],
-        do_rmsd_recon=True,
-        max_recon_train_list=[None], max_recon_test_list=[None],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_rmsd=True,
+            variance_list=[1.0],
+            num_samples_list=[10],
+            do_rmsd_recon=True,
+            max_recon_train_list=[None],
+            max_recon_test_list=[None],
+        ),
     ) is True
 
 
@@ -895,28 +1054,16 @@ def test_euclideanizer_analysis_all_present_true_when_latent_enabled_and_exists(
     (tmp_path / "analysis" / "latent").mkdir(parents=True)
     (tmp_path / "analysis" / "latent" / "latent_distribution.png").write_bytes(b"x")
     (tmp_path / "analysis" / "latent" / "latent_correlation.png").write_bytes(b"x")
-    analysis_cfg = {
-        "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
-        "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
-        "generative_capacity_rmsd": {"enabled": False}, "generative_capacity_q": {"enabled": False},
-        "coord_clustering_gen": {"enabled": False}, "coord_clustering_recon": {"enabled": False},
-        "distmap_clustering_gen": {"enabled": False}, "distmap_clustering_recon": {"enabled": False},
-        "latent": {"enabled": True},
-    }
-    assert _euclideanizer_analysis_all_present(str(tmp_path), resume=True, analysis_cfg=analysis_cfg) is True
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, analysis_cfg=_analysis_cfg_for_presence(do_latent=True),
+    ) is True
 
 
 def test_euclideanizer_analysis_all_present_false_when_latent_enabled_but_missing(tmp_path):
     """When analysis.latent is enabled but analysis/latent/ figures are missing, analysis is not all present."""
-    analysis_cfg = {
-        "rmsd_gen": {"enabled": False}, "rmsd_recon": {"enabled": False},
-        "q_gen": {"enabled": False}, "q_recon": {"enabled": False},
-        "generative_capacity_rmsd": {"enabled": False}, "generative_capacity_q": {"enabled": False},
-        "coord_clustering_gen": {"enabled": False}, "coord_clustering_recon": {"enabled": False},
-        "distmap_clustering_gen": {"enabled": False}, "distmap_clustering_recon": {"enabled": False},
-        "latent": {"enabled": True},
-    }
-    assert _euclideanizer_analysis_all_present(str(tmp_path), resume=True, analysis_cfg=analysis_cfg) is False
+    assert _euclideanizer_analysis_all_present(
+        str(tmp_path), resume=True, analysis_cfg=_analysis_cfg_for_presence(do_latent=True),
+    ) is False
 
 
 def test_euclideanizer_analysis_all_present_true_when_coord_clustering_gen_exists(tmp_path):
@@ -925,10 +1072,13 @@ def test_euclideanizer_analysis_all_present_true_when_coord_clustering_gen_exist
     run_dir.mkdir(parents=True)
     (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=False, do_q_recon=False,
-        do_coord_clustering_gen=True, do_coord_clustering_recon=False,
-        coord_clustering_variance_list=[1.0], coord_clustering_num_samples_list=[10],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_coord_clustering_gen=True,
+            coord_clustering_variance_list=[1.0],
+            coord_clustering_num_samples_list=[10],
+        ),
     ) is True
 
 
@@ -938,10 +1088,13 @@ def test_euclideanizer_analysis_all_present_true_when_distmap_clustering_gen_exi
     run_dir.mkdir(parents=True)
     (run_dir / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=False, do_q_recon=False,
-        do_distmap_clustering_gen=True, do_distmap_clustering_recon=False,
-        distmap_clustering_variance_list=[1.0], distmap_clustering_num_samples_list=[10],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_distmap_clustering_gen=True,
+            distmap_clustering_variance_list=[1.0],
+            distmap_clustering_num_samples_list=[10],
+        ),
     ) is True
 
 
@@ -950,11 +1103,16 @@ def test_euclideanizer_analysis_all_present_false_when_coord_clustering_recon_en
     (tmp_path / "analysis" / "coord_clustering" / "gen" / "default_var1.0").mkdir(parents=True)
     (tmp_path / "analysis" / "coord_clustering" / "gen" / "default_var1.0" / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=False, do_q_recon=False,
-        do_coord_clustering_gen=True, do_coord_clustering_recon=True,
-        coord_clustering_variance_list=[1.0], coord_clustering_num_samples_list=[10],
-        coord_clustering_max_recon_train_list=[None], coord_clustering_max_recon_test_list=[None],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_coord_clustering_gen=True,
+            do_coord_clustering_recon=True,
+            coord_clustering_variance_list=[1.0],
+            coord_clustering_num_samples_list=[10],
+            coord_clustering_max_recon_train_list=[None],
+            coord_clustering_max_recon_test_list=[None],
+        ),
     ) is False
 
 
@@ -963,11 +1121,16 @@ def test_euclideanizer_analysis_all_present_false_when_distmap_clustering_recon_
     (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default_var1.0").mkdir(parents=True)
     (tmp_path / "analysis" / "distmap_clustering" / "gen" / "default_var1.0" / "mixed_dendrograms.png").write_bytes(b"x")
     assert _euclideanizer_analysis_all_present(
-        str(tmp_path), resume=True, do_rmsd=False, variance_list=[], num_samples_list=[],
-        do_q=False, do_q_recon=False,
-        do_distmap_clustering_gen=True, do_distmap_clustering_recon=True,
-        distmap_clustering_variance_list=[1.0], distmap_clustering_num_samples_list=[10],
-        distmap_clustering_max_recon_train_list=[None], distmap_clustering_max_recon_test_list=[None],
+        str(tmp_path),
+        resume=True,
+        analysis_cfg=_analysis_cfg_for_presence(
+            do_distmap_clustering_gen=True,
+            do_distmap_clustering_recon=True,
+            distmap_clustering_variance_list=[1.0],
+            distmap_clustering_num_samples_list=[10],
+            distmap_clustering_max_recon_train_list=[None],
+            distmap_clustering_max_recon_test_list=[None],
+        ),
     ) is False
 
 
