@@ -3,15 +3,16 @@ Generative capacity analysis (RMSD and Q) for Euclideanizer runs.
 
 For each metric:
 - generate n_max structures once
-- compute and persist full n_max x n_max pairwise matrix on disk
+- compute full ``n_max × n_max`` pairwise matrix (memmap ``.npy`` during the run)
 - evaluate nested subsamples for each n in n_structures
-- save one figure + optional per-n data files
+- save one figure; when ``save_data`` is true, save per-``n`` histogram NPZ files and
+  ``pairwise_matrix.npz`` (full matrix + metadata), then remove the temporary ``.npy``
 """
 from __future__ import annotations
 
 import os
 import shutil
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 import matplotlib
@@ -110,6 +111,41 @@ def _compute_pairwise_matrix_to_disk(
     np.fill_diagonal(mat, diagonal_fill)
     mat.flush()
     return mat
+
+
+def _write_pairwise_matrix_npz_and_remove_npy(
+    *,
+    matrix_npy_path: str,
+    npz_path: str,
+    n_max: int,
+    seed: int,
+    n_values: list[int],
+    metric: str,
+    delta: float | None = None,
+) -> None:
+    """Write full ``n_max × n_max`` pairwise matrix to ``.npz`` (when ``save_data``), then delete the memmap ``.npy``."""
+    if not os.path.isfile(matrix_npy_path):
+        return
+    mmap = np.load(matrix_npy_path, mmap_mode="r", allow_pickle=False)
+    try:
+        arr = np.asarray(mmap, dtype=np.float32)
+    finally:
+        del mmap
+    payload: dict[str, Any] = {
+        "pairwise": arr,
+        "n_max": np.int32(n_max),
+        "seed": np.int32(seed),
+        "n_structures": np.asarray(sorted(int(n) for n in n_values), dtype=np.int32),
+        "metric": np.bytes_(metric.encode("utf-8")),
+    }
+    if delta is not None:
+        payload["delta"] = np.float32(delta)
+    os.makedirs(os.path.dirname(npz_path) or ".", exist_ok=True)
+    np.savez_compressed(npz_path, **payload)
+    try:
+        os.remove(matrix_npy_path)
+    except OSError:
+        pass
 
 
 def _apply_plain_number_axes(ax) -> None:
@@ -379,6 +415,8 @@ def run_generative_capacity_rmsd(
     if save_data:
         _save_per_n_npz(data_dir, lambda n: f"n{n}_min_rmsd.npz", by_n, seed=seed)
 
+    npz_path = os.path.join(data_dir, "pairwise_matrix.npz")
+
     fig = _generative_capacity_stacked_filled_figure(
         by_n,
         x_label="Min RMSD To Nearest Generated Structure (Å)",
@@ -392,7 +430,16 @@ def run_generative_capacity_rmsd(
     plt.close(fig)
 
     del mat
-    if not save_data and os.path.isdir(data_dir):
+    if save_data:
+        _write_pairwise_matrix_npz_and_remove_npy(
+            matrix_npy_path=matrix_path,
+            npz_path=npz_path,
+            n_max=n_max,
+            seed=seed,
+            n_values=n_values,
+            metric="rmsd",
+        )
+    elif os.path.isdir(data_dir):
         shutil.rmtree(data_dir, ignore_errors=True)
     return out_path
 
@@ -446,6 +493,8 @@ def run_generative_capacity_q(
     if save_data:
         _save_per_n_npz(data_dir, lambda n: f"n{n}_max_q.npz", by_n, seed=seed)
 
+    npz_path = os.path.join(data_dir, "pairwise_matrix.npz")
+
     fig = _generative_capacity_stacked_filled_figure(
         by_n,
         x_label="Max Q To Nearest Generated Structure",
@@ -459,7 +508,17 @@ def run_generative_capacity_q(
     plt.close(fig)
 
     del mat
-    if not save_data and os.path.isdir(data_dir):
+    if save_data:
+        _write_pairwise_matrix_npz_and_remove_npy(
+            matrix_npy_path=matrix_path,
+            npz_path=npz_path,
+            n_max=n_max,
+            seed=seed,
+            n_values=n_values,
+            metric="q",
+            delta=delta,
+        )
+    elif os.path.isdir(data_dir):
         shutil.rmtree(data_dir, ignore_errors=True)
     return out_path
 

@@ -95,7 +95,7 @@ def test_scan_runs_training_split_dirs(tmp_path):
     assert "seed_0_split_0.9_dm_0" in ids
     assert "seed_0_split_0.9_dm_0_eu_0" in ids
     by_id = {r["id"]: r for r in runs}
-    assert "split 0.9" in by_id["seed_0_split_0.9"]["label_short"]
+    assert "Split 0.9" in by_id["seed_0_split_0.9"]["label_short"]
     assert by_id["seed_0_split_0.9_dm_0"]["parent_id"] == "seed_0_split_0.9"
 
 
@@ -132,6 +132,11 @@ def test_scan_runs_training_split_and_max_data_dirs(tmp_path):
     ids = {r["id"] for r in runs}
     assert "seed_0_split_0.9_maxdata_500" in ids
     assert "seed_0_split_0.9_maxdata_500_dm_0_eu_0" in ids
+    by_id = {r["id"]: r for r in runs}
+    assert "Max Data 500" in by_id["seed_0_split_0.9_maxdata_500"]["label_short"]
+    assert "Split 0.9" in by_id["seed_0_split_0.9_maxdata_500"]["label_short"]
+    assert "DistMap 0" in by_id["seed_0_split_0.9_maxdata_500_dm_0"]["label_short"]
+    assert "Euclideanizer 0" in by_id["seed_0_split_0.9_maxdata_500_dm_0_eu_0"]["label_short"]
 
 
 def test_scan_runs_training_split_from_pipeline_config(tmp_path):

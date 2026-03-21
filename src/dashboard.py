@@ -96,6 +96,23 @@ def _training_split_value_for_seed_dir(seed_dir: str, split_token: Optional[str]
     return None
 
 
+def _max_data_tag_from_seed_group_id(seed_group_id: str) -> Optional[str]:
+    if "_maxdata_" not in seed_group_id:
+        return None
+    return seed_group_id.split("_maxdata_", 1)[1]
+
+
+def _seed_label_short_display(seed_num: int, seed_group_id: str, split_token: Optional[str]) -> str:
+    """Browse/breadcrumb short label: Title Case phrases (Seed, Max Data, Split); values unchanged."""
+    parts = [f"Seed {seed_num}"]
+    md = _max_data_tag_from_seed_group_id(seed_group_id)
+    if md is not None:
+        parts.append(f"Max Data {md}")
+    if split_token is not None:
+        parts.append(f"Split {split_token}")
+    return " · ".join(parts)
+
+
 def _label_from_distmap_config(
     cfg: Optional[dict],
     seed: int,
@@ -104,12 +121,8 @@ def _label_from_distmap_config(
     seed_group_id: str,
     split_token: Optional[str] = None,
 ) -> tuple[str, str]:
-    max_data_tag = None
-    if "_maxdata_" in seed_group_id:
-        max_data_tag = seed_group_id.split("_maxdata_", 1)[1]
-    extra = f" · max_data {max_data_tag}" if max_data_tag is not None else ""
-    prefix = f"Seed {seed}{extra} · split {split_token} · " if split_token else f"Seed {seed}{extra} · "
-    short = f"{prefix}DM {dm_index}"
+    prefix = _seed_label_short_display(seed, seed_group_id, split_token) + " · "
+    short = f"{prefix}DistMap {dm_index}"
     if not cfg or "distmap" not in cfg:
         return short, f"{seed_group_id}_dm_{dm_index}"
     d = cfg["distmap"]
@@ -130,12 +143,8 @@ def _label_from_euclideanizer_config(
     seed_group_id: str,
     split_token: Optional[str] = None,
 ) -> tuple[str, str]:
-    max_data_tag = None
-    if "_maxdata_" in seed_group_id:
-        max_data_tag = seed_group_id.split("_maxdata_", 1)[1]
-    extra = f" · max_data {max_data_tag}" if max_data_tag is not None else ""
-    prefix = f"Seed {seed}{extra} · split {split_token} · " if split_token else f"Seed {seed}{extra} · "
-    short = f"{prefix}DM {dm_index} · Eu {eu_index}"
+    prefix = _seed_label_short_display(seed, seed_group_id, split_token) + " · "
+    short = f"{prefix}DistMap {dm_index} · Euclideanizer {eu_index}"
     if not cfg or "euclideanizer" not in cfg:
         return short, f"{seed_group_id}_dm_{dm_index}_eu_{eu_index}"
     e = cfg["euclideanizer"]
@@ -800,7 +809,7 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
             for b in dm_blocks:
                 seed_blocks.append({**b, "run_id": dm_id})
 
-        seed_label_short = f"Seed {seed_num} · split {split_token}" if split_token else f"Seed {seed_num}"
+        seed_label_short = _seed_label_short_display(seed_num, seed_group_id, split_token)
         seed_label_long = f"seed {seed_num} training_split {split_token}" if split_token else f"seed {seed_num}"
         seed_entry: dict[str, Any] = {
             "id": seed_id,
@@ -1433,7 +1442,6 @@ def _html_content(manifest: dict) -> str:
       const blockToType = {};
       runs.forEach(r => { (r.blocks || []).forEach(b => { if (b.name && !blockToType[b.name]) blockToType[b.name] = b.type || ''; }); });
       allBlockNames.sort((a, b) => blockTypeOrder(blockToType[a] || '', a) - blockTypeOrder(blockToType[b] || '', b) || a.localeCompare(b));
-      const axisCaption = aspect + ' \u2192';
       let navHtml = '<div class="aspect-section-nav"><div class="aspect-section-nav-inner"><span class="control-group-label">Sections:</span>';
       allBlockNames.forEach(blockName => {
         const id = slugifySectionId(blockName);
@@ -1441,9 +1449,9 @@ def _html_content(manifest: dict) -> str:
       });
       navHtml += '</div></div>';
       const aspectCaption = aspect === 'training_split'
-        ? 'training_split (train fraction — share of structures in train set)'
+        ? 'Training Split (Train Fraction — Share of Structures in Train Set)'
         : aspect;
-      let html = navHtml + '<p class="aspect-axis-caption">Aspect: <strong>' + escapeHtml(aspectCaption) + '</strong> (x-axis)</p>';
+      let html = navHtml + '<p class="aspect-axis-caption">Aspect: <strong>' + escapeHtml(aspectCaption) + '</strong> (X-Axis)</p>';
       allBlockNames.forEach(blockName => {
         const sectionId = slugifySectionId(blockName);
         html += '<div class="aspect-section" id="' + sectionId + '"><h3>' + escapeHtml(blockName) + '</h3>';
@@ -1881,7 +1889,7 @@ def _html_content(manifest: dict) -> str:
       aspects.forEach(function(k) {
         var opt = document.createElement('option');
         opt.value = k;
-        opt.textContent = k === 'training_split' ? 'Training Split (Train Fraction)' : k;
+        opt.textContent = k === 'training_split' ? 'Training Split (Train / Test)' : k;
         el.appendChild(opt);
       });
       if (curVal && aspects.indexOf(curVal) >= 0) el.value = curVal;
@@ -2407,7 +2415,7 @@ def _html_content(manifest: dict) -> str:
       options.forEach(k => {
         const opt = document.createElement('option');
         opt.value = k;
-        opt.textContent = k === 'training_split' ? 'training_split (train / test)' : k;
+        opt.textContent = k === 'training_split' ? 'Training Split (Train / Test)' : k;
         if (k === 'training_split') opt.title = 'Fraction of structures in train set; columns compare different train/test splits at fixed seed and model config.';
         aspectEl.appendChild(opt);
       });

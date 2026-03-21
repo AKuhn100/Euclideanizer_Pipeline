@@ -182,6 +182,7 @@ analysis:
     n_structures: [100, 250, 500, 1000]
     gen_decode_batch_size: 256
     query_batch_size: 128
+    # save_data: true → data/n{N}_min_rmsd.npz per n (histogram/plot source) + data/pairwise_matrix.npz (full n_max×n_max matrix + metadata). false → no data/ dir.
     save_data: true
     save_pdf_copy: false
   generative_capacity_q:
@@ -192,6 +193,7 @@ analysis:
     gen_decode_batch_size: 256
     query_batch_size: 128
     delta: 0.7071
+    # save_data: true → data/n{N}_max_q.npz per n + data/pairwise_matrix.npz (full matrix, includes delta). false → no data/ dir.
     save_data: true
     save_pdf_copy: false
   latent:
@@ -208,7 +210,7 @@ scoring:
 
 meta_analysis:
   sufficiency:
-    enabled: false   # if true, build per-seed sufficiency distributions/heatmaps from analysis/rmsd + analysis/q NPZ
+    enabled: false   # if true, build per-seed sufficiency distributions/heatmaps from analysis/rmsd/recon + analysis/q/recon NPZ (test recon RMSD/Q)
     overwrite_existing: false   # if true, prompt then remove existing meta_analysis/sufficiency outputs before re-running
     save_pdf_copy: false   # if true, save PDF copies of sufficiency figures
 

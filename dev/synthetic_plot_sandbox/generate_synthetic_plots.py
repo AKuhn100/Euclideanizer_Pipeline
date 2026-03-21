@@ -2,8 +2,15 @@
 """
 Synthetic sufficiency meta-analysis + generative capacity figures.
 
-All plotting logic lives here (sandbox only); reads the same on-disk layout the
-real pipeline uses for sufficiency NPZ discovery.
+Writes a minimal fake ``seed_*`` tree with **recon** NPZ (``test_recon_rmsd`` /
+``test_recon_q``), then builds sufficiency figures using the **same layout rules** as
+``Pipeline/src/meta_analysis.py`` (constants from ``plot_config`` when importable).
+
+Generative capacity plots are synthetic (no torch); stacked rows use
+``GEN_CAP_STACKED_*`` from ``plot_config`` when available.
+
+Use ``--no-clean --reuse-fake-base`` to skip rewriting ``fake_base/`` when
+``.synthetic_sufficiency_fingerprint.yaml`` matches the requested grid.
 """
 from __future__ import annotations
 
@@ -11,9 +18,135 @@ import argparse
 import itertools
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+_PIPELINE_ROOT = Path(__file__).resolve().parents[2]
+if (_PIPELINE_ROOT / "src" / "plot_config.py").is_file():
+    sys.path.insert(0, str(_PIPELINE_ROOT))
+
+try:
+    from src.plot_config import (
+        FONT_FAMILY,
+        FONT_SIZE_AXIS,
+        FONT_SIZE_TITLE,
+        FONT_SIZE_TICK,
+        GEN_CAP_STACKED_FIGWIDTH,
+        GEN_CAP_STACKED_ROW_HEIGHT,
+        HIST_BINS_DEFAULT,
+        META_CBAR_HEIGHT_FRAC,
+        META_CBAR_WIDTH_FRAC,
+        META_DIST_CB_GAP,
+        META_HEATMAP_CB_GAP,
+        PLOT_DPI,
+        SUFFICIENCY_DIST_CB_GAP_EXTRA,
+        SUFFICIENCY_DIST_FIG_WIDTH,
+        SUFFICIENCY_DIST_FIGH_EXTRA,
+        SUFFICIENCY_DIST_ROW_HEIGHT,
+        SUFFICIENCY_HEATMAP_CELL_IN,
+        SUFFICIENCY_HEATMAP_FIGH_EXTRA,
+        sufficiency_dist_bottom_frac,
+        sufficiency_dist_cbar_gap_frac,
+        sufficiency_heatmap_bottom_frac,
+        sufficiency_heatmap_cbar_gap_frac,
+        sufficiency_heatmap_wspace,
+        sufficiency_heatmap_ytick_fontsize,
+    )
+
+    CBAR_META_HEIGHT_FRAC = META_CBAR_HEIGHT_FRAC
+    CBAR_META_WIDTH_FRAC = META_CBAR_WIDTH_FRAC
+    META_DIST_CBAR_GAP_BELOW_AXIS = META_DIST_CB_GAP
+    HEATMAP_CBAR_BELOW_AXES_FRAC = META_HEATMAP_CB_GAP
+except ImportError:
+    PLOT_DPI = 150
+    HIST_BINS_DEFAULT = 50
+    FONT_FAMILY = "sans-serif"
+    FONT_SIZE_AXIS = 10
+    FONT_SIZE_TITLE = 11
+    FONT_SIZE_TICK = 9
+    CBAR_META_WIDTH_FRAC = 0.75
+    CBAR_META_HEIGHT_FRAC = 0.028
+    META_DIST_CBAR_GAP_BELOW_AXIS = 0.075
+    HEATMAP_CBAR_BELOW_AXES_FRAC = 0.21
+    SUFFICIENCY_DIST_FIG_WIDTH = 14.0
+    SUFFICIENCY_DIST_ROW_HEIGHT = 3.05
+    SUFFICIENCY_DIST_BOTTOM_BASE = 0.22
+    SUFFICIENCY_DIST_BOTTOM_EXTRA = 0.042
+    SUFFICIENCY_DIST_BOTTOM_CAP = 0.40
+    SUFFICIENCY_DIST_CB_GAP_EXTRA = 0.030
+    SUFFICIENCY_DIST_FIGH_EXTRA = 0.22
+    SUFFICIENCY_HEATMAP_CELL_IN = 0.82
+    SUFFICIENCY_HEATMAP_BOTTOM_BASE = 0.24
+    SUFFICIENCY_HEATMAP_BOTTOM_EXTRA = 0.048
+    SUFFICIENCY_HEATMAP_BOTTOM_CAP = 0.42
+    SUFFICIENCY_HEATMAP_CB_GAP_EXTRA = 0.036
+    SUFFICIENCY_HEATMAP_FIGH_EXTRA = 0.28
+    FONT_SIZE_SMALL = 8
+    FONT_SIZE_TINY = 6
+    GEN_CAP_STACKED_FIGWIDTH = 11.0
+    GEN_CAP_STACKED_ROW_HEIGHT = 3.05
+    _INCH_H_LO, _INCH_H_SPAN = 16.0, 26.0
+    _INCH_R_LO, _INCH_R_SPAN = 8.0, 8.0
+
+    def _sufficiency_layout_inch_weight(fig_height_in, n_stack_rows):
+        h = float(fig_height_in)
+        n = max(int(n_stack_rows), 1)
+        w_h = 0.0 if _INCH_H_SPAN <= 0 else (h - _INCH_H_LO) / _INCH_H_SPAN
+        w_r = 0.0 if _INCH_R_SPAN <= 0 else (float(n) - _INCH_R_LO) / _INCH_R_SPAN
+        return float(min(1.0, max(0.0, max(w_h, w_r))))
+
+    def sufficiency_dist_bottom_frac(fig_height_in, small_split_steps, n_split_rows):
+        h = max(float(fig_height_in), 1e-6)
+        s = int(small_split_steps)
+        legacy = min(SUFFICIENCY_DIST_BOTTOM_CAP, SUFFICIENCY_DIST_BOTTOM_BASE + s * SUFFICIENCY_DIST_BOTTOM_EXTRA)
+        reserve_in = 0.92 + s * 0.24
+        inch_frac = max(0.045, reserve_in / h)
+        w = _sufficiency_layout_inch_weight(h, n_split_rows)
+        blended = (1.0 - w) * legacy + w * inch_frac
+        return min(SUFFICIENCY_DIST_BOTTOM_CAP, max(0.045, blended))
+
+    def sufficiency_dist_cbar_gap_frac(fig_height_in, small_split_steps, n_split_rows):
+        h = max(float(fig_height_in), 1e-6)
+        s = int(small_split_steps)
+        legacy = META_DIST_CBAR_GAP_BELOW_AXIS + s * SUFFICIENCY_DIST_CB_GAP_EXTRA
+        gap_in = 0.38 + s * 0.055
+        inch_frac = max(0.028, gap_in / h)
+        w = _sufficiency_layout_inch_weight(h, n_split_rows)
+        blended = (1.0 - w) * legacy + w * inch_frac
+        return min(0.38, max(0.028, blended))
+
+    def sufficiency_heatmap_bottom_frac(fig_height_in, small_grid_steps, n_heatmap_rows):
+        h = max(float(fig_height_in), 1e-6)
+        s = int(small_grid_steps)
+        legacy = min(
+            SUFFICIENCY_HEATMAP_BOTTOM_CAP,
+            SUFFICIENCY_HEATMAP_BOTTOM_BASE + s * SUFFICIENCY_HEATMAP_BOTTOM_EXTRA,
+        )
+        reserve_in = 1.2 + s * 0.26
+        inch_frac = max(0.10, reserve_in / h)
+        w = _sufficiency_layout_inch_weight(h, n_heatmap_rows)
+        blended = (1.0 - w) * legacy + w * inch_frac
+        return min(SUFFICIENCY_HEATMAP_BOTTOM_CAP, max(0.10, blended))
+
+    def sufficiency_heatmap_cbar_gap_frac(fig_height_in, small_grid_steps, n_heatmap_rows):
+        h = max(float(fig_height_in), 1e-6)
+        s = int(small_grid_steps)
+        legacy = HEATMAP_CBAR_BELOW_AXES_FRAC + s * SUFFICIENCY_HEATMAP_CB_GAP_EXTRA
+        gap_in = 0.72 + s * 0.065
+        inch_frac = max(0.058, gap_in / h)
+        w = _sufficiency_layout_inch_weight(h, n_heatmap_rows)
+        blended = (1.0 - w) * legacy + w * inch_frac
+        return min(0.36, max(0.058, blended))
+
+    def sufficiency_heatmap_ytick_fontsize(n_rows):
+        n = max(int(n_rows), 1)
+        return float(max(FONT_SIZE_TINY, min(float(FONT_SIZE_TICK), 96.0 / n)))
+
+    def sufficiency_heatmap_wspace(n_rows):
+        n = max(int(n_rows), 1)
+        return float(max(0.09, min(0.26, 0.062 + 0.0142 * n)))
 
 import matplotlib
 
@@ -35,44 +168,42 @@ def _get_cmap(name: str = "viridis"):
 
 
 # ---------------------------------------------------------------------------
-# Plot style (aligned with Pipeline/src/plot_config.py)
+# Generative capacity sandbox-only layout (overlay / legacy gridspec)
 # ---------------------------------------------------------------------------
-PLOT_DPI = 150
-HIST_BINS_DEFAULT = 50
 LINEWIDTH_HIST_STEP = 2.4
 HIST_FILLED_EDGE_COLOR = "none"
 GEN_CAP_FIGSIZE = (10.5, 4.6)
 GEN_CAP_GRIDSPEC_HEIGHT_RATIOS = (1, 6)
 GEN_CAP_GRIDSPEC_HSPACE = 0.22
 GEN_CAP_SUBPLOT_MARGINS = dict(left=0.11, right=0.96, top=0.86, bottom=0.14)
-FONT_FAMILY = "sans-serif"
-FONT_SIZE_AXIS = 10
-FONT_SIZE_TITLE = 11
-FONT_SIZE_TICK = 9
-
-# Horizontal colorbars (figure fraction coordinates, 0–1)
-# Meta-analysis: ~3/4 width of the panel row / single axes, centered in that span.
-CBAR_META_WIDTH_FRAC = 0.75
-CBAR_META_HEIGHT_FRAC = 0.028
-# Generative capacity: strip under overlay panel
 GEN_CBAR_HEIGHT_FRAC = 0.014
 GEN_CBAR_GAP_BELOW_AXES = 0.03
-# Gap below sufficiency *distribution* panels before colorbar (smaller → colorbar sits higher).
-META_DIST_CBAR_GAP_BELOW_AXIS = 0.075
-# Distance from bottom of heatmap axes to top of colorbar (larger → colorbar sits lower).
-HEATMAP_CBAR_BELOW_AXES_FRAC = 0.21
 
-# Synthetic sufficiency layout: many splits × many max_data → asymmetric heatmaps;
-# multiple seeds → separate meta-analysis trees. Tune for "realistic" density.
+# Default synthetic sufficiency grid (5 × 6 heatmap per seed).
 SYNTHETIC_SEEDS = (1, 2)
-# 5 rows × 6 columns → non-square heatmap (asymmetric grid).
 SYNTHETIC_TRAINING_SPLITS = (0.5, 0.58, 0.66, 0.74, 0.82)
 SYNTHETIC_MAX_DATA = (400, 800, 1600, 3200, 5000, 10000)
 SYNTHETIC_N_STRUCTURES_PER_RUN = 480
 
+# Stress grid: many splits × many max_data (``--large-grid``).
+LARGE_GRID_SEEDS = (1, 2, 3, 4)
+LARGE_GRID_N_SPLITS = 14
+LARGE_GRID_N_MAX_DATA = 12
+LARGE_GRID_N_STRUCTURES = 640
+LARGE_GRID_GEN_CAP_N = [16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768]
+
+
+def _large_grid_training_splits() -> tuple[float, ...]:
+    return tuple(np.round(np.linspace(0.5, 0.92, LARGE_GRID_N_SPLITS), 4))
+
+
+def _large_grid_max_data() -> tuple[int, ...]:
+    raw = np.logspace(np.log10(250), np.log10(30_000), LARGE_GRID_N_MAX_DATA)
+    return tuple(sorted({int(round(x)) for x in raw}))
+
 
 # =============================================================================
-# Sufficiency: on-disk scan + KDE (copied from Pipeline/src/meta_analysis.py)
+# Sufficiency: on-disk scan (same NPZ layout as pipeline meta_analysis)
 # =============================================================================
 
 
@@ -122,42 +253,42 @@ def _iter_euclideanizer_runs(seed_dir: str):
                 yield run_dir
 
 
-def _run_name_has_var_one(run_name: str) -> bool:
-    if "_var" in run_name:
-        suffix = run_name.split("_var", 1)[-1].strip()
-        try:
-            return abs(float(suffix) - 1.0) < 1e-9
-        except ValueError:
-            return False
-    if run_name.startswith("var"):
-        try:
-            return abs(float(run_name[3:].strip()) - 1.0) < 1e-9
-        except ValueError:
-            return False
-    return False
-
-
-def _load_gen_metric_array(seed_dir: str, metric: str) -> np.ndarray | None:
-    filename = "rmsd_data.npz" if metric == "rmsd" else "q_data.npz"
-    subdir = "rmsd" if metric == "rmsd" else "q"
-    for run_dir in _iter_euclideanizer_runs(seed_dir) or []:
-        gen_dir = os.path.join(run_dir, "analysis", subdir, "gen")
-        if not os.path.isdir(gen_dir):
+def _collect_recon_npz_paths(recon_root: str, metric: str) -> list[tuple[str, str]]:
+    fname = "rmsd_recon_data.npz" if metric == "rmsd" else "q_recon_data.npz"
+    if not os.path.isdir(recon_root):
+        return []
+    out: list[tuple[str, str]] = []
+    direct = os.path.join(recon_root, "data", fname)
+    if os.path.isfile(direct):
+        out.append(("", direct))
+    for name in sorted(os.listdir(recon_root)):
+        sub = os.path.join(recon_root, name)
+        if not os.path.isdir(sub):
             continue
-        for run_name in sorted(os.listdir(gen_dir)):
-            data_path = os.path.join(gen_dir, run_name, "data", filename)
-            if not os.path.isfile(data_path):
-                continue
-            if not _run_name_has_var_one(run_name):
-                continue
+        cand = os.path.join(sub, "data", fname)
+        if os.path.isfile(cand):
+            out.append((name, cand))
+    return out
+
+
+def _load_recon_metric_arrays(seed_dir: str) -> tuple[np.ndarray | None, np.ndarray | None]:
+    for run_dir in _iter_euclideanizer_runs(seed_dir) or []:
+        rmsd_recon_root = os.path.join(run_dir, "analysis", "rmsd", "recon")
+        q_recon_root = os.path.join(run_dir, "analysis", "q", "recon")
+        r_by_rel = {rel: p for rel, p in _collect_recon_npz_paths(rmsd_recon_root, "rmsd")}
+        q_by_rel = {rel: p for rel, p in _collect_recon_npz_paths(q_recon_root, "q")}
+        for rel in sorted(set(r_by_rel) & set(q_by_rel)):
             try:
-                loaded = np.load(data_path, allow_pickle=False)
-                vals = np.asarray(loaded["gen_to_test"], dtype=np.float32)
-                loaded.close()
+                lr = np.load(r_by_rel[rel], allow_pickle=False)
+                lq = np.load(q_by_rel[rel], allow_pickle=False)
+                tr = lr["test_recon_rmsd"]
+                tq = lq["test_recon_q"]
+                lr.close()
+                lq.close()
+                return np.asarray(tr, dtype=np.float32), np.asarray(tq, dtype=np.float32)
             except Exception:
                 continue
-            return vals
-    return None
+    return None, None
 
 
 def _kde_curve(values: np.ndarray, x_min: float, x_max: float) -> tuple[np.ndarray, np.ndarray]:
@@ -202,8 +333,7 @@ def collect_sufficiency_points(base_output_dir: str, max_data_values: list[int |
         if not os.path.isdir(seed_dir):
             continue
         split = float(split_opt) if split_opt is not None else 0.8
-        rmsd_vals = _load_gen_metric_array(seed_dir, "rmsd")
-        q_vals = _load_gen_metric_array(seed_dir, "q")
+        rmsd_vals, q_vals = _load_recon_metric_arrays(seed_dir)
         if rmsd_vals is None or q_vals is None:
             continue
         md = _max_data_from_seed_dir(seed_dir, fallback_md)
@@ -261,12 +391,21 @@ def _style_horizontal_meta_colorbar(cbar, label: str, *, labelpad: int = 3) -> N
     cbar.ax.tick_params(labelsize=FONT_SIZE_TICK)
 
 
-def _training_split_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, height_frac: float = CBAR_META_HEIGHT_FRAC) -> None:
+def _training_split_colorbar_below_panels(
+    fig,
+    ax_left,
+    ax_right,
+    *,
+    cmap,
+    height_frac: float = CBAR_META_HEIGHT_FRAC,
+    gap_frac: float | None = None,
+) -> None:
     """75%% of panel span, centered; label above the bar."""
     fig.canvas.draw()
     p0, p1 = ax_left.get_position(), ax_right.get_position()
     row_bottom = min(p0.y0, p1.y0)
-    y = max(0.02, row_bottom - META_DIST_CBAR_GAP_BELOW_AXIS - height_frac)
+    gap = META_DIST_CBAR_GAP_BELOW_AXIS if gap_frac is None else gap_frac
+    y = max(0.02, row_bottom - gap - height_frac)
     cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, height_frac)
     sm = cm.ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap=cmap)
     sm.set_array([])
@@ -276,16 +415,35 @@ def _training_split_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, heigh
     _style_horizontal_meta_colorbar(cbar, "Training Split", labelpad=3)
 
 
-def _heatmap_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, vmin: float, vmax: float, label: str) -> None:
+def _heatmap_colorbar_below_panels(
+    fig,
+    ax_left,
+    ax_right,
+    *,
+    cmap,
+    vmin: float,
+    vmax: float,
+    label: str,
+    gap_frac: float | None = None,
+) -> None:
     fig.canvas.draw()
     p0, p1 = ax_left.get_position(), ax_right.get_position()
     row_bottom = min(p0.y0, p1.y0)
-    y = max(0.02, row_bottom - HEATMAP_CBAR_BELOW_AXES_FRAC - CBAR_META_HEIGHT_FRAC)
+    gap = HEATMAP_CBAR_BELOW_AXES_FRAC if gap_frac is None else gap_frac
+    y = max(0.02, row_bottom - gap - CBAR_META_HEIGHT_FRAC)
     cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, CBAR_META_HEIGHT_FRAC)
     sm = cm.ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax), cmap=cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
     _style_horizontal_meta_colorbar(cbar, label, labelpad=4)
+
+
+def _sufficiency_heatmap_small_grid_steps(n_r: int, n_c: int) -> int:
+    return max(0, 4 - min(n_r, n_c))
+
+
+def _sufficiency_dist_small_split_steps(n_split_rows: int) -> int:
+    return max(0, 4 - n_split_rows)
 
 
 def _norm01_per_grid(grid: np.ndarray) -> np.ma.MaskedArray:
@@ -311,11 +469,11 @@ def run_sufficiency_plots_sandbox(
     save_pdf_copy: bool,
     log: Callable[[str], None] | None = None,
 ) -> bool:
-    """Sufficiency distributions + heatmaps with sandbox layout (not Pipeline meta_analysis)."""
+    """Sufficiency distributions + heatmaps (layout aligned with ``Pipeline/src/meta_analysis.py``)."""
     points_by_seed = collect_sufficiency_points(base_output_dir, max_data_values)
     if not points_by_seed:
         if log:
-            log("Sufficiency sandbox: no analysis NPZ data found. Skipping.")
+            log("Sufficiency sandbox: no recon analysis NPZ data found. Skipping.")
         return False
 
     out_root = os.path.join(base_output_dir, "meta_analysis", "sufficiency")
@@ -342,6 +500,11 @@ def run_sufficiency_plots_sandbox(
             # Highest split at top (darkest viridis); shared x axis per column.
             splits_ordered = list(reversed(sorted({p.training_split for p in subset})))
             n_splits_local = len(splits_ordered)
+            small_d = _sufficiency_dist_small_split_steps(n_splits_local)
+            row_h = SUFFICIENCY_DIST_ROW_HEIGHT
+            fig_h = max(4.0 + small_d * SUFFICIENCY_DIST_FIGH_EXTRA, row_h * n_splits_local)
+            dist_bottom = sufficiency_dist_bottom_frac(fig_h, small_d, n_splits_local)
+            dist_cb_gap = sufficiency_dist_cbar_gap_frac(fig_h, small_d, n_splits_local)
 
             all_r = np.concatenate([p.rmsd_values for p in subset], axis=0)
             all_q = np.concatenate([p.q_values for p in subset], axis=0)
@@ -353,11 +516,10 @@ def run_sufficiency_plots_sandbox(
             bins_r = np.linspace(xr_min, xr_max, HIST_BINS_DEFAULT + 1)
             bins_q = np.linspace(xq_min, xq_max, HIST_BINS_DEFAULT + 1)
 
-            row_h = 3.05
-            fig_h = max(4.0, row_h * n_splits_local)
             fig, axes = plt.subplots(
-                n_splits_local, 2,
-                figsize=(14, fig_h),
+                n_splits_local,
+                2,
+                figsize=(SUFFICIENCY_DIST_FIG_WIDTH, fig_h),
                 sharex="col",
                 gridspec_kw=dict(wspace=0.3),
             )
@@ -396,14 +558,21 @@ def run_sufficiency_plots_sandbox(
                 for ax in col_axes:
                     ax.set_ylim(0, ymax * 1.05)
 
-            axes[0, 0].set_title(f"Min RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            axes[0, 1].set_title(f"Max Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            axes[-1, 0].set_xlabel("Min RMSD (Å)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
-            axes[-1, 1].set_xlabel("Max Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[0, 0].set_title(f"Test recon RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[0, 1].set_title(f"Test recon Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[-1, 0].set_xlabel("Test recon RMSD (Å)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[-1, 1].set_xlabel("Test recon Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
 
-            fig.subplots_adjust(left=0.1, right=0.97, top=0.92, bottom=0.22)
+            fig.subplots_adjust(left=0.1, right=0.97, top=0.92, bottom=dist_bottom)
             _cbar_hfrac = CBAR_META_HEIGHT_FRAC * 6.2 / fig_h
-            _training_split_colorbar_below_panels(fig, axes[-1, 0], axes[-1, 1], cmap=cmap, height_frac=_cbar_hfrac)
+            _training_split_colorbar_below_panels(
+                fig,
+                axes[-1, 0],
+                axes[-1, 1],
+                cmap=cmap,
+                height_frac=_cbar_hfrac,
+                gap_frac=dist_cb_gap,
+            )
 
             md_tag = "all" if md is None else str(md)
             out_dir = os.path.join(dist_root, f"max_data_{md_tag}")
@@ -434,25 +603,34 @@ def run_sufficiency_plots_sandbox(
 
         n_r = len(split_set)
         n_c = len(md_vals)
-        cell_in = 0.82
+        small = _sufficiency_heatmap_small_grid_steps(n_r, n_c)
+        cell_in = SUFFICIENCY_HEATMAP_CELL_IN
         w_per = max(3.2, cell_in * n_c + 0.55)
-        fig_h = max(4.0, cell_in * n_r + 1.35)
+        fig_h = max(4.0 + small * SUFFICIENCY_HEATMAP_FIGH_EXTRA, cell_in * n_r + 1.35)
+        bottom_frac = sufficiency_heatmap_bottom_frac(fig_h, small, n_r)
+        cb_gap = sufficiency_heatmap_cbar_gap_frac(fig_h, small, n_r)
+        ytick_fs = sufficiency_heatmap_ytick_fontsize(n_r)
+        h_wspace = sufficiency_heatmap_wspace(n_r)
         gap = 0.15
         fig_w = 2 * w_per + gap + 0.6
-        fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), gridspec_kw=dict(wspace=0.08))
+        fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), gridspec_kw=dict(wspace=h_wspace))
         ax_r, ax_q = axes
-        ax_r.imshow(r_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0)
-        ax_q.imshow(q_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0)
-        for ax, title in ((ax_r, "Median Min RMSD"), (ax_q, "Median Max Q")):
+        ax_r.imshow(r_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
+        ax_q.imshow(q_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
+        split_labels = [f"{int(round(s * 100))}%" for s in split_set]
+        md_labels = [str(v) for v in md_vals]
+        for ax, title in ((ax_r, "Median test recon RMSD"), (ax_q, "Median test recon Q")):
             ax.set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            ax.set_xlabel("Max Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY, labelpad=10)
+            ax.set_xlabel("Max Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY, labelpad=12)
             ax.set_xticks(np.arange(len(md_vals)))
-            ax.set_xticklabels([str(v) for v in md_vals], rotation=35, ha="right", fontsize=FONT_SIZE_TICK)
+            ax.set_xticklabels(md_labels, rotation=35, ha="right", fontsize=FONT_SIZE_TICK)
             ax.set_yticks(np.arange(len(split_set)))
-            ax.set_yticklabels([f"{int(round(s * 100))}%" for s in split_set], fontsize=FONT_SIZE_TICK)
-            ax.set_ylabel("Training Split", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax_r.set_yticklabels(split_labels, fontsize=ytick_fs)
+        ax_q.set_yticklabels(split_labels, fontsize=ytick_fs)
+        ax_r.set_ylabel("Training Split", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax_q.set_ylabel("")
 
-        fig.subplots_adjust(left=0.12, right=0.96, top=0.88, bottom=0.24)
+        fig.subplots_adjust(left=0.12, right=0.96, top=0.88, bottom=bottom_frac)
         _heatmap_colorbar_below_panels(
             fig,
             ax_r,
@@ -461,6 +639,7 @@ def run_sufficiency_plots_sandbox(
             vmin=0.0,
             vmax=1.0,
             label="Normalized Median",
+            gap_frac=cb_gap,
         )
         heat_png = os.path.join(heat_root, "sufficiency_heatmap_rmsd_q.png")
         fig.savefig(heat_png, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.2)
@@ -712,12 +891,18 @@ def _panel_kde(ax, values: np.ndarray, x_min: float, x_max: float, *, color: str
     ax.plot(x, d, color=color, lw=lw, zorder=5)
 
 
-def run_generative_capacity_plots(out_root: Path, rng: np.random.Generator, *, save_pdf: bool) -> None:
+def run_generative_capacity_plots(
+    out_root: Path,
+    rng: np.random.Generator,
+    *,
+    save_pdf: bool,
+    n_values: list[int] | None = None,
+) -> None:
     gc_dir = out_root / "generative_capacity_synthetic"
     variants = gc_dir / "variants"
     gc_dir.mkdir(parents=True, exist_ok=True)
     variants.mkdir(parents=True, exist_ok=True)
-    n_values = [32, 48, 64, 96, 128, 192, 256]
+    n_values = n_values or [32, 48, 64, 96, 128, 192, 256]
 
     by_r = synthetic_generative_capacity_by_n(rng, n_values, kind="rmsd")
     by_q = synthetic_generative_capacity_by_n(rng, n_values, kind="q")
@@ -775,7 +960,12 @@ def run_generative_capacity_plots(out_root: Path, rng: np.random.Generator, *, s
         n_min, n_max = min(n_vals), max(n_vals)
         norm = Normalize(vmin=np.log10(n_min), vmax=np.log10(n_max))
 
-        fig, axes = plt.subplots(len(n_vals), 1, figsize=(11, 3.05 * len(n_vals)), sharex=True)
+        fig, axes = plt.subplots(
+            len(n_vals),
+            1,
+            figsize=(GEN_CAP_STACKED_FIGWIDTH, GEN_CAP_STACKED_ROW_HEIGHT * len(n_vals)),
+            sharex=True,
+        )
         if len(n_vals) == 1:
             axes = [axes]
         for ax, n in zip(axes, reversed(n_vals)):
@@ -841,9 +1031,10 @@ def run_generative_capacity_plots(out_root: Path, rng: np.random.Generator, *, s
         stacked_figure(by_q, "q", mode)
 
 
-def _write_npz_gen_metric(seed_dir: Path, metric: str, gen_to_test: np.ndarray) -> None:
+def _write_npz_recon_metric(seed_dir: Path, metric: str, values: np.ndarray) -> None:
     sub = "rmsd" if metric == "rmsd" else "q"
-    filename = "rmsd_data.npz" if metric == "rmsd" else "q_data.npz"
+    filename = "rmsd_recon_data.npz" if metric == "rmsd" else "q_recon_data.npz"
+    key = "test_recon_rmsd" if metric == "rmsd" else "test_recon_q"
     data_dir = (
         seed_dir
         / "distmap"
@@ -852,12 +1043,11 @@ def _write_npz_gen_metric(seed_dir: Path, metric: str, gen_to_test: np.ndarray) 
         / "0"
         / "analysis"
         / sub
-        / "gen"
-        / "synthetic_var1"
+        / "recon"
         / "data"
     )
     data_dir.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(data_dir / filename, gen_to_test=np.asarray(gen_to_test, dtype=np.float32))
+    np.savez_compressed(data_dir / filename, **{key: np.asarray(values, dtype=np.float32)})
 
 
 def _write_pipeline_config(seed_dir: Path, max_data: int) -> None:
@@ -874,10 +1064,83 @@ def _synthetic_gen_to_test_q(rng: np.random.Generator, n: int, *, lo: float, hi:
     return rng.uniform(float(lo), float(hi), size=n).astype(np.float32)
 
 
-def build_fake_base_output(fake_base: Path, rng: np.random.Generator) -> None:
+_FAKE_SUFFICIENCY_FINGERPRINT = ".synthetic_sufficiency_fingerprint.yaml"
+
+
+def _fake_grid_fingerprint_dict(
+    seeds: tuple[int, ...],
+    splits: tuple[float, ...],
+    max_data: tuple[int, ...],
+    n_struct: int,
+    large_grid: bool,
+) -> dict:
+    return {
+        "seeds": list(seeds),
+        "training_splits": [float(s) for s in splits],
+        "max_data_values": [int(m) for m in max_data],
+        "n_structures_per_run": int(n_struct),
+        "large_grid": bool(large_grid),
+    }
+
+
+def _normalize_grid_fp(d: dict) -> tuple:
+    return (
+        tuple(int(x) for x in d["seeds"]),
+        tuple(round(float(x), 6) for x in d["training_splits"]),
+        tuple(int(x) for x in d["max_data_values"]),
+        int(d["n_structures_per_run"]),
+        bool(d["large_grid"]),
+    )
+
+
+def _load_fake_grid_fingerprint(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except (OSError, yaml.YAMLError):
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _fingerprints_match(path: Path, want: dict) -> bool:
+    disk = _load_fake_grid_fingerprint(path)
+    if not disk:
+        return False
+    try:
+        return _normalize_grid_fp(disk) == _normalize_grid_fp(want)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _fake_base_has_seed_dirs(fake_base: Path) -> bool:
+    if not fake_base.is_dir():
+        return False
+    return any(p.is_dir() and p.name.startswith("seed_") for p in fake_base.iterdir())
+
+
+def _write_fake_grid_fingerprint(path: Path, data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+
+
+def build_fake_base_output(
+    fake_base: Path,
+    rng: np.random.Generator,
+    *,
+    seeds: tuple[int, ...] | None = None,
+    training_splits: tuple[float, ...] | None = None,
+    max_data_values: tuple[int, ...] | None = None,
+    n_structures: int | None = None,
+) -> None:
     fake_base.mkdir(parents=True, exist_ok=True)
-    n_struct = SYNTHETIC_N_STRUCTURES_PER_RUN
-    for seed, split, md in itertools.product(SYNTHETIC_SEEDS, SYNTHETIC_TRAINING_SPLITS, SYNTHETIC_MAX_DATA):
+    seeds = seeds if seeds is not None else SYNTHETIC_SEEDS
+    splits = training_splits if training_splits is not None else SYNTHETIC_TRAINING_SPLITS
+    max_data = max_data_values if max_data_values is not None else SYNTHETIC_MAX_DATA
+    n_struct = int(n_structures if n_structures is not None else SYNTHETIC_N_STRUCTURES_PER_RUN)
+    for seed, split, md in itertools.product(seeds, splits, max_data):
         split_tag = f"{split:g}"
         name = f"seed_{seed}_split_{split_tag}_maxdata_{md}"
         sdir = fake_base / name
@@ -891,8 +1154,8 @@ def build_fake_base_output(fake_base: Path, rng: np.random.Generator) -> None:
         q_hi = float(np.clip(q_hi, q_lo + 0.12, 0.96))
         r = _synthetic_gen_to_test_rmsd(rng, n_struct, scale=max(0.35, r_scale), loc_shift=r_shift)
         q = _synthetic_gen_to_test_q(rng, n_struct, lo=q_lo, hi=q_hi)
-        _write_npz_gen_metric(sdir, "rmsd", r)
-        _write_npz_gen_metric(sdir, "q", q)
+        _write_npz_recon_metric(sdir, "rmsd", r)
+        _write_npz_recon_metric(sdir, "q", q)
 
 
 def main() -> None:
@@ -906,25 +1169,84 @@ def main() -> None:
     ap.add_argument("--pdf", action="store_true", help="Write PDF copies alongside PNGs where applicable.")
     ap.add_argument("--no-clean", action="store_true", help="Do not remove out-dir before generating.")
     ap.add_argument("--rng-seed", type=int, default=0, help="NumPy random seed for reproducible synthetic data.")
+    ap.add_argument(
+        "--large-grid",
+        action="store_true",
+        help=(
+            "Many training splits × many max_data (stress-test layouts). "
+            f"Uses {LARGE_GRID_N_SPLITS} splits, {LARGE_GRID_N_MAX_DATA} max_data values, "
+            f"{len(LARGE_GRID_SEEDS)} seeds; larger gen-cap N ladder."
+        ),
+    )
+    ap.add_argument(
+        "--reuse-fake-base",
+        action="store_true",
+        help=(
+            "Skip regenerating fake_base NPZ trees when "
+            f"{_FAKE_SUFFICIENCY_FINGERPRINT} matches the requested grid and seed dirs exist. "
+            "Use with --no-clean so the output directory (and fake_base) are not deleted first."
+        ),
+    )
     args = ap.parse_args()
     out_dir: Path = args.out_dir.resolve()
     if not args.no_clean and out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.large_grid:
+        grid_seeds = LARGE_GRID_SEEDS
+        grid_splits = _large_grid_training_splits()
+        grid_max_data = _large_grid_max_data()
+        n_struct = LARGE_GRID_N_STRUCTURES
+        gc_n = list(LARGE_GRID_GEN_CAP_N)
+    else:
+        grid_seeds = SYNTHETIC_SEEDS
+        grid_splits = SYNTHETIC_TRAINING_SPLITS
+        grid_max_data = SYNTHETIC_MAX_DATA
+        n_struct = SYNTHETIC_N_STRUCTURES_PER_RUN
+        gc_n = None
+
     rng = np.random.default_rng(args.rng_seed)
     fake_base = out_dir / "fake_base"
-    build_fake_base_output(fake_base, rng)
+    fp_path = fake_base / _FAKE_SUFFICIENCY_FINGERPRINT
+    want_fp = _fake_grid_fingerprint_dict(
+        tuple(grid_seeds),
+        tuple(grid_splits),
+        tuple(grid_max_data),
+        int(n_struct),
+        bool(args.large_grid),
+    )
+    reuse_ok = (
+        bool(args.reuse_fake_base)
+        and _fingerprints_match(fp_path, want_fp)
+        and _fake_base_has_seed_dirs(fake_base)
+    )
+    if reuse_ok:
+        print("[sandbox] Reusing existing fake_base (fingerprint matches).")
+    else:
+        if args.reuse_fake_base and fake_base.exists():
+            print("[sandbox] Regenerating fake_base (missing or mismatched fingerprint).")
+            shutil.rmtree(fake_base)
+        fake_base.mkdir(parents=True, exist_ok=True)
+        build_fake_base_output(
+            fake_base,
+            rng,
+            seeds=grid_seeds,
+            training_splits=grid_splits,
+            max_data_values=grid_max_data,
+            n_structures=n_struct,
+        )
+        _write_fake_grid_fingerprint(fp_path, want_fp)
 
     ok = run_sufficiency_plots_sandbox(
         base_output_dir=str(fake_base),
-        max_data_values=list(SYNTHETIC_MAX_DATA),
+        max_data_values=list(grid_max_data),
         save_pdf_copy=bool(args.pdf),
         log=lambda m: print(f"[sufficiency] {m}"),
     )
     print(f"Sufficiency sandbox produced outputs: {ok}")
 
-    run_generative_capacity_plots(out_dir, rng, save_pdf=bool(args.pdf))
+    run_generative_capacity_plots(out_dir, rng, save_pdf=bool(args.pdf), n_values=gc_n)
     print(f"Done. Outputs under: {out_dir}")
 
 

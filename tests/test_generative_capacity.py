@@ -15,7 +15,11 @@ if _PIPELINE_ROOT not in sys.path:
     sys.path.insert(0, _PIPELINE_ROOT)
 
 from src.plot_config import HIST_BINS_DEFAULT
-from src.generative_capacity import _distribution_panel, build_nested_subsample_indices
+from src.generative_capacity import (
+    _distribution_panel,
+    _write_pairwise_matrix_npz_and_remove_npy,
+    build_nested_subsample_indices,
+)
 
 
 def test_build_nested_subsample_indices_is_nested():
@@ -27,6 +31,47 @@ def test_build_nested_subsample_indices_is_nested():
     # Monotonic/nested subset property: smaller n are prefixes of larger n.
     assert list(nested[100][:50]) == list(nested[50])
     assert list(nested[250][:100]) == list(nested[100])
+
+
+def test_write_pairwise_matrix_npz_replaces_npy(tmp_path):
+    npy = tmp_path / "pairwise_matrix.npy"
+    npz = tmp_path / "pairwise_matrix.npz"
+    np.save(str(npy), np.array([[0.0, 1.0], [1.0, 0.0]], dtype=np.float32))
+    _write_pairwise_matrix_npz_and_remove_npy(
+        matrix_npy_path=str(npy),
+        npz_path=str(npz),
+        n_max=2,
+        seed=42,
+        n_values=[2],
+        metric="rmsd",
+    )
+    assert not npy.is_file()
+    assert npz.is_file()
+    z = np.load(str(npz), allow_pickle=False)
+    assert z["pairwise"].shape == (2, 2)
+    assert int(z["n_max"]) == 2
+    assert int(z["seed"]) == 42
+    assert z["metric"].tobytes() == b"rmsd"
+    z.close()
+
+
+def test_write_pairwise_matrix_npz_includes_delta_for_q(tmp_path):
+    npy = tmp_path / "m.npy"
+    npz = tmp_path / "m.npz"
+    np.save(str(npy), np.eye(3, dtype=np.float32))
+    _write_pairwise_matrix_npz_and_remove_npy(
+        matrix_npy_path=str(npy),
+        npz_path=str(npz),
+        n_max=3,
+        seed=1,
+        n_values=[1, 3],
+        metric="q",
+        delta=0.5,
+    )
+    z = np.load(str(npz), allow_pickle=False)
+    assert float(z["delta"]) == 0.5
+    assert z["metric"].tobytes() == b"q"
+    z.close()
 
 
 def test_distribution_panel_histogram_degenerate_values_no_crash():

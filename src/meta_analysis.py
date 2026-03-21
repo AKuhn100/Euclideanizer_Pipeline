@@ -25,8 +25,16 @@ from .plot_config import (
     META_HEATMAP_CB_GAP,
     PLOT_DPI,
     SUFFICIENCY_DIST_FIG_WIDTH,
+    SUFFICIENCY_DIST_FIGH_EXTRA,
     SUFFICIENCY_DIST_ROW_HEIGHT,
+    sufficiency_dist_bottom_frac,
+    sufficiency_dist_cbar_gap_frac,
     SUFFICIENCY_HEATMAP_CELL_IN,
+    SUFFICIENCY_HEATMAP_FIGH_EXTRA,
+    sufficiency_heatmap_bottom_frac,
+    sufficiency_heatmap_cbar_gap_frac,
+    sufficiency_heatmap_wspace,
+    sufficiency_heatmap_ytick_fontsize,
 )
 
 
@@ -83,42 +91,52 @@ def _iter_euclideanizer_runs(seed_dir: str):
                 yield run_dir
 
 
-def _run_name_has_var_one(run_name: str) -> bool:
-    if "_var" in run_name:
-        suffix = run_name.split("_var", 1)[-1].strip()
-        try:
-            return abs(float(suffix) - 1.0) < 1e-9
-        except ValueError:
-            return False
-    if run_name.startswith("var"):
-        try:
-            return abs(float(run_name[3:].strip()) - 1.0) < 1e-9
-        except ValueError:
-            return False
-    return False
+def _collect_recon_npz_paths(recon_root: str, metric: str) -> list[tuple[str, str]]:
+    """List (relative_subdir, npz_path) under analysis/{rmsd|q}/recon/.
 
-
-def _load_gen_metric_array(seed_dir: str, metric: str) -> np.ndarray | None:
-    filename = "rmsd_data.npz" if metric == "rmsd" else "q_data.npz"
-    subdir = "rmsd" if metric == "rmsd" else "q"
-    for run_dir in _iter_euclideanizer_runs(seed_dir) or []:
-        gen_dir = os.path.join(run_dir, "analysis", subdir, "gen")
-        if not os.path.isdir(gen_dir):
+    ``relative_subdir`` is ``""`` for ``recon/data/<file>.npz``, or a subdirectory
+    name such as ``train10_test10`` when outputs live under ``recon/<subdir>/data/``.
+    """
+    fname = "rmsd_recon_data.npz" if metric == "rmsd" else "q_recon_data.npz"
+    if not os.path.isdir(recon_root):
+        return []
+    out: list[tuple[str, str]] = []
+    direct = os.path.join(recon_root, "data", fname)
+    if os.path.isfile(direct):
+        out.append(("", direct))
+    for name in sorted(os.listdir(recon_root)):
+        sub = os.path.join(recon_root, name)
+        if not os.path.isdir(sub):
             continue
-        for run_name in sorted(os.listdir(gen_dir)):
-            data_path = os.path.join(gen_dir, run_name, "data", filename)
-            if not os.path.isfile(data_path):
-                continue
-            if not _run_name_has_var_one(run_name):
-                continue
+        cand = os.path.join(sub, "data", fname)
+        if os.path.isfile(cand):
+            out.append((name, cand))
+    return out
+
+
+def _load_recon_metric_arrays(seed_dir: str) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Load test-set reconstruction RMSD and Q (per test structure) from recon analysis NPZ.
+
+    Uses the first Euclideanizer run where RMSD and Q recon share the same recon
+    subpath (default ``recon/data/`` or matching ``recon/train*_test*/data/``).
+    """
+    for run_dir in _iter_euclideanizer_runs(seed_dir) or []:
+        rmsd_recon_root = os.path.join(run_dir, "analysis", "rmsd", "recon")
+        q_recon_root = os.path.join(run_dir, "analysis", "q", "recon")
+        r_by_rel = {rel: p for rel, p in _collect_recon_npz_paths(rmsd_recon_root, "rmsd")}
+        q_by_rel = {rel: p for rel, p in _collect_recon_npz_paths(q_recon_root, "q")}
+        for rel in sorted(set(r_by_rel) & set(q_by_rel)):
             try:
-                loaded = np.load(data_path, allow_pickle=False)
-                vals = np.asarray(loaded["gen_to_test"], dtype=np.float32)
-                loaded.close()
+                lr = np.load(r_by_rel[rel], allow_pickle=False)
+                lq = np.load(q_by_rel[rel], allow_pickle=False)
+                tr = lr["test_recon_rmsd"]
+                tq = lq["test_recon_q"]
+                lr.close()
+                lq.close()
+                return np.asarray(tr, dtype=np.float32), np.asarray(tq, dtype=np.float32)
             except Exception:
                 continue
-            return vals
-    return None
+    return None, None
 
 
 def _max_data_from_seed_dir(seed_dir: str, fallback_max_data: int | None) -> int | None:
@@ -176,11 +194,20 @@ def _style_horizontal_meta_colorbar(cbar, label: str, *, labelpad: int = 3) -> N
     cbar.ax.tick_params(labelsize=FONT_SIZE_TICK)
 
 
-def _training_split_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, height_frac: float) -> None:
+def _training_split_colorbar_below_panels(
+    fig,
+    ax_left,
+    ax_right,
+    *,
+    cmap,
+    height_frac: float,
+    gap_frac: float | None = None,
+) -> None:
     fig.canvas.draw()
     p0, p1 = ax_left.get_position(), ax_right.get_position()
     row_bottom = min(p0.y0, p1.y0)
-    y = max(0.02, row_bottom - META_DIST_CB_GAP - height_frac)
+    gap = META_DIST_CB_GAP if gap_frac is None else gap_frac
+    y = max(0.02, row_bottom - gap - height_frac)
     cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, height_frac)
     sm = cm.ScalarMappable(norm=Normalize(vmin=0.0, vmax=1.0), cmap=cmap)
     sm.set_array([])
@@ -190,16 +217,37 @@ def _training_split_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, heigh
     _style_horizontal_meta_colorbar(cbar, "Training Split", labelpad=3)
 
 
-def _heatmap_colorbar_below_panels(fig, ax_left, ax_right, *, cmap, vmin: float, vmax: float, label: str) -> None:
+def _heatmap_colorbar_below_panels(
+    fig,
+    ax_left,
+    ax_right,
+    *,
+    cmap,
+    vmin: float,
+    vmax: float,
+    label: str,
+    gap_frac: float | None = None,
+) -> None:
     fig.canvas.draw()
     p0, p1 = ax_left.get_position(), ax_right.get_position()
     row_bottom = min(p0.y0, p1.y0)
-    y = max(0.02, row_bottom - META_HEATMAP_CB_GAP - META_CBAR_HEIGHT_FRAC)
+    gap = META_HEATMAP_CB_GAP if gap_frac is None else gap_frac
+    y = max(0.02, row_bottom - gap - META_CBAR_HEIGHT_FRAC)
     cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, META_CBAR_HEIGHT_FRAC)
     sm = cm.ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax), cmap=cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
     _style_horizontal_meta_colorbar(cbar, label, labelpad=4)
+
+
+def _sufficiency_heatmap_small_grid_steps(n_r: int, n_c: int) -> int:
+    """Extra layout slack when the grid has few rows or columns (aspect='equal' leaves little margin)."""
+    return max(0, 4 - min(n_r, n_c))
+
+
+def _sufficiency_dist_small_split_steps(n_split_rows: int) -> int:
+    """Extra layout slack when few training-split rows are stacked (shared colorbar below)."""
+    return max(0, 4 - n_split_rows)
 
 
 def _norm01_per_grid(grid: np.ndarray) -> np.ma.MaskedArray:
@@ -239,11 +287,10 @@ def run_sufficiency_meta_analysis(
         if not os.path.isdir(seed_dir):
             continue
         split = float(split_opt) if split_opt is not None else 0.8
-        rmsd_vals = _load_gen_metric_array(seed_dir, "rmsd")
-        q_vals = _load_gen_metric_array(seed_dir, "q")
+        rmsd_vals, q_vals = _load_recon_metric_arrays(seed_dir)
         if rmsd_vals is None or q_vals is None:
             if log:
-                log(f"Sufficiency meta-analysis: missing RMSD/Q NPZ for {seed_name}; skipping.")
+                log(f"Sufficiency meta-analysis: missing RMSD/Q recon NPZ for {seed_name}; skipping.")
             continue
         md = _max_data_from_seed_dir(seed_dir, fallback_md)
         points_by_seed.setdefault(seed, []).append(
@@ -258,7 +305,7 @@ def run_sufficiency_meta_analysis(
 
     if not points_by_seed:
         if log:
-            log("Sufficiency meta-analysis: no analysis NPZ data found. Skipping.")
+            log("Sufficiency meta-analysis: no recon analysis NPZ data found. Skipping.")
         return False
 
     out_root = os.path.join(base_output_dir, "meta_analysis", "sufficiency")
@@ -283,6 +330,11 @@ def run_sufficiency_meta_analysis(
                 continue
             splits_ordered = list(reversed(sorted({p.training_split for p in subset})))
             n_splits_local = len(splits_ordered)
+            small_d = _sufficiency_dist_small_split_steps(n_splits_local)
+            row_h = SUFFICIENCY_DIST_ROW_HEIGHT
+            fig_h = max(4.0 + small_d * SUFFICIENCY_DIST_FIGH_EXTRA, row_h * n_splits_local)
+            dist_bottom = sufficiency_dist_bottom_frac(fig_h, small_d, n_splits_local)
+            dist_cb_gap = sufficiency_dist_cbar_gap_frac(fig_h, small_d, n_splits_local)
 
             all_r = np.concatenate([p.rmsd_values for p in subset], axis=0)
             all_q = np.concatenate([p.q_values for p in subset], axis=0)
@@ -294,8 +346,6 @@ def run_sufficiency_meta_analysis(
             bins_r = np.linspace(xr_min, xr_max, HIST_BINS_DEFAULT + 1)
             bins_q = np.linspace(xq_min, xq_max, HIST_BINS_DEFAULT + 1)
 
-            row_h = SUFFICIENCY_DIST_ROW_HEIGHT
-            fig_h = max(4.0, row_h * n_splits_local)
             fig, axes = plt.subplots(
                 n_splits_local,
                 2,
@@ -337,14 +387,21 @@ def run_sufficiency_meta_analysis(
                 for ax in col_axes:
                     ax.set_ylim(0, ymax * 1.05)
 
-            axes[0, 0].set_title(f"Min RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            axes[0, 1].set_title(f"Max Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            axes[-1, 0].set_xlabel("Min RMSD (Å)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
-            axes[-1, 1].set_xlabel("Max Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[0, 0].set_title(f"Test recon RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[0, 1].set_title(f"Test recon Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[-1, 0].set_xlabel("Test recon RMSD (Å)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[-1, 1].set_xlabel("Test recon Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
 
-            fig.subplots_adjust(left=0.1, right=0.97, top=0.92, bottom=0.22)
+            fig.subplots_adjust(left=0.1, right=0.97, top=0.92, bottom=dist_bottom)
             cbar_hfrac = META_CBAR_HEIGHT_FRAC * 6.2 / fig_h
-            _training_split_colorbar_below_panels(fig, axes[-1, 0], axes[-1, 1], cmap=cmap, height_frac=cbar_hfrac)
+            _training_split_colorbar_below_panels(
+                fig,
+                axes[-1, 0],
+                axes[-1, 1],
+                cmap=cmap,
+                height_frac=cbar_hfrac,
+                gap_frac=dist_cb_gap,
+            )
 
             md_tag = "all" if md is None else str(md)
             out_dir = os.path.join(dist_root, f"max_data_{md_tag}")
@@ -375,25 +432,34 @@ def run_sufficiency_meta_analysis(
 
         n_r = len(split_set)
         n_c = len(md_vals)
+        small = _sufficiency_heatmap_small_grid_steps(n_r, n_c)
         cell_in = SUFFICIENCY_HEATMAP_CELL_IN
         w_per = max(3.2, cell_in * n_c + 0.55)
-        fig_h = max(4.0, cell_in * n_r + 1.35)
+        fig_h = max(4.0 + small * SUFFICIENCY_HEATMAP_FIGH_EXTRA, cell_in * n_r + 1.35)
+        bottom_frac = sufficiency_heatmap_bottom_frac(fig_h, small, n_r)
+        cb_gap = sufficiency_heatmap_cbar_gap_frac(fig_h, small, n_r)
+        ytick_fs = sufficiency_heatmap_ytick_fontsize(n_r)
+        h_wspace = sufficiency_heatmap_wspace(n_r)
         gap = 0.15
         fig_w = 2 * w_per + gap + 0.6
-        fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), gridspec_kw=dict(wspace=0.08))
+        fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h), gridspec_kw=dict(wspace=h_wspace))
         ax_r, ax_q = axes
-        ax_r.imshow(r_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0)
-        ax_q.imshow(q_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0)
-        for ax, title in ((ax_r, "Median Min RMSD"), (ax_q, "Median Max Q")):
+        ax_r.imshow(r_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
+        ax_q.imshow(q_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
+        split_labels = [f"{int(round(s * 100))}%" for s in split_set]
+        md_labels = [str(v) for v in md_vals]
+        for ax, title in ((ax_r, "Median test recon RMSD"), (ax_q, "Median test recon Q")):
             ax.set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            ax.set_xlabel("Max Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY, labelpad=10)
+            ax.set_xlabel("Max Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY, labelpad=12)
             ax.set_xticks(np.arange(len(md_vals)))
-            ax.set_xticklabels([str(v) for v in md_vals], rotation=35, ha="right", fontsize=FONT_SIZE_TICK)
+            ax.set_xticklabels(md_labels, rotation=35, ha="right", fontsize=FONT_SIZE_TICK)
             ax.set_yticks(np.arange(len(split_set)))
-            ax.set_yticklabels([f"{int(round(s * 100))}%" for s in split_set], fontsize=FONT_SIZE_TICK)
-            ax.set_ylabel("Training Split", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax_r.set_yticklabels(split_labels, fontsize=ytick_fs)
+        ax_q.set_yticklabels(split_labels, fontsize=ytick_fs)
+        ax_r.set_ylabel("Training Split", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax_q.set_ylabel("")
 
-        fig.subplots_adjust(left=0.12, right=0.96, top=0.88, bottom=0.24)
+        fig.subplots_adjust(left=0.12, right=0.96, top=0.88, bottom=bottom_frac)
         _heatmap_colorbar_below_panels(
             fig,
             ax_r,
@@ -402,6 +468,7 @@ def run_sufficiency_meta_analysis(
             vmin=0.0,
             vmax=1.0,
             label="Normalized Median",
+            gap_frac=cb_gap,
         )
         heat_png = os.path.join(heat_root, "sufficiency_heatmap_rmsd_q.png")
         fig.savefig(heat_png, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.2)

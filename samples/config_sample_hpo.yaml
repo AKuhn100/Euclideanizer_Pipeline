@@ -178,6 +178,7 @@ analysis:
     n_structures: [100, 250, 500]
     gen_decode_batch_size: 256
     query_batch_size: 128
+    # save_data true: per-n NPZ + pairwise_matrix.npz (full matrix); false: no data/
     save_data: true
     save_pdf_copy: false
   generative_capacity_q:

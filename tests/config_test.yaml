@@ -128,6 +128,7 @@ analysis:
     n_structures: [100, 250, 500]
     gen_decode_batch_size: 8
     query_batch_size: 64
+    # save_data true: n*_min_rmsd.npz + pairwise_matrix.npz
     save_data: false
     save_pdf_copy: false
   generative_capacity_q:

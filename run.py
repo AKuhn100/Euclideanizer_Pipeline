@@ -2113,7 +2113,11 @@ def _run_scoring_for_run(
 
 
 def _post_scoring_npz_cleanup(run_dir_eu: str, cfg: dict, *, defer_sufficiency_inputs: bool = False) -> None:
-    """Remove NPZ data dirs for blocks where save_data is false (scoring has already read them). One run_dir_eu (one Euclideanizer run)."""
+    """Remove NPZ data dirs for blocks where save_data is false (scoring has already read them). One run_dir_eu (one Euclideanizer run).
+
+    When sufficiency meta-analysis is enabled, defers deletion of ``analysis/rmsd/recon`` and
+    ``analysis/q/recon`` ``data/`` trees until after meta-analysis (see ``_finalize_deferred_npz_cleanup``).
+    """
     if not cfg.get("scoring", {}).get("enabled"):
         return
     plot_cfg = cfg["plotting"]
@@ -2139,7 +2143,7 @@ def _post_scoring_npz_cleanup(run_dir_eu: str, cfg: dict, *, defer_sufficiency_i
         for sub, save_ok in [("gen", gen_save), ("recon", recon_save)]:
             if save_ok:
                 continue
-            if defer_sufficiency_inputs and sub == "gen" and spec.id in ("rmsd", "q"):
+            if defer_sufficiency_inputs and sub == "recon" and spec.id in ("rmsd", "q"):
                 continue
             branch = os.path.join(run_dir_eu, "analysis", spec.subdir, sub)
             if not os.path.isdir(branch):

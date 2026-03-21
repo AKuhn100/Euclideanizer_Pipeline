@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-03-22
+
+- **Sufficiency vertical layout:** `sufficiency_*_*_frac` blend legacy figure-fraction margins with inch-based targets; blend weight is `max(height-based, row-count-based)` (`SUFFICIENCY_LAYOUT_INCH_BLEND_*`) so default grids keep legacy proportions while very tall figures **or** many stacked rows favor inch targets (avoids huge whitespace on large grids, tight bars on small ones). Helpers take split/heatmap row count; heatmap `labelpad=12` on “Max Structures”. (`plot_config.py`, `meta_analysis.py`, sandbox, spec, STYLE_GUIDE)
+
+- **Synthetic sandbox:** **`--reuse-fake-base`** + fingerprint file skips regenerating `fake_base/` when it matches the requested grid (use with **`--no-clean`**). (`generate_synthetic_plots.py`, `README.md`)
+
+- **Synthetic plot sandbox:** Sufficiency plotting aligned with **`meta_analysis`** via **`plot_config`** import from `Pipeline`; stacked gen-cap width/height from **`GEN_CAP_STACKED_*`**. Added **`--large-grid`** for many splits × many `max_data`. README updated (recon NPZ, no outdated “sandbox-only layout” claims). (`dev/synthetic_plot_sandbox/generate_synthetic_plots.py`, `README.md`)
+
+- **Dashboard labels:** Manifest `label_short` uses Title Case phrases (**Seed**, **Max Data**, **Split**, **DistMap**, **Euclideanizer**); `label_long` and param table keys stay lowercase. Vary-aspect UI: **Training Split** caption and dropdown text; **(X-Axis)** on aspect caption. (`dashboard.py`, `test_dashboard.py`)
+
+- **Sufficiency heatmap layout:** Small grids (`min(rows, cols) < 4`) still get extra slack via `SUFFICIENCY_HEATMAP_FIGH_EXTRA` and the `sufficiency_heatmap_*_frac` small-step term. **Tall** heatmaps use **inch-based** bottom + colorbar-gap targets (`sufficiency_heatmap_bottom_frac`, `sufficiency_heatmap_cbar_gap_frac`) so the colorbar is not pushed down by a huge fixed figure fraction. **Training Split** `ylabel` only on the **left** panel; **both** panels show **%** y-tick labels, with `sufficiency_heatmap_ytick_fontsize` and `sufficiency_heatmap_wspace` to limit overlap. (`plot_config.py`, `meta_analysis.py`, `DATA_SUFFICIENCY_META_ANALYSIS.md`, sandbox `generate_synthetic_plots.py`, STYLE_GUIDE)
+
+- **Sufficiency distribution layout:** Same adaptive idea for stacked split rows (`n_rows < 4`): **`SUFFICIENCY_DIST_*`** bottom margin, extra gap before the training-split colorbar, and figure height; all distribution labels unchanged. (`meta_analysis.py`, `plot_config.py`, spec, sandbox, STYLE_GUIDE)
+
+- **Sufficiency heatmap y-order:** `imshow(..., origin="lower")` so training-split **% increases upward** (matches spec: low split at bottom, high at top). (`meta_analysis.py`, sandbox `generate_synthetic_plots.py`, spec note)
+
+- **Sufficiency meta-analysis:** Uses **test-set reconstruction** metrics (`test_recon_rmsd`, `test_recon_q` from `analysis/rmsd/recon` and `analysis/q/recon` NPZ), not generative `gen_to_test` arrays. Post-scoring NPZ deferral for sufficiency now applies to **recon** RMSD/Q `data/` trees (replacing gen deferral). (`meta_analysis.py`, `run.py`, `DATA_SUFFICIENCY_META_ANALYSIS.md`, `samples/config_sample.yaml`, `synthetic_plot_sandbox/generate_synthetic_plots.py`, `STYLE_GUIDE.md`)
+
+- **Generative capacity `save_data`:** When true, persists per-`n` histogram NPZ files **and** **`data/pairwise_matrix.npz`** (full `pairwise` array + `n_max`, `seed`, `n_structures`, `metric`; **`delta`** for Q). Temporary memmap **`pairwise_matrix.npy`** is removed after the NPZ is written. (`generative_capacity.py`, `GENERATIVE_CAPACITY_ANALYSIS.md`, `README.md`, sample/test/dev YAML comments, `tests/test_generative_capacity.py`)
+
 ## 2026-03-21
 
 - **Sufficiency heatmap colorbar:** Label is **“Normalized Median”** only (removed long parenthetical). (`meta_analysis.py`, `synthetic_plot_sandbox/generate_synthetic_plots.py`, `DATA_SUFFICIENCY_META_ANALYSIS.md`)

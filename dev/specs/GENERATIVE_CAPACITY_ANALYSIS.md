@@ -84,10 +84,12 @@ The full pairwise matrix is always written to an intermediate file under the ana
 block's data directory. The pipeline should not switch between in-memory vs memmap
 heuristics here; use the on-disk matrix path consistently.
 
+During the run the matrix is memmapped to a temporary `pairwise_matrix.npy` under
+`data/`; when `save_data` is true it is finalized as `pairwise_matrix.npz` (see Step 4).
+
 Example:
 
 ```python
-matrix_path = "<run_dir>/analysis/generative_capacity/rmsd/data/pairwise_matrix.npy"
 mat = np.lib.format.open_memmap(matrix_path, mode="w+", dtype=np.float32, shape=(n_max, n_max))
 ```
 
@@ -123,9 +125,13 @@ The nested index rule ensures each smaller `n` is a subset of larger `n`.
 
 - Save per-`n` distribution NPZ files only when `save_data: true`.
 - Save figure PNG always; save PDF copy when `save_pdf_copy: true`.
-- Intermediate full pairwise matrix file:
-  - keep when `save_data: true`
-  - delete when `save_data: false`
+- Full pairwise matrix when `save_data: true`:
+  - During computation the matrix is written as a memmapped **`pairwise_matrix.npy`** under `data/`.
+  - After the figure is built, that file is compressed into **`pairwise_matrix.npz`**
+    (array key **`pairwise`**, shape `(n_max, n_max)`, float32; plus **`n_max`**, **`seed`**,
+    **`n_structures`**, UTF-8 **`metric`** (`rmsd` or `q`); **`delta`** only for the Q block),
+    then the temporary **`.npy`** is removed so the large matrix exists once on disk.
+- When `save_data: false`, the entire `data/` directory is removed (no matrix, no per-`n` NPZ).
 
 This block is **not used by scoring** in the current design, so matrix retention/deletion
 is handled inside this block and is independent of post-scoring cleanup.
@@ -141,7 +147,7 @@ Per Euclideanizer run:
   generative_capacity/
     rmsd/
       data/
-        pairwise_matrix.npy           # kept only if save_data: true
+        pairwise_matrix.npz           # only if save_data: true — full n_max×n_max RMSD matrix + metadata
         n100_min_rmsd.npz             # only if save_data: true
         n250_min_rmsd.npz             # only if save_data: true
         ...
@@ -149,7 +155,7 @@ Per Euclideanizer run:
       generative_capacity_rmsd.pdf    # only if save_pdf_copy: true
     q/
       data/
-        pairwise_matrix.npy           # kept only if save_data: true
+        pairwise_matrix.npz           # only if save_data: true — full matrix + metadata (includes delta)
         n100_max_q.npz                # only if save_data: true
         ...
       generative_capacity_q.png
@@ -173,7 +179,10 @@ p75: float
 seed: int
 ```
 
-The intermediate matrix file stores the full pairwise matrix for that metric.
+**`pairwise_matrix.npz`** stores the full pairwise matrix under key **`pairwise`**
+(float32, shape `(n_max, n_max)`). RMSD: diagonal entries are `inf` (excluded from row
+minima). Q: diagonal entries are `-inf` (excluded from row maxima). **`metric`** is
+bytes UTF-8 (`b"rmsd"` or `b"q"`). **`delta`** is present only for the Q block.
 
 ---
 

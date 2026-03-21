@@ -107,7 +107,7 @@ analysis:
     overwrite_existing: false   # if true, prompt then remove existing rmsd recon outputs before re-running
     max_recon_train: [10]
     max_recon_test: [10]
-    save_data: false
+    save_data: true
     save_pdf_copy: true   # if true, save PDF copies of recon and latent figures
     visualize_latent: true
   q_gen:
@@ -127,7 +127,7 @@ analysis:
     max_recon_train: [10]
     max_recon_test: [10]
     delta: 0.7071
-    save_data: false
+    save_data: true
     save_pdf_copy: false
   coord_clustering_gen:
     enabled: true
@@ -174,15 +174,16 @@ analysis:
     save_data: false
     save_pdf_copy: false
   generative_capacity_rmsd:
-    enabled: true
+    enabled: false
     overwrite_existing: true
     n_structures: [100, 250, 500, 1000]
     gen_decode_batch_size: 256
     query_batch_size: 128
+    # save_data true: per-n NPZ + pairwise_matrix.npz (full matrix)
     save_data: false
     save_pdf_copy: false
   generative_capacity_q:
-    enabled: true
+    enabled: false
     overwrite_existing: true
     n_structures: [100, 250, 500, 1000]
     gen_decode_batch_size: 256
