@@ -82,6 +82,22 @@ def test_scan_runs_empty_dir(tmp_path):
     assert _scan_runs(str(tmp_path)) == []
 
 
+def test_scan_runs_hpo_layout_two_trials(tmp_path):
+    """HPO output root: trial_n/seed_*/distmap/... gets hpo_trial parents and prefixed ids."""
+    for trial_n in (0, 1):
+        trial_root = tmp_path / f"trial_{trial_n}"
+        _make_minimal_run_tree(trial_root, n_seeds=1, n_dm=1, n_eu=1)
+    runs = _scan_runs(str(tmp_path))
+    by_id = {r["id"]: r for r in runs}
+    assert by_id["trial_0"]["level"] == "hpo_trial"
+    assert by_id["trial_1"]["level"] == "hpo_trial"
+    assert "trial_0__seed_0" in by_id["trial_0"]["children_ids"]
+    assert by_id["trial_0__seed_0"]["parent_id"] == "trial_0"
+    assert by_id["trial_0__seed_0_dm_0"]["parent_id"] == "trial_0__seed_0"
+    assert by_id["trial_0__seed_0_dm_0_eu_0"]["parent_id"] == "trial_0__seed_0_dm_0"
+    assert "trial_1__seed_0_dm_0_eu_0" in by_id
+
+
 def test_scan_runs_training_split_dirs(tmp_path):
     """Multiple training_split layout: seed_<n>_split_<frac>/distmap/..."""
     _make_minimal_run_tree(

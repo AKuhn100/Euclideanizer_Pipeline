@@ -5,10 +5,14 @@ Scans base_output_dir for pipeline run roots: seed_<n>/distmap/... (single train
 and seed_<n>_split_<frac>/distmap/... (multiple training_split values), then
 seed_*/distmap/*/euclideanizer/*, collects run_config labels, discovers plots/videos/analysis
 outputs, copies them into dashboard/assets/, and writes dashboard/manifest.json and index.html.
+
+HPO study roots: when trial_<n>/seed_*/distmap/... is present, each trial is a top-level
+``hpo_trial`` run in the manifest (Browse: Trial → Seed → DistMap → Euclideanizer).
 """
 from __future__ import annotations
 
 import glob
+import html
 import json
 import math
 import os
@@ -706,17 +710,18 @@ def _sufficiency_meta_sources_for_seed(seed_num: int, base_output_dir: str, seed
     return out if out else None
 
 
-def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
-    runs = []
-    if not os.path.isdir(base_output_dir):
+def _scan_pipeline_runs_in_directory(scan_root: str, *, meta_base: str) -> list[dict[str, Any]]:
+    """Scan a directory that contains seed_*/distmap/... (one pipeline output tree)."""
+    runs: list[dict[str, Any]] = []
+    if not os.path.isdir(scan_root):
         return runs
 
-    for seed_name in sorted(os.listdir(base_output_dir)):
+    for seed_name in sorted(os.listdir(scan_root)):
         parsed = _parse_seed_output_dir(seed_name)
         if parsed is None:
             continue
         seed_num, seed_group_id, split_token = parsed
-        seed_dir = os.path.join(base_output_dir, seed_name)
+        seed_dir = os.path.join(scan_root, seed_name)
         if not os.path.isdir(seed_dir):
             continue
         distmap_dir = os.path.join(seed_dir, "distmap")
@@ -728,7 +733,7 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
         seed_blocks = []
         training_split_val = _training_split_value_for_seed_dir(seed_dir, split_token)
         suff_path = os.path.join(
-            base_output_dir,
+            meta_base,
             "meta_analysis",
             "sufficiency",
             f"seed_{seed_num}",
@@ -832,11 +837,114 @@ def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
             "run_root": seed_dir,
             "params": {},
         }
-        sms = _sufficiency_meta_sources_for_seed(seed_num, base_output_dir, seed_dir)
+        sms = _sufficiency_meta_sources_for_seed(seed_num, meta_base, seed_dir)
         if sms:
             seed_entry["sufficiency_meta_sources"] = sms
         runs.append(seed_entry)
     return runs
+
+
+def _hpo_output_root_detected(base_output_dir: str) -> bool:
+    """True if base_output_dir looks like an HPO root (trial_n/seed_*/distmap/)."""
+    try:
+        names = os.listdir(base_output_dir)
+    except OSError:
+        return False
+    for name in names:
+        if not re.match(r"^trial_\d+$", name):
+            continue
+        trial_path = os.path.join(base_output_dir, name)
+        if not os.path.isdir(trial_path):
+            continue
+        try:
+            subs = os.listdir(trial_path)
+        except OSError:
+            continue
+        for sub in subs:
+            if _parse_seed_output_dir(sub) is None:
+                continue
+            if os.path.isdir(os.path.join(trial_path, sub, "distmap")):
+                return True
+    return False
+
+
+def _trial_dir_sort_key(name: str) -> tuple:
+    m = re.match(r"^trial_(\d+)$", name)
+    return (0, int(m.group(1))) if m else (1, name)
+
+
+def _apply_hpo_trial_prefix_and_labels(
+    runs: list[dict[str, Any]],
+    *,
+    trial_folder_name: str,
+    trial_number: int,
+) -> list[dict[str, Any]]:
+    """Prefix run ids so trials do not collide; nest seeds under the trial folder id."""
+    mapping = {r["id"]: f"{trial_folder_name}__{r['id']}" for r in runs}
+    prefix = f"Trial {trial_number} · "
+    out: list[dict[str, Any]] = []
+    for r in runs:
+        nr = dict(r)
+        nr["id"] = mapping[r["id"]]
+        pid = r.get("parent_id")
+        if pid:
+            nr["parent_id"] = mapping[pid]
+        elif r.get("level") == "seed":
+            nr["parent_id"] = trial_folder_name
+        else:
+            nr["parent_id"] = None
+        ls = nr.get("label_short")
+        if ls and prefix not in ls:
+            nr["label_short"] = prefix + ls
+        ll = nr.get("label_long")
+        if ll:
+            nr["label_long"] = f"{trial_folder_name}: {ll}"
+        out.append(nr)
+    return out
+
+
+def _make_hpo_trial_parent_entry(
+    trial_folder_name: str,
+    trial_path: str,
+    trial_number: int,
+    prefixed_runs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    seed_ids = [r["id"] for r in prefixed_runs if r.get("level") == "seed"]
+    return {
+        "id": trial_folder_name,
+        "level": "hpo_trial",
+        "label_short": f"Trial {trial_number}",
+        "label_long": f"HPO Optuna trial {trial_number} ({trial_folder_name})",
+        "parent_id": None,
+        "children_ids": seed_ids,
+        "blocks": [],
+        "run_root": trial_path,
+        "params": {},
+        "hpo_trial_number": trial_number,
+    }
+
+
+def _scan_runs(base_output_dir: str) -> list[dict[str, Any]]:
+    if not os.path.isdir(base_output_dir):
+        return []
+    if _hpo_output_root_detected(base_output_dir):
+        out: list[dict[str, Any]] = []
+        for name in sorted(os.listdir(base_output_dir), key=_trial_dir_sort_key):
+            m = re.match(r"^trial_(\d+)$", name)
+            if not m:
+                continue
+            trial_path = os.path.join(base_output_dir, name)
+            if not os.path.isdir(trial_path):
+                continue
+            inner = _scan_pipeline_runs_in_directory(trial_path, meta_base=trial_path)
+            if not inner:
+                continue
+            n = int(m.group(1))
+            prefixed = _apply_hpo_trial_prefix_and_labels(inner, trial_folder_name=name, trial_number=n)
+            out.extend(prefixed)
+            out.append(_make_hpo_trial_parent_entry(name, trial_path, n, prefixed))
+        return out
+    return _scan_pipeline_runs_in_directory(base_output_dir, meta_base=base_output_dir)
 
 
 def _block_asset_slug(block: dict, run_id: str) -> str:
@@ -993,6 +1101,8 @@ def _copy_assets_and_update_paths(
                     smeta_out["curves"] = f"assets/{cname}"
             if smeta_out:
                 entry["sufficiency_meta"] = smeta_out
+        if run.get("level") == "hpo_trial" and run.get("hpo_trial_number") is not None:
+            entry["hpo_trial_number"] = run["hpo_trial_number"]
         out_runs.append(entry)
     return out_runs
 
@@ -1016,11 +1126,14 @@ def _write_manifest(dashboard_dir: str, manifest: dict) -> None:
 def _html_content(manifest: dict) -> str:
     # Embed manifest so the dashboard works when opened from file:// (e.g. after download)
     manifest_js = json.dumps(manifest).replace("</", "<\\/")
-    return """<!DOCTYPE html>
+    page_title = html.escape(manifest.get("dashboard_title") or "Pipeline Dashboard")
+    # Parentheses required: without them, .replace applies only to the last """...""" chunk, not <title>/<h1>.
+    return (
+        """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Pipeline Dashboard</title>
+  <title>__PAGE_TITLE__</title>
   <style>
     :root {
       --bg-page: #1a1a1a;
@@ -1186,7 +1299,7 @@ def _html_content(manifest: dict) -> str:
 <body>
   <a href="#content" class="skip-link">Skip To Content</a>
   <header>
-    <h1 id="title">Pipeline Dashboard</h1>
+    <h1 id="title">__PAGE_TITLE__</h1>
     <p id="generated"></p>
   </header>
   <div class="dashboard-toolbar" role="toolbar" aria-label="Dashboard Controls">
@@ -1198,7 +1311,7 @@ def _html_content(manifest: dict) -> str:
           <option value="meta_analysis">Meta-Analysis</option>
           <option value="detail">Detail</option>
           <option value="compare">Compare</option>
-          <option value="aspect">Vary Aspect</option>
+          <option value="aspect" id="viewModeAspectOption">Vary Aspect</option>
           <option value="radar_grid">Radar Grid</option>
           <option value="score_plot">Score Vs Aspect</option>
         </select>
@@ -1247,7 +1360,7 @@ def _html_content(manifest: dict) -> str:
   <script>window.__DASHBOARD_MANIFEST__ = """ + manifest_js + """;</script>
   <script>
     let manifest = null;
-    const state = { viewMode: 'browse', browseSeedId: null, browseDmId: null, detailRunId: null, compareRunA: null, compareRunB: null, compareLevel: 'euclideanizer' };
+    const state = { viewMode: 'browse', browseTrialId: null, browseSeedId: null, browseDmId: null, detailRunId: null, compareRunA: null, compareRunB: null, compareLevel: 'euclideanizer' };
     const levelEl = document.getElementById('level');
     const runAEl = document.getElementById('runA');
     const runBEl = document.getElementById('runB');
@@ -1276,9 +1389,41 @@ def _html_content(manifest: dict) -> str:
       if (!manifest || !manifest.runs || !id) return null;
       return manifest.runs.find(r => r.id === id) || null;
     }
+    function hasHpoTrials() {
+      return !!(manifest && manifest.runs && manifest.runs.some(function(r) { return r.level === 'hpo_trial'; }));
+    }
+    function rootBrowseLabel() {
+      return hasHpoTrials() ? 'Trials' : 'Seeds';
+    }
+    function getHpoTrials() {
+      if (!manifest || !manifest.runs) return [];
+      return manifest.runs.filter(function(r) { return r.level === 'hpo_trial'; }).sort(function(a, b) {
+        var na = a.hpo_trial_number != null ? Number(a.hpo_trial_number) : (parseInt(String(a.id).replace(/^trial_/, ''), 10) || 0);
+        var nb = b.hpo_trial_number != null ? Number(b.hpo_trial_number) : (parseInt(String(b.id).replace(/^trial_/, ''), 10) || 0);
+        return na - nb;
+      });
+    }
     function getSeeds() {
       if (!manifest || !manifest.runs) return [];
-      return manifest.runs.filter(r => r.level === 'seed').sort((a, b) => a.id.localeCompare(b.id));
+      if (hasHpoTrials()) {
+        if (!state.browseTrialId) return [];
+        return manifest.runs.filter(function(r) { return r.level === 'seed' && r.parent_id === state.browseTrialId; }).sort(function(a, b) { return a.id.localeCompare(b.id); });
+      }
+      return manifest.runs.filter(function(r) { return r.level === 'seed' && !r.parent_id; }).sort(function(a, b) { return a.id.localeCompare(b.id); });
+    }
+    /** HPO roots: trials differ on hyperparams, not a single swept "aspect"; Vary Aspect is misleading. */
+    function applyHpoStudyDashboardRestrictions() {
+      if (!hasHpoTrials()) return;
+      var opt = document.getElementById('viewModeAspectOption');
+      if (opt && opt.parentNode) opt.parentNode.removeChild(opt);
+      if (viewAspectEl) {
+        viewAspectEl.style.display = 'none';
+        viewAspectEl.classList.remove('visible');
+      }
+      if (viewModeEl && viewModeEl.value === 'aspect') {
+        viewModeEl.value = 'browse';
+        state.viewMode = 'browse';
+      }
     }
     function getDistMapsForSeed(seedId) {
       if (!manifest || !manifest.runs || !seedId) return [];
@@ -1318,7 +1463,7 @@ def _html_content(manifest: dict) -> str:
       parts.forEach((p, i) => {
         if (i) html += '<span> \u203a </span>';
         if (p.runId) html += '<a href="#" data-run-id="' + escapeHtml(p.runId) + '">' + escapeHtml(p.label) + '</a>';
-        else if (p.label === 'Seeds') html += '<a href="#" data-reset-browse="1">' + escapeHtml(p.label) + '</a>';
+        else if (p.resetBrowse) html += '<a href="#" data-reset-browse="1">' + escapeHtml(p.label) + '</a>';
         else html += '<span>' + escapeHtml(p.label) + '</span>';
       });
       breadcrumbEl.innerHTML = html;
@@ -1327,13 +1472,18 @@ def _html_content(manifest: dict) -> str:
           e.preventDefault();
           const runId = this.getAttribute('data-run-id');
           const run = getRunById(runId);
-          if (run && run.level === 'seed') { state.browseSeedId = runId; state.browseDmId = null; state.viewMode = 'browse'; viewModeEl.value = 'browse'; renderBrowse(); }
+          if (run && run.level === 'hpo_trial') { state.browseTrialId = runId; state.browseSeedId = null; state.browseDmId = null; state.viewMode = 'browse'; viewModeEl.value = 'browse'; renderBrowse(); }
+          else if (run && run.level === 'seed') {
+            state.browseSeedId = runId; state.browseDmId = null;
+            if (hasHpoTrials() && run.parent_id) state.browseTrialId = run.parent_id;
+            state.viewMode = 'browse'; viewModeEl.value = 'browse'; renderBrowse();
+          }
           else if (run && run.level === 'distmap') { state.browseSeedId = run.parent_id || null; state.browseDmId = runId; state.viewMode = 'browse'; viewModeEl.value = 'browse'; renderBrowse(); }
           else { state.detailRunId = runId; state.viewMode = 'detail'; viewModeEl.value = 'detail'; updateContent(); }
         });
       });
       breadcrumbEl.querySelectorAll('a[data-reset-browse]').forEach(a => {
-        a.addEventListener('click', function(e) { e.preventDefault(); state.browseSeedId = null; state.browseDmId = null; renderBrowse(); });
+        a.addEventListener('click', function(e) { e.preventDefault(); state.browseTrialId = null; state.browseSeedId = null; state.browseDmId = null; renderBrowse(); });
       });
     }
 
@@ -1747,11 +1897,37 @@ def _html_content(manifest: dict) -> str:
       const runs = manifest.runs || [];
       const seedId = state.browseSeedId;
       const dmId = state.browseDmId;
+      const hpo = hasHpoTrials();
+      if (hpo && !state.browseTrialId) {
+        renderBreadcrumb([{ label: rootBrowseLabel(), resetBrowse: true }]);
+        const trials = getHpoTrials();
+        if (!trials.length) { contentEl.innerHTML = '<div class="empty-state"><span class="empty-state-title">No runs</span><p>No HPO trials found in manifest.</p></div>'; return; }
+        let html = '<div class="browse-level-title">HPO trials</div><ul class="run-list">';
+        trials.forEach(function(t) {
+          const nSeed = (t.children_ids || []).length;
+          html += '<li><span>' + escapeHtml(t.label_short || t.id) + '</span><span class="run-list-params">' + nSeed + ' seed run(s)</span>';
+          html += '<div class="run-list-actions"><button type="button" class="btn btn-primary" data-browse-trial="' + escapeHtml(t.id) + '">Open</button></div></li>';
+        });
+        html += '</ul>';
+        contentEl.innerHTML = html;
+        contentEl.querySelectorAll('[data-browse-trial]').forEach(function(btn) {
+          btn.addEventListener('click', function() { state.browseTrialId = this.getAttribute('data-browse-trial'); state.browseSeedId = null; state.browseDmId = null; renderBrowse(); });
+        });
+        return;
+      }
       const seeds = getSeeds();
-      if (!seeds.length) { contentEl.innerHTML = '<div class="empty-state"><span class="empty-state-title">No runs</span><p>No seed runs found in manifest.</p></div>'; return; }
+      if (!seeds.length) {
+        const msg = hpo ? 'No seed runs under this trial.' : 'No seed runs found in manifest.';
+        contentEl.innerHTML = '<div class="empty-state"><span class="empty-state-title">No runs</span><p>' + msg + '</p></div>';
+        return;
+      }
       if (!seedId) {
-        renderBreadcrumb([{ label: 'Seeds' }]);
-        let html = '<div class="browse-level-title">Seeds</div><ul class="run-list">';
+        const rootCrumb = { label: rootBrowseLabel(), resetBrowse: true };
+        const parts = hpo && state.browseTrialId ? [rootCrumb, { label: (getRunById(state.browseTrialId) || {}).label_short || state.browseTrialId, runId: state.browseTrialId }] : [rootCrumb];
+        renderBreadcrumb(parts);
+        let html = '<div class="browse-level-title">Seeds</div>';
+        if (hpo && state.browseTrialId) html += '<p style="margin-bottom:0.75rem;"><button type="button" class="btn" id="btnBackToTrials">\u2190 Back to trials</button></p>';
+        html += '<ul class="run-list">';
         seeds.forEach(s => {
           const dms = getDistMapsForSeed(s.id);
           const euCount = dms.reduce((n, dm) => n + (dm.children_ids ? dm.children_ids.length : 0), 0);
@@ -1760,6 +1936,8 @@ def _html_content(manifest: dict) -> str:
         });
         html += '</ul>';
         contentEl.innerHTML = html;
+        const backTrials = contentEl.querySelector('#btnBackToTrials');
+        if (backTrials) backTrials.addEventListener('click', function() { state.browseTrialId = null; state.browseSeedId = null; state.browseDmId = null; renderBrowse(); });
         contentEl.querySelectorAll('[data-browse-seed]').forEach(btn => {
           btn.addEventListener('click', function() { state.browseSeedId = this.getAttribute('data-browse-seed'); state.browseDmId = null; renderBrowse(); });
         });
@@ -1768,8 +1946,14 @@ def _html_content(manifest: dict) -> str:
       const dms = getDistMapsForSeed(seedId);
       const seedRun = getRunById(seedId);
       if (!dmId) {
-        renderBreadcrumb([{ label: 'Seeds', runId: null }, { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId }]);
-        let html = '<div class="browse-level-title">DistMap Runs</div><ul class="run-list">';
+        const rootCrumb = { label: rootBrowseLabel(), resetBrowse: true };
+        const crumbs = hpo && state.browseTrialId
+          ? [rootCrumb, { label: (getRunById(state.browseTrialId) || {}).label_short || state.browseTrialId, runId: state.browseTrialId }, { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId }]
+          : [rootCrumb, { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId }];
+        renderBreadcrumb(crumbs);
+        let html = '<div class="browse-level-title">DistMap Runs</div>';
+        if (hpo && state.browseTrialId) html += '<p style="margin-bottom:0.75rem;"><button type="button" class="btn" id="btnBackToSeedsFromDm">\u2190 Back to seeds</button></p>';
+        html += '<ul class="run-list">';
         dms.forEach(dm => {
           const paramStr = formatParams(dm.params);
           const euCount = (dm.children_ids || []).length;
@@ -1778,6 +1962,8 @@ def _html_content(manifest: dict) -> str:
         });
         html += '</ul>';
         contentEl.innerHTML = html;
+        const backSeedsDm = contentEl.querySelector('#btnBackToSeedsFromDm');
+        if (backSeedsDm) backSeedsDm.addEventListener('click', function() { state.browseSeedId = null; state.browseDmId = null; renderBrowse(); });
         contentEl.querySelectorAll('[data-browse-dm]').forEach(btn => {
           btn.addEventListener('click', function() { state.browseDmId = this.getAttribute('data-browse-dm'); renderBrowse(); });
         });
@@ -1807,11 +1993,11 @@ def _html_content(manifest: dict) -> str:
       }
       const eus = getEuclideanizersForDistMap(dmId);
       const dmRun = getRunById(dmId);
-      renderBreadcrumb([
-        { label: 'Seeds', runId: null },
-        { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId },
-        { label: dmRun ? (dmRun.label_short || dmId) : dmId, runId: dmId }
-      ]);
+      const rootCrumbEu = { label: rootBrowseLabel(), resetBrowse: true };
+      const crumbsEu = hpo && state.browseTrialId
+        ? [rootCrumbEu, { label: (getRunById(state.browseTrialId) || {}).label_short || state.browseTrialId, runId: state.browseTrialId }, { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId }, { label: dmRun ? (dmRun.label_short || dmId) : dmId, runId: dmId }]
+        : [rootCrumbEu, { label: seedRun ? (seedRun.label_short || seedId) : seedId, runId: seedId }, { label: dmRun ? (dmRun.label_short || dmId) : dmId, runId: dmId }];
+      renderBreadcrumb(crumbsEu);
       let html = '<div class="browse-level-title">Euclideanizer Runs</div><p style="margin-bottom:0.75rem;"><button type="button" class="btn" id="btnBackToDms">\u2190 Back To DistMap Runs</button></p><ul class="run-list">';
       eus.forEach(eu => {
         const paramStr = formatParams(eu.params);
@@ -1854,14 +2040,18 @@ def _html_content(manifest: dict) -> str:
         const dm = getRunById(run.parent_id);
         const seedId = dm && dm.parent_id ? dm.parent_id : null;
         const seed = seedId ? getRunById(seedId) : null;
+        const trial = seed && seed.parent_id ? getRunById(seed.parent_id) : null;
+        if (trial && trial.level === 'hpo_trial') parts.push({ label: trial.label_short || trial.id, runId: trial.id });
         if (seed) parts.push({ label: seed.label_short || seedId, runId: seedId });
         if (dm) parts.push({ label: dm.label_short || run.parent_id, runId: dm.id });
       } else if (run.level === 'distmap' && run.parent_id) {
         const seed = getRunById(run.parent_id);
+        const trial = seed && seed.parent_id ? getRunById(seed.parent_id) : null;
+        if (trial && trial.level === 'hpo_trial') parts.push({ label: trial.label_short || trial.id, runId: trial.id });
         if (seed) parts.push({ label: seed.label_short || run.parent_id, runId: run.parent_id });
       }
       parts.push({ label: run.label_short || run.id, runId: null });
-      renderBreadcrumb([{ label: 'Seeds', runId: null }].concat(parts.map(p => ({ label: p.label, runId: p.runId }))));
+      renderBreadcrumb([{ label: rootBrowseLabel(), resetBrowse: true }].concat(parts.map(p => ({ label: p.label, runId: p.runId }))));
       let html = '<div class="run-card"><h2 class="run-card-title">' + escapeHtml(run.label_short || run.id) + '</h2>';
       html += '<details class="param-panel" open><summary>Parameters</summary><table>';
       if (run.parent_params && Object.keys(run.parent_params).length) {
@@ -2368,9 +2558,13 @@ def _html_content(manifest: dict) -> str:
     function updateContent() {
       if (!manifest) return;
       state.viewMode = viewModeEl ? viewModeEl.value : state.viewMode;
+      if (hasHpoTrials() && state.viewMode === 'aspect') {
+        state.viewMode = 'browse';
+        if (viewModeEl) viewModeEl.value = 'browse';
+      }
       const runs = manifest.runs || [];
       viewCompareEl.style.display = state.viewMode === 'compare' ? 'inline-flex' : 'none';
-      viewAspectEl.style.display = state.viewMode === 'aspect' ? 'inline-flex' : 'none';
+      viewAspectEl.style.display = (state.viewMode === 'aspect' && !hasHpoTrials()) ? 'inline-flex' : 'none';
       if (viewScorePlotEl) viewScorePlotEl.style.display = state.viewMode === 'score_plot' ? 'inline-flex' : 'none';
       viewBrowseEl.style.display = state.viewMode === 'browse' ? 'inline-flex' : 'none';
       if (state.viewMode === 'radar_grid') {
@@ -2449,6 +2643,7 @@ def _html_content(manifest: dict) -> str:
     function init() {
       function useManifest(data) {
         manifest = data;
+        applyHpoStudyDashboardRestrictions();
         titleEl.textContent = (data.base_path || 'Pipeline') + ' — Dashboard';
         generatedEl.textContent = 'Generated: ' + formatGeneratedAt(data.generated_at);
         viewModeEl.value = 'browse';
@@ -2458,7 +2653,7 @@ def _html_content(manifest: dict) -> str:
         runBEl.addEventListener('change', updateContent);
         viewModeEl.addEventListener('change', () => {
           state.viewMode = viewModeEl.value;
-          if (viewModeEl.value === 'aspect') fillAspectDropdown();
+          if (viewModeEl.value === 'aspect' && !hasHpoTrials()) fillAspectDropdown();
           if (viewModeEl.value === 'score_plot') { fillScorePlotDropdowns(); }
           if (viewModeEl.value === 'compare') { levelEl.value = state.compareLevel || 'euclideanizer'; fillRunSelect(runAEl, false); fillRunSelect(runBEl, true); if (state.compareRunA) runAEl.value = state.compareRunA; if (state.compareRunB) runBEl.value = state.compareRunB; }
           updateContent();
@@ -2473,7 +2668,7 @@ def _html_content(manifest: dict) -> str:
         if (scorePlotAspectColorEl) scorePlotAspectColorEl.addEventListener('change', updateContent);
         fillRunSelect(runAEl, false);
         fillRunSelect(runBEl, true);
-        fillAspectDropdown();
+        if (!hasHpoTrials()) fillAspectDropdown();
         updateContent();
       }
       if (window.__DASHBOARD_MANIFEST__) {
@@ -2492,6 +2687,7 @@ def _html_content(manifest: dict) -> str:
 </body>
 </html>
 """
+    ).replace("__PAGE_TITLE__", page_title)
 
 
 def _write_index_html(dashboard_dir: str, manifest: dict) -> None:
@@ -2500,11 +2696,13 @@ def _write_index_html(dashboard_dir: str, manifest: dict) -> None:
         f.write(_html_content(manifest))
 
 
-def build_dashboard(base_output_dir: str) -> Optional[str]:
+def build_dashboard(base_output_dir: str, manifest_extra: dict[str, Any] | None = None) -> Optional[str]:
     """
     Scan run root, copy plot/video/analysis assets into dashboard/assets/,
     write dashboard/manifest.json and dashboard/index.html.
     Returns dashboard_dir path if built, None if no runs found.
+
+    manifest_extra: optional keys merged into the manifest (e.g. dashboard_title, hpo_study).
     """
     runs = _scan_runs(base_output_dir)
     if not runs:
@@ -2519,6 +2717,8 @@ def build_dashboard(base_output_dir: str) -> Optional[str]:
         scoring_save_pdf_copy = False
     runs_for_manifest = _copy_assets_and_update_paths(runs, assets_dir, scoring_save_pdf_copy)
     manifest = _make_manifest(base_output_dir, runs_for_manifest)
+    if manifest_extra:
+        manifest = {**manifest, **manifest_extra}
     _write_manifest(dashboard_dir, manifest)
     _write_index_html(dashboard_dir, manifest)
     return dashboard_dir

@@ -651,40 +651,42 @@ def main() -> int:
             sys.stderr = run_module._pipeline_real_stderr
         hpo_log_file.close()
 
-    # HPO dashboard: list trials and best
-    best = study.best_trial
-    print(f"\nBest trial: {best.number}  value={best.value:.6f}")
-    print(f"  Params: {best.params}")
+    try:
+        best = study.best_trial
+    except ValueError:
+        best = None
+    if best is not None:
+        print(f"\nBest trial: {best.number}  value={best.value:.6f}")
+        print(f"  Params: {best.params}")
+    else:
+        print("\nNo completed trial with a value (best trial N/A).")
 
-    # Write a simple manifest for the HPO dashboard
-    dashboard_dir = Path(output_root) / "dashboard"
-    dashboard_dir.mkdir(parents=True, exist_ok=True)
-    manifest = {
-        "trials": [
-            {
-                "number": t.number,
-                "value": t.value if t.value is not None else None,
-                "params": t.params,
-                "state": str(t.state.name),
-            }
-            for t in study.trials
-        ],
-        "best_trial_number": best.number if best else None,
-        "n_gpus": _get_n_gpus(hpo_cfg),
+    from src.dashboard import build_dashboard
+
+    manifest_extra = {
+        "dashboard_title": "HPO Study Dashboard",
+        "hpo_study": {
+            "trials": [
+                {
+                    "number": t.number,
+                    "value": t.value if t.value is not None else None,
+                    "params": t.params,
+                    "state": str(t.state.name),
+                }
+                for t in study.trials
+            ],
+            "best_trial_number": best.number if best is not None else None,
+            "n_gpus": _get_n_gpus(hpo_cfg),
+        },
     }
-    with open(dashboard_dir / "manifest.json", "w") as f:
-        json.dump(manifest, f, indent=2)
-    index_html = dashboard_dir / "index.html"
-    with open(index_html, "w") as f:
-        f.write("<!DOCTYPE html><html><head><title>HPO</title></head><body>\n")
-        f.write("<h1>HPO results</h1>\n")
-        f.write(f"<p>Best trial: {best.number} (value={best.value:.6f})</p>\n" if best else "<p>No completed trials.</p>\n")
-        f.write("<table border='1'><tr><th>Trial</th><th>Value</th><th>State</th><th>Link</th></tr>\n")
-        for t in study.trials:
-            link = f"../trial_{t.number}/seed_{seed}/distmap/0/euclideanizer/0/dashboard/index.html" if t.value is not None else "#"
-            f.write(f"<tr><td>{t.number}</td><td>{t.value}</td><td>{t.state.name}</td><td><a href='{link}'>dashboard</a></td></tr>\n")
-        f.write("</table></body></html>\n")
-    print(f"HPO dashboard: {index_html}")
+    dashboard_dir = build_dashboard(str(output_root), manifest_extra=manifest_extra)
+    if dashboard_dir:
+        print(f"HPO dashboard: {os.path.join(dashboard_dir, 'index.html')}")
+    else:
+        print(
+            "HPO dashboard skipped (no trial output trees found). "
+            "Re-run after trials complete, or build manually: python -m src.dashboard <output_root>"
+        )
 
     return 0
 

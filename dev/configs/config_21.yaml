@@ -9,7 +9,7 @@ data:
   split_seed: [0]   # single int = one run; list = one full pipeline run per seed (output under base_output_dir/seed_<n>); same seed used for train/test and for that run's DistMap + Euclideanizers
   training_split: [0.8]   # fraction for training; same for both models, plotting, and analysis
   exp_stats_chunk_size: 100   # batch size when computing distance maps for experimental statistics (memory vs speed)
-  exp_stats_avg_map_sample: null   # number of structures to average for avg_exp_map in experimental statistics
+  exp_stats_avg_map_sample: 3000   # number of structures to average for avg_exp_map in experimental statistics
   max_data: null
 
 output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-21/RANGE/Chrom_21"

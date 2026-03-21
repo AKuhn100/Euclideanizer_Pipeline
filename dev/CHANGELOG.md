@@ -2,6 +2,12 @@
 
 ## 2026-03-23
 
+- **HPO dashboard:** Remove **Vary Aspect** from the View menu when the manifest includes `hpo_trial` runs (hyperparameter trials are not a single swept axis). `dashboard.js` embedded in `dashboard.py`.
+
+- **Dashboard `<title>` / `<h1>` placeholder fix:** `_html_content` applied `.replace("__PAGE_TITLE__", …)` only to the last string segment (`a + b + c.replace` precedence). Wrapped the full HTML concatenation in parentheses so the tab title and header substitute correctly. `dashboard.py`.
+
+- **HPO dashboard `assets/`:** `run_hpo.py` now creates `output_dir/dashboard/assets/` and writes `assets/style.css`; `index.html` links it (same `dashboard/` + `assets/` convention as the pipeline dashboard). Updated `HPO_SPEC.md`, `STYLE_GUIDE.md`, README HPO blurb.
+
 - **Style alignment (GC + sufficiency curves):** `plot_config` adds **`GEN_CAP_CONVERGENCE_*`**, **`SUFFICIENCY_CURVES_FIG_HEIGHT`**; `generative_capacity.py` / `meta_analysis.py` use them; GC figure text uses short **Gen** (not “Generated”) per §4.10. `run.py` types `by_n_*` as **`dict[int, np.ndarray] | None`**. Sandbox + **`GENERATIVE_CAPACITY_ANALYSIS.md`** updated. **`STYLE_GUIDE`** §3.3 / checklist §4.10 cross-refs fixed.
 
 - **Documentation:** README expanded (meta-analysis, GC convergence, output trees, resume/overwrite for shared GC convergence + sufficiency, dashboard views); production README avoids `dev/` paths—spec pointers use generic “bundled with sources” wording. `DATA_SUFFICIENCY_META_ANALYSIS.md` §8 (dashboard + manifest curves). `STYLE_GUIDE` spec paths → `dev/specs/`. Sample config comments; synthetic and dashboard sandbox READMEs; sandbox `build_meta_analysis_page.py` includes sufficiency **curves** preview.

@@ -34,7 +34,7 @@
 
 5. **Pruning.** The pruner (e.g. MedianPruner) compares each trial's reported validation loss at the same **step** to other trials. If the trial is clearly worse, `should_prune()` becomes true and the callback raises `TrialPruned`, so training and the rest of the pipeline for that trial are skipped. **DistMap reports step = epoch (1..dm_epochs). Euclideanizer reports step = dm_epochs_max + epoch**, where `dm_epochs_max` is the same for all trials (from `epoch_cap`, search space high, or base config). So DistMap steps are 1..dm_epochs_max and Euclideanizer steps are dm_epochs_max+1, dm_epochs_max+2, ... with no overlap; the pruner compares DistMap epoch 50 to DistMap epoch 50 across trials, and Euclideanizer epoch 50 to Euclideanizer epoch 50 across trials (at step dm_epochs_max+50). Pruning can occur in either phase. Pruner options (see HPO config comment): MedianPruner, SuccessiveHalvingPruner, HyperbandPruner, NopPruner, PercentilePruner, ThresholdPruner, WilcoxonPruner, PatientPruner.
 
-6. **After optimize.** The script prints the best trial and writes the HPO dashboard (manifest.json + index.html) under `output_dir/dashboard/` with links to each trial's pipeline dashboard.
+6. **After optimize.** The script prints the best trial and writes the HPO dashboard under `output_dir/dashboard/`: `manifest.json`, `index.html`, and `assets/` (e.g. `assets/style.css` for page styling; same top-level layout as the per-run pipeline dashboard). Links point to each trial's pipeline dashboard.
 
 7. **Resume.** With `--resume --n-trials-add N`, the same study is loaded from the same DB and N **new** trials are run; trial numbers continue from the previous run. Trials that were in progress when the run was stopped (or that failed) are **not** re-run; they stay in the study as incomplete/failed. The run adds new trials until the total trial count (all states) reaches the previous count plus N.
 
@@ -88,7 +88,7 @@
 
 - **Per-trial output:** Each trial writes into its own directory under the HPO output root, using the **existing pipeline structure**: e.g. `{hpo_output_root}/trial_{N}/seed_{s}/distmap/0/euclideanizer/0/` with the same contents as a single run today (model checkpoints, plots/, analysis/, scoring/, dashboard/). This allows existing plotting, analysis, scoring, and dashboard code to run unchanged on each trial's directory.
 - **Full artifacts per trial:** For every trial (including pruned ones that run at least one epoch), generate all outputs: score, plots, analysis data, structures (if enabled), and the per-trial dashboard. No optional skipping of plots for HPO; analysis is mandatory and plots are produced.
-- **HPO dashboard:** In addition to the per-trial dashboards, an **HPO-level dashboard** is produced at the HPO output root. It allows comparison across trials: table or list of trials with trial id, hyperparameters, overall score, validation loss (if available), and links to each trial's dashboard. Optionally: parallel coordinates or scatter plots of key hyperparameters vs score. Implementation can follow the same pattern as the current multi-parameter run dashboard (manifest + HTML).
+- **HPO dashboard:** In addition to the per-trial dashboards, an **HPO-level dashboard** is produced at the HPO output root. It allows comparison across trials: table or list of trials with trial id, hyperparameters, overall score, validation loss (if available), and links to each trial's dashboard. Optionally: parallel coordinates or scatter plots of key hyperparameters vs score. Implementation follows the same top-level layout as the pipeline run dashboard (`dashboard/manifest.json`, `index.html`, `assets/`).
 
 ### 3.9 Reuse of existing runs
 
@@ -129,7 +129,7 @@
 7. **Output directory layout**
   Ensure each trial writes to `{hpo_output_root}/trial_{N}/seed_{s}/distmap/0/euclideanizer/0/` (or equivalent) so that existing dashboard/plotting/analysis code can run per trial without change. Use a single seed; N is the Optuna trial number.
 8. **HPO dashboard**
-  After each trial (or at the end of the run), build the HPO-level dashboard: scan HPO output root for `trial_`*, collect trial id, hyperparameters, overall score from `scores.json`, and link to each trial's dashboard. Generate `dashboard/manifest.json` and `dashboard/index.html` at the HPO root. Optionally add plots (e.g. param vs score). Reuse patterns from `src/dashboard.py` where possible.
+  After each trial (or at the end of the run), build the HPO-level dashboard: scan HPO output root for `trial_`*, collect trial id, hyperparameters, overall score from `scores.json`, and link to each trial's dashboard. Generate `dashboard/manifest.json`, `dashboard/index.html`, and `dashboard/assets/` at the HPO root. Optionally add plots (e.g. param vs score) under `assets/`. Reuse patterns from `src/dashboard.py` where possible.
 9. **Resume support**
   Implement resume: same HPO config (same output_dir) and `--resume --n-trials-add N`. Load study from output_dir/hpo_study.db and run N more trials; trial numbers continue; new trial dirs go under the same HPO output root.
 10. **Reproducibility**
@@ -156,5 +156,5 @@
 | Parallelization  | `run_hpo.py` auto-spawns one worker per GPU when n_gpus > 1 (shared DB; MaxTrialsCallback). Single GPU: one process. |
 | Failure log      | Under HPO output root (e.g. `hpo_failed_trials.log`)                              |
 | Per-trial output | `{hpo_output_root}/trial_{N}/seed_{s}/distmap/0/euclideanizer/0/`                 |
-| HPO dashboard    | `{hpo_output_root}/dashboard/` (manifest + index.html for cross-trial comparison) |
+| HPO dashboard    | `{hpo_output_root}/dashboard/` (`manifest.json`, `index.html`, `assets/` for cross-trial comparison) |
 
