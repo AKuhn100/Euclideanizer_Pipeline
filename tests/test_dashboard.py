@@ -279,11 +279,14 @@ def test_scan_runs_includes_generative_capacity_blocks(tmp_path):
     gc_q.parent.mkdir(parents=True, exist_ok=True)
     gc_r.write_bytes(_MIN_PNG)
     gc_q.write_bytes(_MIN_PNG)
+    gc_conv = eu_root / "analysis" / "generative_capacity" / "convergence_median_vs_n_rmsd_q.png"
+    gc_conv.write_bytes(_MIN_PNG)
     runs = _scan_runs(str(tmp_path))
     eu = next(r for r in runs if r["id"] == "seed_0_dm_0_eu_0")
     block_types = {b.get("type") for b in eu.get("blocks", [])}
     assert "generative_capacity_rmsd" in block_types
     assert "generative_capacity_q" in block_types
+    assert "generative_capacity_convergence" in block_types
 
 
 def test_scan_runs_includes_sufficiency_meta_sources(tmp_path):
@@ -301,11 +304,15 @@ def test_scan_runs_includes_sufficiency_meta_sources(tmp_path):
     d400 = tmp_path / "meta_analysis" / "sufficiency" / "seed_0" / "distributions" / "max_data_400"
     d400.mkdir(parents=True)
     (d400 / "distributions_rmsd_q.png").write_bytes(_MIN_PNG)
+    curves = tmp_path / "meta_analysis" / "sufficiency" / "seed_0" / "curves"
+    curves.mkdir(parents=True)
+    (curves / "sufficiency_median_recon_vs_split_by_max_data.png").write_bytes(_MIN_PNG)
     runs = _scan_runs(str(tmp_path))
     seed = next(r for r in runs if r["id"] == "seed_0")
     assert "sufficiency_meta_sources" in seed
     assert seed["sufficiency_meta_sources"]["heatmap_source"]
     assert len(seed["sufficiency_meta_sources"]["distributions"]) == 1
+    assert seed["sufficiency_meta_sources"]["curves_source"]
 
 
 def test_build_dashboard_manifest_includes_sufficiency_meta(tmp_path):
@@ -323,6 +330,9 @@ def test_build_dashboard_manifest_includes_sufficiency_meta(tmp_path):
     d400 = tmp_path / "meta_analysis" / "sufficiency" / "seed_0" / "distributions" / "max_data_400"
     d400.mkdir(parents=True)
     (d400 / "distributions_rmsd_q.png").write_bytes(_MIN_PNG)
+    curves = tmp_path / "meta_analysis" / "sufficiency" / "seed_0" / "curves"
+    curves.mkdir(parents=True)
+    (curves / "sufficiency_median_recon_vs_split_by_max_data.png").write_bytes(_MIN_PNG)
     result = build_dashboard(str(tmp_path))
     assert result
     man = json.loads((Path(result) / "manifest.json").read_text(encoding="utf-8"))
@@ -331,4 +341,6 @@ def test_build_dashboard_manifest_includes_sufficiency_meta(tmp_path):
     assert seed["sufficiency_meta"]["heatmap"].startswith("assets/")
     assert len(seed["sufficiency_meta"]["distributions"]) == 1
     assert seed["sufficiency_meta"]["distributions"][0]["max_data"] == "400"
+    assert seed["sufficiency_meta"]["curves"].startswith("assets/")
     assert os.path.isfile(os.path.join(result, seed["sufficiency_meta"]["heatmap"]))
+    assert os.path.isfile(os.path.join(result, seed["sufficiency_meta"]["curves"]))

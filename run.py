@@ -701,6 +701,15 @@ def _delete_analysis_outputs_for_component(base_output_dir: str, run_entries: li
                 path = os.path.join(eu_dir, eu_name, target)
                 if os.path.isdir(path):
                     shutil.rmtree(path, ignore_errors=True)
+                if component in ("generative_capacity_rmsd", "generative_capacity_q"):
+                    gc_dir = os.path.join(eu_dir, eu_name, "analysis", "generative_capacity")
+                    for stem in ("convergence_median_vs_n_rmsd_q.png", "convergence_median_vs_n_rmsd_q.pdf"):
+                        fp = os.path.join(gc_dir, stem)
+                        if os.path.isfile(fp):
+                            try:
+                                os.remove(fp)
+                            except OSError:
+                                pass
 
 
 def _confirm_overwrite_outputs(labels: list) -> None:
@@ -1517,6 +1526,10 @@ def _euclideanizer_analysis_all_present(
     if gc_q["enabled"]:
         if not os.path.isfile(os.path.join(run_dir_eu, "analysis", "generative_capacity", "q", "generative_capacity_q.png")):
             return False
+    if gc_r["enabled"] and gc_q["enabled"]:
+        comb = os.path.join(run_dir_eu, "analysis", "generative_capacity", "convergence_median_vs_n_rmsd_q.png")
+        if not os.path.isfile(comb):
+            return False
     return True
 
 
@@ -2195,12 +2208,20 @@ def _run_generative_capacity_blocks_for_run(
     pipeline_start: float,
     display_root: str | None,
 ) -> None:
+    combined_path = os.path.join(run_dir_eu, "analysis", "generative_capacity", "convergence_median_vs_n_rmsd_q.png")
+    need_combined = (not resume) or (not os.path.isfile(combined_path))
+    by_n_rmsd: dict[int, np.ndarray] | None = None
+    by_n_q: dict[int, np.ndarray] | None = None
+    ran_r = False
+    ran_q = False
+
     gc_r = analysis_cfg["generative_capacity_rmsd"]
     if gc_r["enabled"]:
         fig_r = os.path.join(run_dir_eu, "analysis", "generative_capacity", "rmsd", "generative_capacity_rmsd.png")
         if (not resume) or (not os.path.isfile(fig_r)):
+            ran_r = True
             _log("Running generative capacity RMSD analysis...", since_start=time.time() - pipeline_start, style="info")
-            generative_capacity_module.run_generative_capacity_rmsd(
+            _, by_n_rmsd = generative_capacity_module.run_generative_capacity_rmsd(
                 run_dir=run_dir_eu,
                 seed=seed,
                 latent_dim=latent_dim,
@@ -2210,12 +2231,17 @@ def _run_generative_capacity_blocks_for_run(
                 cfg_block=gc_r,
                 display_root=display_root,
             )
+        elif bool(gc_r["save_data"]) and need_combined:
+            by_n_rmsd = generative_capacity_module.try_load_gc_by_n_from_npz(
+                run_dir_eu, metric="rmsd", n_structures=gc_r["n_structures"]
+            )
     gc_q = analysis_cfg["generative_capacity_q"]
     if gc_q["enabled"]:
         fig_q = os.path.join(run_dir_eu, "analysis", "generative_capacity", "q", "generative_capacity_q.png")
         if (not resume) or (not os.path.isfile(fig_q)):
+            ran_q = True
             _log("Running generative capacity Q analysis...", since_start=time.time() - pipeline_start, style="info")
-            generative_capacity_module.run_generative_capacity_q(
+            _, by_n_q = generative_capacity_module.run_generative_capacity_q(
                 run_dir=run_dir_eu,
                 seed=seed,
                 latent_dim=latent_dim,
@@ -2223,6 +2249,56 @@ def _run_generative_capacity_blocks_for_run(
                 frozen_vae=frozen_vae,
                 embed=embed,
                 cfg_block=gc_q,
+                display_root=display_root,
+            )
+        elif bool(gc_q["save_data"]) and need_combined:
+            by_n_q = generative_capacity_module.try_load_gc_by_n_from_npz(
+                run_dir_eu, metric="q", n_structures=gc_q["n_structures"]
+            )
+
+    did_backfill = False
+    if (
+        gc_r["enabled"]
+        and gc_q["enabled"]
+        and need_combined
+        and (by_n_rmsd is None or by_n_q is None)
+    ):
+        did_backfill = True
+        _log(
+            "Generative capacity: recomputing RMSD/Q for median-vs-N convergence figure...",
+            since_start=time.time() - pipeline_start,
+            style="info",
+        )
+        if by_n_rmsd is None:
+            _, by_n_rmsd = generative_capacity_module.run_generative_capacity_rmsd(
+                run_dir=run_dir_eu,
+                seed=seed,
+                latent_dim=latent_dim,
+                device=device,
+                frozen_vae=frozen_vae,
+                embed=embed,
+                cfg_block=gc_r,
+                display_root=display_root,
+            )
+        if by_n_q is None:
+            _, by_n_q = generative_capacity_module.run_generative_capacity_q(
+                run_dir=run_dir_eu,
+                seed=seed,
+                latent_dim=latent_dim,
+                device=device,
+                frozen_vae=frozen_vae,
+                embed=embed,
+                cfg_block=gc_q,
+                display_root=display_root,
+            )
+
+    if gc_r["enabled"] and gc_q["enabled"] and by_n_rmsd is not None and by_n_q is not None:
+        if (not os.path.isfile(combined_path)) or ran_r or ran_q or did_backfill:
+            generative_capacity_module.save_generative_capacity_convergence_combined(
+                run_dir=run_dir_eu,
+                by_n_rmsd=by_n_rmsd,
+                by_n_q=by_n_q,
+                save_pdf_copy=bool(gc_r["save_pdf_copy"] or gc_q["save_pdf_copy"]),
                 display_root=display_root,
             )
 
@@ -4345,7 +4421,7 @@ def main():
         # Chunks already deleted by overwrite_existing block above: skip second prompt and delete
         chunks_still_to_delete = [c for c in chunks_to_update if c not in to_overwrite]
         # Only prompt and delete for chunks that actually have existing outputs
-        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "generative_capacity_rmsd": "Generative Capacity (RMSD)", "generative_capacity_q": "Generative Capacity (Q)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)", "latent": "Latent", "meta_analysis_sufficiency": "Sufficiency Meta-Analysis"}
+        chunk_labels = {"plotting": "Plotting", "rmsd_gen": "RMSD (gen)", "rmsd_recon": "RMSD (recon)", "q_gen": "Q (gen)", "q_recon": "Q (recon)", "generative_capacity_rmsd": "Generative Capacity (RMSD)", "generative_capacity_q": "Generative Capacity (Q)", "generative_capacity_convergence": "Generative Capacity (Median Vs N)", "coord_clustering_gen": "Coord clustering (gen)", "coord_clustering_recon": "Coord clustering (recon)", "distmap_clustering_gen": "Distmap clustering (gen)", "distmap_clustering_recon": "Distmap clustering (recon)", "latent": "Latent", "meta_analysis_sufficiency": "Sufficiency Meta-Analysis"}
         chunks_with_outputs = [
             c for c in chunks_still_to_delete
             if (c == "plotting" and _has_any_plotting_output(base_output_dir, run_entries, training_splits))

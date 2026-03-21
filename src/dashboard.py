@@ -581,6 +581,13 @@ def _blocks_for_euclideanizer_run(run_root: str) -> list[dict[str, Any]]:
             "name": "Generative Capacity (Q)",
             "source_path": os.path.join("analysis", "generative_capacity", "q", "generative_capacity_q.png"),
         })
+    gc_conv = os.path.join(run_root, "analysis", "generative_capacity", "convergence_median_vs_n_rmsd_q.png")
+    if os.path.isfile(gc_conv):
+        blocks.append({
+            "type": "generative_capacity_convergence",
+            "name": "Generative Capacity (Median Vs N)",
+            "source_path": os.path.join("analysis", "generative_capacity", "convergence_median_vs_n_rmsd_q.png"),
+        })
     # Latent after generative capacity (matches analysis section order in config YAML)
     latent_dist = os.path.join(run_root, _LATENT_PLOTS_DIR, "latent_distribution.png")
     latent_corr = os.path.join(run_root, _LATENT_PLOTS_DIR, "latent_correlation.png")
@@ -693,6 +700,9 @@ def _sufficiency_meta_sources_for_seed(seed_num: int, base_output_dir: str, seed
                 dists.append({"tag": tag, "source": os.path.relpath(png, seed_dir)})
     if dists:
         out["distributions"] = dists
+    curves_png = os.path.join(suff_seed, "curves", "sufficiency_median_recon_vs_split_by_max_data.png")
+    if os.path.isfile(curves_png):
+        out["curves_source"] = os.path.relpath(curves_png, seed_dir)
     return out if out else None
 
 
@@ -972,6 +982,15 @@ def _copy_assets_and_update_paths(
                 dists_out.append({"max_data": str(tag), "path": f"assets/{dname}"})
             if dists_out:
                 smeta_out["distributions"] = dists_out
+            cs = sm_src.get("curves_source")
+            if cs and root:
+                csrc = os.path.join(root, cs)
+                if os.path.isfile(csrc):
+                    cname = f"{sid_safe}_sufficiency_curves.png"
+                    if cname not in copied:
+                        shutil.copy2(csrc, os.path.join(assets_dir, cname))
+                        copied.add(cname)
+                    smeta_out["curves"] = f"assets/{cname}"
             if smeta_out:
                 entry["sufficiency_meta"] = smeta_out
         out_runs.append(entry)
@@ -1575,7 +1594,7 @@ def _html_content(manifest: dict) -> str:
         null,
         'distmap_clustering_gen', 'distmap_clustering_recon',
         null,
-        'generative_capacity_rmsd', 'generative_capacity_q',
+        'generative_capacity_rmsd', 'generative_capacity_q', 'generative_capacity_convergence',
         null,
         'latent_distribution', 'latent_correlation',
         null,
@@ -2307,9 +2326,9 @@ def _html_content(manifest: dict) -> str:
 
     function renderMetaAnalysisPage() {
       const runs = manifest.runs || [];
-      const seeds = runs.filter(r => r.level === 'seed' && r.sufficiency_meta && (r.sufficiency_meta.heatmap || (r.sufficiency_meta.distributions && r.sufficiency_meta.distributions.length)));
+      const seeds = runs.filter(r => r.level === 'seed' && r.sufficiency_meta && (r.sufficiency_meta.heatmap || (r.sufficiency_meta.distributions && r.sufficiency_meta.distributions.length) || r.sufficiency_meta.curves));
       if (!seeds.length) {
-        contentEl.innerHTML = '<div class="meta-analysis-wrap"><div class="empty-state"><span class="empty-state-title">No Sufficiency Meta-Analysis</span><p>No heatmap or distribution figures under <code>meta_analysis/sufficiency/</code>. Enable sufficiency meta-analysis and re-run the pipeline.</p></div></div>';
+        contentEl.innerHTML = '<div class="meta-analysis-wrap"><div class="empty-state"><span class="empty-state-title">No Sufficiency Meta-Analysis</span><p>No heatmap, distribution, or curve figures under <code>meta_analysis/sufficiency/</code>. Enable sufficiency meta-analysis and re-run the pipeline.</p></div></div>';
         return;
       }
       const navItems = seeds.map(s => {
@@ -2326,6 +2345,10 @@ def _html_content(manifest: dict) -> str:
         if (sm.heatmap) {
           body += '<div class="block"><span class="block-title">Median Heatmap (RMSD / Q)</span>';
           body += '<img class="meta-heatmap-img" src="' + escapeHtml(sm.heatmap) + '" alt="Sufficiency heatmap" loading="lazy"></div>';
+        }
+        if (sm.curves) {
+          body += '<div class="block"><span class="block-title">Median Recon Vs Training Split (By Max Structures)</span>';
+          body += '<img class="meta-heatmap-img" src="' + escapeHtml(sm.curves) + '" alt="Sufficiency median recon curves" loading="lazy"></div>';
         }
         const dists = sm.distributions || [];
         if (dists.length) {

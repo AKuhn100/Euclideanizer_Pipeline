@@ -19,6 +19,7 @@ from src.generative_capacity import (
     _distribution_panel,
     _write_pairwise_matrix_npz_and_remove_npy,
     build_nested_subsample_indices,
+    save_generative_capacity_convergence_combined,
 )
 
 
@@ -72,6 +73,21 @@ def test_write_pairwise_matrix_npz_includes_delta_for_q(tmp_path):
     assert float(z["delta"]) == 0.5
     assert z["metric"].tobytes() == b"q"
     z.close()
+
+
+def test_save_generative_capacity_convergence_combined_writes_png(tmp_path):
+    run_dir = os.path.join(tmp_path, "eu_run")
+    by_r = {10: np.array([1.0, 2.0], dtype=np.float32), 20: np.array([0.5, 1.5], dtype=np.float32)}
+    by_q = {10: np.array([0.1, 0.2], dtype=np.float32), 20: np.array([0.2, 0.3], dtype=np.float32)}
+    out = save_generative_capacity_convergence_combined(
+        run_dir=run_dir,
+        by_n_rmsd=by_r,
+        by_n_q=by_q,
+        save_pdf_copy=False,
+        display_root=None,
+    )
+    assert out is not None
+    assert os.path.isfile(out)
 
 
 def test_distribution_panel_histogram_degenerate_values_no_crash():

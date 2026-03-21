@@ -1,6 +1,6 @@
 """
 Setup wizard prompt construction. System prompt and user/retry prompt builders.
-See specs/SETUP_WIZARD.md.
+See dev/specs/SETUP_WIZARD.md (under the Pipeline tree).
 """
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=Euclideanizer_Pipeline
+#SBATCH --job-name=HPO_21
 #SBATCH --partition=commons
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=64

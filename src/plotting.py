@@ -24,7 +24,6 @@ from .plot_config import (
     CMAP_DM,
     CMAP_DM_R,
     FONT_FAMILY,
-    FONT_SIZE_SUPTITLE,
     FONT_SIZE_TITLE,
     FONT_SIZE_AXIS,
     FONT_SIZE_LEGEND,
@@ -251,9 +250,7 @@ def plot_recon_statistics(
     axes[2].loglog(s, true_sc, label=exp_label, lw=LINEWIDTH_SCALING_LOGLOG, color=exp_color, zorder=3)
     axes[2].set_title("Spatial Scaling P(s)", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
     axes[2].legend(fontsize=FONT_SIZE_LEGEND)
-    title = "Reconstruction Statistics" + (f" ({exp_label} Set)" if subset_label else " (Test Set)")
-    fig.suptitle(title, fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
@@ -386,8 +383,7 @@ def plot_gen_analysis(
     cax2 = divider2.append_axes("right", size="5%", pad=0.1)
     fig.colorbar(imd1, cax=cax2)
 
-    plt.suptitle(f"Sample Variance = {sample_variance}", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
@@ -484,7 +480,6 @@ def plot_bond_length_by_genomic_distance(
         gen_vals = distmap_distances_at_lag(gen_dm, int(k))
         all_vals = np.concatenate([train_vals, test_vals, gen_vals])
         if len(all_vals) == 0:
-            ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
             continue
         x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
         x_max = max(x_max, 1e-6)
@@ -501,16 +496,11 @@ def plot_bond_length_by_genomic_distance(
             test_vals, bins=bins, alpha=0.45, label="Test", density=True, range=(0, x_max),
             histtype="step", lw=LINEWIDTH_HIST_STEP, color=COLOR_TEST, zorder=3,
         )
-        ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
         ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         _legend_train_test_gen(ax, label_gen, fontsize=FONT_SIZE_TINY)
     for idx in range(n_plots, len(axes_flat)):
         axes_flat[idx].set_visible(False)
-    plt.suptitle(
-        "Pairwise Distance By Genomic Lag k (Train, Test, Gen)",
-        fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY,
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)
@@ -548,6 +538,7 @@ def plot_pairwise_distance_by_lag_exp_vs_recon(
     5×4 grid: per lag k, experimental vs reconstructed pairwise d(i,i+k).
     Recon filled (behind); experimental step outline in front.
     subset: 'train' or 'test' selects default colors.
+    suptitle_suffix is kept for call-site compatibility; it is not drawn on the figure.
     """
     if str(subset).lower() == "test":
         exp_color = exp_color or COLOR_TEST
@@ -570,7 +561,6 @@ def plot_pairwise_distance_by_lag_exp_vs_recon(
         recon_vals = distmap_distances_at_lag(recon_dm, int(k))
         all_vals = np.concatenate([exp_vals, recon_vals])
         if len(all_vals) == 0:
-            ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
             continue
         x_max = float(np.percentile(all_vals, 99)) * 1.05 if len(all_vals) > 0 else 1.0
         x_max = max(x_max, 1e-6)
@@ -582,16 +572,11 @@ def plot_pairwise_distance_by_lag_exp_vs_recon(
             exp_vals, bins=bins, label=exp_label, density=True, range=(0, x_max), color=exp_color,
             histtype="step", lw=LINEWIDTH_HIST_STEP, zorder=4,
         )
-        ax.set_title(f"k = {k}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
         ax.set_xlabel("Distance", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax.legend(fontsize=FONT_SIZE_TINY)
     for idx in range(n_plots, len(axes_flat)):
         axes_flat[idx].set_visible(False)
-    plt.suptitle(
-        f"Pairwise Distance By Genomic Lag k ({suptitle_suffix})",
-        fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", family=FONT_FAMILY,
-    )
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.tight_layout()
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     plt.savefig(output_path, dpi=dpi)
     _save_pdf_copy(fig, output_path, save_pdf, display_root=display_root)

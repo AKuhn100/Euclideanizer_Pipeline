@@ -26,6 +26,7 @@ import torch
 
 from .plotting import _save_pdf_copy
 from .plot_config import (
+    COLOR_GEN,
     PLOT_DPI,
     FONT_FAMILY,
     FONT_SIZE_AXIS,
@@ -35,6 +36,11 @@ from .plot_config import (
     LINEWIDTH_HIST_STEP,
     GEN_CAP_STACKED_FIGWIDTH,
     GEN_CAP_STACKED_ROW_HEIGHT,
+    GEN_CAP_CONVERGENCE_FIGSIZE,
+    GEN_CAP_CONVERGENCE_LINEWIDTH,
+    GEN_CAP_CONVERGENCE_MARKER_SIZE,
+    GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH,
+    GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR,
 )
 from .distmap.sample import generate_samples
 from . import rmsd as rmsd_module
@@ -156,6 +162,75 @@ def _apply_plain_number_axes(ax) -> None:
         axis.set_major_formatter(fmt)
 
 
+def try_load_gc_by_n_from_npz(
+    run_dir: str,
+    *,
+    metric: str,
+    n_structures,
+) -> dict[int, np.ndarray] | None:
+    """Reload per-``n`` histogram arrays from ``data/n*_{min_rmsd|max_q}.npz`` if all present."""
+    n_values = _as_sorted_unique_ints(n_structures)
+    sub = "rmsd" if metric == "rmsd" else "q"
+    data_dir = os.path.join(run_dir, "analysis", "generative_capacity", sub, "data")
+    out: dict[int, np.ndarray] = {}
+    for n in n_values:
+        fn = f"n{n}_min_rmsd.npz" if metric == "rmsd" else f"n{n}_max_q.npz"
+        p = os.path.join(data_dir, fn)
+        if not os.path.isfile(p):
+            return None
+        try:
+            z = np.load(p, allow_pickle=False)
+            out[n] = np.asarray(z["values"], dtype=np.float32)
+            z.close()
+        except Exception:
+            return None
+    return out
+
+
+def save_generative_capacity_convergence_combined(
+    *,
+    run_dir: str,
+    by_n_rmsd: dict[int, np.ndarray],
+    by_n_q: dict[int, np.ndarray],
+    save_pdf_copy: bool,
+    display_root: str | None,
+) -> str | None:
+    """Median vs N (linear axes), two panels; both lines use ``COLOR_GEN`` (generated structures)."""
+    common = sorted(set(by_n_rmsd.keys()) & set(by_n_q.keys()))
+    if len(common) < 2:
+        return None
+    med_r = [float(np.median(by_n_rmsd[n])) for n in common]
+    med_q = [float(np.median(by_n_q[n])) for n in common]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=GEN_CAP_CONVERGENCE_FIGSIZE)
+    for ax, yvals, ylab in (
+        (ax1, med_r, "Median Min RMSD To Nearest Gen"),
+        (ax2, med_q, "Median Max Q To Nearest Gen"),
+    ):
+        ax.plot(
+            common,
+            yvals,
+            "o-",
+            color=COLOR_GEN,
+            lw=GEN_CAP_CONVERGENCE_LINEWIDTH,
+            ms=GEN_CAP_CONVERGENCE_MARKER_SIZE,
+            markerfacecolor=GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR,
+            markeredgewidth=GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH,
+        )
+        ax.set_xlabel("Number Of Gen Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.set_ylabel(ylab, fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        _apply_plain_number_axes(ax)
+    fig.subplots_adjust(left=0.09, right=0.98, top=0.94, bottom=0.16, wspace=0.3)
+    out_dir = os.path.join(run_dir, "analysis", "generative_capacity")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "convergence_median_vs_n_rmsd_q.png")
+    fig.savefig(out_path, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.15)
+    if save_pdf_copy:
+        _save_pdf_copy(fig, out_path, save_pdf=True, display_root=display_root)
+    plt.close(fig)
+    return out_path
+
+
 def _add_horizontal_n_colorbar(fig, cbar_ax, *, norm, cmap, n_min: int, n_max: int) -> None:
     """Horizontal colorbar for step-overlay tests / legacy layout."""
     sm = cm.ScalarMappable(norm=norm, cmap=cmap)
@@ -164,7 +239,7 @@ def _add_horizontal_n_colorbar(fig, cbar_ax, *, norm, cmap, n_min: int, n_max: i
     cbar.ax.xaxis.set_label_position("top")
     cbar.ax.xaxis.set_ticks_position("bottom")
     cbar.set_label(
-        "Number Of Generated Structures",
+        "Number Of Gen Structures",
         fontsize=FONT_SIZE_AXIS,
         labelpad=4,
         family=FONT_FAMILY,
@@ -216,7 +291,7 @@ def _add_n_colorbar_right_of_stacked(
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation="vertical")
     cbar.ax.yaxis.set_ticks_position("right")
     cbar.set_label(
-        "Number Of Generated Structures",
+        "Number Of Gen Structures",
         fontsize=FONT_SIZE_TICK,
         family=FONT_FAMILY,
         labelpad=-6,
@@ -377,7 +452,7 @@ def run_generative_capacity_rmsd(
     embed,
     cfg_block: dict,
     display_root: str | None = None,
-) -> str:
+) -> tuple[str, dict[int, np.ndarray]]:
     n_values = _as_sorted_unique_ints(cfg_block["n_structures"])
     n_max = max(n_values)
     gen_decode_batch_size = int(cfg_block["gen_decode_batch_size"])
@@ -419,7 +494,7 @@ def run_generative_capacity_rmsd(
 
     fig = _generative_capacity_stacked_filled_figure(
         by_n,
-        x_label="Min RMSD To Nearest Generated Structure (Å)",
+        x_label="Min RMSD To Nearest Gen Structure",
         n_bins=HIST_BINS_DEFAULT,
     )
     os.makedirs(out_dir, exist_ok=True)
@@ -441,7 +516,7 @@ def run_generative_capacity_rmsd(
         )
     elif os.path.isdir(data_dir):
         shutil.rmtree(data_dir, ignore_errors=True)
-    return out_path
+    return out_path, by_n
 
 
 def run_generative_capacity_q(
@@ -454,7 +529,7 @@ def run_generative_capacity_q(
     embed,
     cfg_block: dict,
     display_root: str | None = None,
-) -> str:
+) -> tuple[str, dict[int, np.ndarray]]:
     n_values = _as_sorted_unique_ints(cfg_block["n_structures"])
     n_max = max(n_values)
     gen_decode_batch_size = int(cfg_block["gen_decode_batch_size"])
@@ -497,7 +572,7 @@ def run_generative_capacity_q(
 
     fig = _generative_capacity_stacked_filled_figure(
         by_n,
-        x_label="Max Q To Nearest Generated Structure",
+        x_label="Max Q To Nearest Gen Structure",
         n_bins=HIST_BINS_DEFAULT,
     )
     os.makedirs(out_dir, exist_ok=True)
@@ -520,5 +595,5 @@ def run_generative_capacity_q(
         )
     elif os.path.isdir(data_dir):
         shutil.rmtree(data_dir, ignore_errors=True)
-    return out_path
+    return out_path, by_n
 

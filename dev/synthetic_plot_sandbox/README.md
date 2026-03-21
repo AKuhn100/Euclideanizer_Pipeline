@@ -7,8 +7,9 @@ Standalone harness for **sufficiency meta-analysis** and **generative capacity**
 1. **Sufficiency** — Writes a minimal fake `seed_*_split_*_maxdata_*` tree with **recon** NPZ under `analysis/{rmsd,q}/recon/data/` (`test_recon_rmsd`, `test_recon_q`), matching what `Pipeline/src/meta_analysis.py` reads. Figures use the **same layout and `plot_config` constants** as the pipeline when `Pipeline/src/plot_config.py` is importable (run from the repo with `Pipeline` on `sys.path`); otherwise embedded fallbacks match those defaults.
    - Stacked distributions: inch-based bottom margin + training-split colorbar gap (with extra slack when fewer than four split rows) so tall stacks are not dominated by whitespace.
    - Heatmaps: `origin="lower"` (training split **increases upward**), **Training Split** y-label on the left panel only, **%** ticks on both panels, adaptive margins, **Normalized Median** colorbar.
+   - **Curves:** under each `seed_*/curves/`, **`sufficiency_median_recon_vs_split_by_max_data.png`** — same artifact as the main pipeline’s sufficiency meta-analysis when ≥2 training splits: median test recon RMSD (left) and Q (right) vs **training split**, one line per **`max_data`**, shared **Max Structures** viridis colorbar under both panels.
 
-2. **Generative capacity** — Synthetic `by_n` data; **no torch**. Stacked filled rows use **`GEN_CAP_STACKED_FIGWIDTH`** / **`GEN_CAP_STACKED_ROW_HEIGHT`** from `plot_config` when imported. `variants/` keeps overlay and legacy top-colorbar comparisons.
+2. **Generative capacity** — Synthetic `by_n` data; **no torch**. Stacked filled rows use **`GEN_CAP_STACKED_FIGWIDTH`** / **`GEN_CAP_STACKED_ROW_HEIGHT`** from `plot_config` when imported. `variants/` keeps overlay and legacy top-colorbar comparisons. **`convergence_median_vs_n_rmsd_q.png`** — **median** min RMSD / max Q vs **N** on **linear** axes (matches `Pipeline/src/generative_capacity.py`); both lines use **`COLOR_GEN`** when `plot_config` is imported.
 
 ## Usage
 

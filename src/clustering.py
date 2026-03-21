@@ -31,7 +31,6 @@ from .plot_config import (
     COLOR_GRAY_TEXT,
     CMAP_DM,
     FONT_FAMILY,
-    FONT_SIZE_SUPTITLE,
     FONT_SIZE_TITLE,
     FONT_SIZE_AXIS,
     FONT_SIZE_TICK,
@@ -385,11 +384,8 @@ def _plot_panel(
     ax,
     Z,
     labels,
-    title: str,
-    cophenetic_r: float,
     source_colors: dict,
     leaf_colors: np.ndarray | None = None,
-    show_cophenetic: bool = True,
 ) -> None:
     """Draw one dendrogram panel with optional leaf colour strip."""
     N = len(labels)
@@ -411,8 +407,6 @@ def _plot_panel(
                 color=c, clip_on=False, linewidth=0,
             ))
         ax.set_ylim(y_bottom - strip_h, ax.get_ylim()[1])
-    suffix = f"  (c={cophenetic_r:.3f})" if show_cophenetic else ""
-    ax.set_title(f"{title}{suffix}", fontsize=FONT_SIZE_TITLE, fontweight="bold", pad=4, family=FONT_FAMILY)
     ax.set_ylabel("RMSE (Distance Map)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     ax.tick_params(axis="x", bottom=False)
     ax.spines["top"].set_visible(False)
@@ -438,17 +432,16 @@ def _fig_pure_dendrograms(
     fig, axes = plt.subplots(1, len(groups), figsize=(8 * len(groups), 7))
     if len(groups) == 1:
         axes = [axes]
-    fig.suptitle("Hierarchical Clustering — Pure Populations", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.02, family=FONT_FAMILY)
     for ax, (name, data) in zip(axes, groups):
         if pairwise_fn is not None:
             D = pairwise_fn(data)
-            Z, c = _compute_linkage_and_cophenetic_from_distmat(D, method=linkage_method)
+            Z, _ = _compute_linkage_and_cophenetic_from_distmat(D, method=linkage_method)
         else:
-            Z, c = _compute_linkage_and_cophenetic(data, method=linkage_method)
+            Z, _ = _compute_linkage_and_cophenetic(data, method=linkage_method)
         n = len(data)
         color = source_colors[name]
         leaf_colors = np.array([color] * n)
-        _plot_panel(ax, Z, np.arange(n), name, c, source_colors, leaf_colors=leaf_colors)
+        _plot_panel(ax, Z, np.arange(n), source_colors, leaf_colors=leaf_colors)
         patch = mpatches.Patch(color=color, label=f"{name}  (n={n})")
         ax.legend(handles=[patch], fontsize=FONT_SIZE_LEGEND, loc="upper right")
     y_max = max(ax.get_ylim()[1] for ax in axes)
@@ -463,28 +456,6 @@ def _fig_pure_dendrograms(
     print(f"  Saved: {display_path(output_path, display_root)}")
 
 
-def _mixed_panel_title(names: list, is_gen: bool) -> str:
-    """Standardized panel title: Train before Test when both present; gen = X vs Gen (Gen second); recon = X vs Y (train/test first, then recon)."""
-    canon_order = ("Train", "Test", "Gen", "Train Recon", "Test Recon")
-    ordered = sorted(names, key=lambda n: canon_order.index(n) if n in canon_order else 99)
-    if len(names) == 3:
-        return " + ".join(ordered)
-    if len(names) == 2:
-        a, b = ordered[0], ordered[1]
-        if is_gen and "Gen" in names:
-            first = a if a != "Gen" else b
-            return f"{first} vs Gen"
-        if not is_gen and ("recon" in a.lower() or "recon" in b.lower()):
-            # Train/test first, then recon
-            if "recon" in a.lower() and "recon" in b.lower():
-                return f"{a} vs {b}"
-            first = a if "recon" not in a.lower() else b
-            second = b if first == a else a
-            return f"{first} vs {second}"
-        return f"{a} + {b}"
-    return " + ".join(ordered)
-
-
 def _mixed_dendrogram_panel(
     ax,
     feats_a: np.ndarray,
@@ -496,7 +467,6 @@ def _mixed_dendrogram_panel(
     source_colors: dict,
     k_mixing: int,
     linkage_method: str,
-    panel_title: str | None = None,
     pairwise_fn=None,
 ) -> tuple:
     """One mixed dendrogram; returns (obs_mix, exp_mix, norm_mix, Z, labels). pairwise_fn: callable(stacked) -> D; None = _pairwise_rmse."""
@@ -510,15 +480,14 @@ def _mixed_dendrogram_panel(
     leaf_colors = np.concatenate([np.array([source_colors[n]] * sz) for n, sz in zip(names, sizes)])
     if pairwise_fn is not None:
         D = pairwise_fn(stacked)
-        Z, c = _compute_linkage_and_cophenetic_from_distmat(D, method=linkage_method)
+        Z, _ = _compute_linkage_and_cophenetic_from_distmat(D, method=linkage_method)
         obs_mix, _ = _mixing_score(None, labels, k=k_mixing, D=D)
     else:
-        Z, c = _compute_linkage_and_cophenetic(stacked, method=linkage_method)
+        Z, _ = _compute_linkage_and_cophenetic(stacked, method=linkage_method)
         obs_mix, _ = _mixing_score(stacked, labels, k=k_mixing)
     exp_mix = _expected_mixing(labels, k=k_mixing)
     norm_mix = obs_mix / exp_mix if exp_mix > 0 else 0.0
-    title_parts = panel_title if panel_title is not None else " + ".join(names)
-    _plot_panel(ax, Z, labels, title_parts, c, source_colors, leaf_colors=leaf_colors)
+    _plot_panel(ax, Z, labels, source_colors, leaf_colors=leaf_colors)
     ax.text(0.5, -0.04, f"mixing={obs_mix:.2f} (expected={exp_mix:.2f}, ratio={norm_mix:.2f})",
             transform=ax.transAxes, ha="center", va="top", fontsize=FONT_SIZE_SMALL, style="italic", color=COLOR_GRAY_DARK, family=FONT_FAMILY)
     return obs_mix, exp_mix, norm_mix, Z, labels
@@ -563,11 +532,8 @@ def _fig_mixed_dendrograms(
     stats = {}
     for idx, (na, fa, nb, fb, nc, fc) in enumerate(configs):
         ax = axes.flat[idx]
-        names = [na, nb] + ([nc] if nc else [])
-        panel_title = _mixed_panel_title(names, is_gen)
         obs, exp, ratio, Z_mix, lbl_mix = _mixed_dendrogram_panel(
             ax, fa, na, fb, nb, fc, nc, source_colors, k_mixing, linkage_method,
-            panel_title=panel_title,
             pairwise_fn=pairwise_fn,
         )
         key = f"{na}+{nb}" + (f"+{nc}" if nc else "")
@@ -579,7 +545,6 @@ def _fig_mixed_dendrograms(
     patches = [mpatches.Patch(color=source_colors[s], label=s) for s in source_order if s in sub_feats]
     if patches:
         fig.legend(handles=patches, loc="lower center", ncol=min(4, len(patches)), fontsize=FONT_SIZE_TITLE, frameon=True, bbox_to_anchor=(0.5, -0.01))
-    fig.suptitle("Hierarchical Clustering — Mixed-Source Dendrograms", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.01, family=FONT_FAMILY)
     fig.tight_layout(rect=[0, 0.04, 1, 1])
     plt.savefig(output_path, dpi=plot_dpi, bbox_inches="tight")
     if save_pdf_copy:
@@ -613,7 +578,6 @@ def _fig_mixing_analysis(
     ax_bar.set_xticks(x)
     ax_bar.set_xticklabels([k.replace("+", " + ") for k in keys], fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
     ax_bar.set_ylabel("Mixing Score", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
-    ax_bar.set_title(f"Mixing Scores (k={k_mixing} Nearest Neighbors)", fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
     ax_bar.legend(fontsize=FONT_SIZE_AXIS)
     ax_bar.set_ylim(0, 1.05)
     ax_bar.spines["top"].set_visible(False)
@@ -626,14 +590,6 @@ def _fig_mixing_analysis(
         _save_pdf_copy(fig, output_path, save_pdf=True, display_root=display_root)
     plt.close()
     print(f"  Saved: {display_path(output_path, display_root)}")
-
-
-def _rmse_panel_title(name_a: str, name_b: str, is_gen: bool) -> str:
-    """Standardized RMSE panel title: gen = X vs Gen; recon = X vs Y (train/test first)."""
-    if is_gen and "Gen" in (name_a, name_b):
-        first = name_a if name_a != "Gen" else name_b
-        return f"{first} vs Gen"
-    return f"{name_a} vs {name_b}"
 
 
 def _fig_rmse_similarity(
@@ -672,12 +628,9 @@ def _fig_rmse_similarity(
         qs = np.linspace(0, 100, n_q)
         qa = np.percentile(tri_a, qs)
         qb = np.percentile(tri_b, qs)
-        corr = float(np.corrcoef(qa, qb)[0, 1])
         ax.scatter(qa, qb, s=10, alpha=0.6, c=np.linspace(0, 1, n_q), cmap=CMAP_DM)
         lim = max(qa.max(), qb.max()) * 1.05
         lims.append(lim)
-        title = _rmse_panel_title(name_a, name_b, is_gen) + f" (r={corr:.3f})"
-        ax.set_title(title, fontsize=FONT_SIZE_TITLE, fontweight="bold", family=FONT_FAMILY)
         ax.set_xlabel(f"{name_a} Pairwise RMSE", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax.set_ylabel(f"{name_b} Pairwise RMSE", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ax.spines["top"].set_visible(False)
@@ -689,7 +642,6 @@ def _fig_rmse_similarity(
         ax.set_xlim(0, global_lim)
         ax.set_ylim(0, global_lim)
         ax.set_aspect("equal")
-    fig.suptitle("RMSE Similarity", fontsize=FONT_SIZE_SUPTITLE, fontweight="bold", y=1.02, family=FONT_FAMILY)
     # Horizontal colorbar: full width, thin, quantile 0–100%
     fig.subplots_adjust(bottom=0.12)
     cbar_ax = fig.add_axes([0.12, 0.03, 0.76, 0.025])

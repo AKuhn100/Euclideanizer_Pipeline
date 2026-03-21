@@ -177,6 +177,7 @@ analysis:
     save_pdf_copy: false   # if true, save PDF copies (no per-metric latent; use analysis.latent for analysis/latent/)
   generative_capacity_rmsd:
     # Note: n_max = max(n_structures). Pairwise work scales as O(n_max^2), so large n_max can be expensive.
+    # If generative_capacity_q is also enabled: analysis/generative_capacity/convergence_median_vs_n_rmsd_q.png (both curves use plot_config.COLOR_GEN).
     enabled: false
     overwrite_existing: false
     n_structures: [100, 250, 500, 1000]
@@ -210,7 +211,7 @@ scoring:
 
 meta_analysis:
   sufficiency:
-    enabled: false   # if true, build per-seed sufficiency distributions/heatmaps from analysis/rmsd/recon + analysis/q/recon NPZ (test recon RMSD/Q)
+    enabled: false   # if true, build per-seed sufficiency under meta_analysis/sufficiency/seed_*/ — distributions/, heatmap/, and curves/ (median recon vs split when ≥2 training_split values)
     overwrite_existing: false   # if true, prompt then remove existing meta_analysis/sufficiency outputs before re-running
     save_pdf_copy: false   # if true, save PDF copies of sufficiency figures
 

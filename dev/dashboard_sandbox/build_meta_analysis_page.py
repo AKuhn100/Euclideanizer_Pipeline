@@ -39,6 +39,11 @@ def _heatmap_path(seed_dir: Path) -> Path | None:
     return h if h.is_file() else None
 
 
+def _curves_path(seed_dir: Path) -> Path | None:
+    p = seed_dir / "curves" / "sufficiency_median_recon_vs_split_by_max_data.png"
+    return p if p.is_file() else None
+
+
 def _distribution_pngs(seed_dir: Path) -> list[tuple[str, Path]]:
     dist = seed_dir / "distributions"
     if not dist.is_dir():
@@ -103,19 +108,31 @@ def build_page(*, input_root: Path, out_dir: Path) -> Path:
                 f'<img class="meta-heatmap-img" src="{html.escape(heat_rel)}" alt="Sufficiency Heatmap" loading="lazy">'
                 f"</div>"
             )
+        curves = _curves_path(seed_dir)
+        curves_block = ""
+        if curves:
+            rel_c = Path("sufficiency") / seed_dir.name / "curves" / curves.name
+            _copy_tree(curves, assets, rel=rel_c)
+            curves_href = (assets / rel_c).relative_to(out_dir).as_posix()
+            curves_block = (
+                f'<div class="block">'
+                f'<span class="block-title">Median Recon Vs Training Split (By Max Structures)</span>'
+                f'<img class="meta-heatmap-img" src="{html.escape(curves_href)}" alt="Sufficiency curves" loading="lazy">'
+                f"</div>"
+            )
         dist_section = ""
         if dist_cards:
             dist_section = (
                 '<h3 class="meta-subheading">Distributions By Max Data</h3>'
                 '<div class="meta-dist-grid">' + "".join(dist_cards) + "</div>"
             )
-        elif not heat_block:
+        elif not heat_block and not curves_block:
             dist_section = '<p class="muted">No Distribution Figures Under This Seed.</p>'
 
         sections_html.append(
             f'<section class="run-card meta-seed-section" id="{nav_id}">'
             f'<h2 class="run-card-title">{html.escape(seed_label)}</h2>'
-            f"{heat_block}{dist_section}"
+            f"{heat_block}{curves_block}{dist_section}"
             f"</section>"
         )
 
@@ -193,7 +210,7 @@ def build_page(*, input_root: Path, out_dir: Path) -> Path:
 <body>
   <header>
     <h1>{html.escape(title)}</h1>
-    <p>Static preview for the sufficiency meta-analysis view. Figures are copied next to this file under <code>assets/</code>. Wire-up to the pipeline dashboard is a later step.</p>
+    <p>Static preview for the sufficiency meta-analysis view (heatmap, optional median-recon curves, distributions). Figures are copied next to this file under <code>assets/</code>; layout mirrors the production dashboard Meta-Analysis page.</p>
   </header>
   <div class="content">
 {body_main}

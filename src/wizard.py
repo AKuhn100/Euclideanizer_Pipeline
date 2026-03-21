@@ -1,7 +1,7 @@
 """
 Setup wizard: guides from raw data to a converted NPZ file for pipeline input.
 Uses Claude API to generate a custom converter script. Requires ANTHROPIC_API_KEY.
-See specs/SETUP_WIZARD.md.
+See dev/specs/SETUP_WIZARD.md (under the Pipeline tree).
 """
 from __future__ import annotations
 

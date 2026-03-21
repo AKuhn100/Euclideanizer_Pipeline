@@ -19,6 +19,8 @@ There are two independent analysis blocks:
 
 Both follow the same structure and output pattern.
 
+**User-facing summary:** see the main **README** (§ Analysis → Generative capacity, § Output, config table). **Line color** for the combined median-vs-`N` figure is **`plot_config.COLOR_GEN`**.
+
 ---
 
 ## 1. Config Schema
@@ -194,6 +196,10 @@ One figure per metric block:
 - `generative_capacity_q.png`
 - optional PDF copy when `save_pdf_copy: true`
 
+When **both** RMSD and Q generative-capacity blocks are enabled, the pipeline also writes:
+
+- `analysis/generative_capacity/convergence_median_vs_n_rmsd_q.png` — two panels (median min RMSD vs `N`, median max Q vs `N`), **linear** axes; both polylines use **`plot_config.COLOR_GEN`**. Written on the same analysis pass as the stacked figures; on resume, rebuilt from per-`n` NPZ when `save_data: true` on both blocks, or by re-running whichever block is missing in-memory arrays.
+
 Layout:
 
 - **Stacked filled histograms:** one **row per** `n` in `n_structures`, **largest `n` at
@@ -203,17 +209,18 @@ Layout:
   normalization, color from viridis on **`log10(n)`**. **`N = {n}`** in the top-left
   of each row (axes coordinates). Y limits matched across rows. **Vertical** colorbar
   to the **right** of the stack when **two or more** distinct `n`; ticks at min and max
-  `n`; label **“Number Of Generated Structures”** (Title Case), `rotation=270`,
+  `n`; label **“Number Of Gen Structures”** (Title Case; short **Gen** per style guide), `rotation=270`,
   `labelpad=-6`. Single-`n` runs omit the colorbar and use a wider right margin.
 - **Figure width / row height:** **`plot_config.GEN_CAP_STACKED_FIGWIDTH`**,
   **`plot_config.GEN_CAP_STACKED_ROW_HEIGHT`**.
+- **Convergence figure** (`convergence_median_vs_n_rmsd_q.png`): **`plot_config.GEN_CAP_CONVERGENCE_FIGSIZE`**, line/marker styling from **`GEN_CAP_CONVERGENCE_LINEWIDTH`**, **`GEN_CAP_CONVERGENCE_MARKER_*`**; x-label **“Number Of Gen Structures”**; y-labels **“Median Min RMSD To Nearest Gen”** / **“Median Max Q To Nearest Gen”**.
 - Main axes: plain numeric ticks (**`ScalarFormatter(useOffset=False)`**, no scientific
   `1e7` styling on value axes).
 
 Axis labels:
 
-- RMSD: `"Min RMSD To Nearest Generated Structure (Å)"`
-- Q: `"Max Q To Nearest Generated Structure"`
+- RMSD: `"Min RMSD To Nearest Gen Structure"` (distance units are those of the user’s coordinates; not labeled as ångströms)
+- Q: `"Max Q To Nearest Gen Structure"`
 
 No curve fitting, asymptote overlays, or extra annotations. (Legacy **step** overlay +
 horizontal top colorbar remains in **`_distribution_panel`** for unit tests only.)

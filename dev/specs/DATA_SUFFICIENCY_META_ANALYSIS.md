@@ -1,5 +1,7 @@
 # Spec: Sufficiency Meta-Analysis Block
 
+**README:** The main pipeline **README** summarizes outputs, config (`meta_analysis.sufficiency`), dashboard **Meta-Analysis** view, and NPZ prerequisites.
+
 ## Overview
 
 The sufficiency meta-analysis answers the question: **given a target ensemble of N
@@ -178,6 +180,9 @@ usual `save_data` flags of those analysis blocks:
           max_data_{max_data}/
             distributions_rmsd_q.png
             distributions_rmsd_q.pdf         # only if save_pdf_copy: true
+        curves/                              # when ≥2 training_split values
+          sufficiency_median_recon_vs_split_by_max_data.png
+          sufficiency_median_recon_vs_split_by_max_data.pdf   # only if save_pdf_copy: true
         heatmap/                             # one 2-panel heatmap figure per seed
           sufficiency_heatmap_rmsd_q.png
           sufficiency_heatmap_rmsd_q.pdf      # only if save_pdf_copy: true
@@ -210,7 +215,13 @@ Saved as:
 - Right: histogram of per-test-structure **test recon Q** (`test_recon_q` from
   `q_recon_data.npz`); Q axis range clipped to `[0, 1]` where needed.
 
-**Titles (top row):** `"Test recon RMSD | Max Data={max_data}"` and `"Test recon Q | Max Data={max_data}"`.
+**Titles (top row):** `"Test Recon RMSD | Max Data={max_data}"` and `"Test Recon Q | Max Data={max_data}"`.
+
+**Bottom row x-labels:** `"Test Recon RMSD"` and `"Test Recon Q"` (no fixed physical unit; values are in the coordinate units of the dataset).
+
+### Median vs training split (curves)
+
+When a seed has **at least two** distinct `training_split` values, the block also writes `curves/sufficiency_median_recon_vs_split_by_max_data.png`: two panels (median test recon RMSD vs split, median test recon Q vs split), one colored curve per `max_data`, shared horizontal **Max Structures** viridis colorbar below both panels (same tick style as the synthetic sandbox).
 
 **Training-split colorbar:**
 
@@ -285,8 +296,8 @@ between panels so labels do not overlap.
 
 Panel titles:
 
-- Left: `"Median test recon RMSD"`
-- Right: `"Median test recon Q"`
+- Left: `"Median Test Recon RMSD"`
+- Right: `"Median Test Recon Q"`
 
 ---
 
@@ -294,12 +305,14 @@ Panel titles:
 
 The pipeline dashboard includes a **Meta-Analysis** view (View → **Meta-Analysis**):
 
-- **Full-width layout** per seed: median heatmap (`sufficiency_heatmap_rmsd_q.png`)
-  and, when present, **all** `distributions/max_data_*/distributions_rmsd_q.png`
-  figures in a vertical stack (Title Case section labels in the UI).
+- **Full-width layout** per seed: median heatmap (`sufficiency_heatmap_rmsd_q.png`);
+  when present, **`curves/sufficiency_median_recon_vs_split_by_max_data.png`**
+  (median test recon RMSD and Q vs training split, ≥2 splits); and **all**
+  `distributions/max_data_*/distributions_rmsd_q.png` figures in a vertical stack
+  (Title Case section labels in the UI).
 - Assets are copied into `dashboard/assets/` like other dashboard figures; the
-  manifest carries a per-seed **`sufficiency_meta`** object with `heatmap` and
-  `distributions` paths.
+  manifest carries a per-seed **`sufficiency_meta`** object with `heatmap`, optional
+  **`curves`**, and **`distributions`** paths.
 
 **Seed detail** view still lists the sufficiency heatmap as a normal block (and
 aggregated child-run blocks) when the user opens that seed from Browse.

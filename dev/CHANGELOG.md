@@ -1,6 +1,20 @@
 # Changelog
 
+## 2026-03-23
+
+- **Style alignment (GC + sufficiency curves):** `plot_config` adds **`GEN_CAP_CONVERGENCE_*`**, **`SUFFICIENCY_CURVES_FIG_HEIGHT`**; `generative_capacity.py` / `meta_analysis.py` use them; GC figure text uses short **Gen** (not “Generated”) per §4.10. `run.py` types `by_n_*` as **`dict[int, np.ndarray] | None`**. Sandbox + **`GENERATIVE_CAPACITY_ANALYSIS.md`** updated. **`STYLE_GUIDE`** §3.3 / checklist §4.10 cross-refs fixed.
+
+- **Documentation:** README expanded (meta-analysis, GC convergence, output trees, resume/overwrite for shared GC convergence + sufficiency, dashboard views); production README avoids `dev/` paths—spec pointers use generic “bundled with sources” wording. `DATA_SUFFICIENCY_META_ANALYSIS.md` §8 (dashboard + manifest curves). `STYLE_GUIDE` spec paths → `dev/specs/`. Sample config comments; synthetic and dashboard sandbox READMEs; sandbox `build_meta_analysis_page.py` includes sufficiency **curves** preview.
+
+- **Sufficiency meta-analysis curves:** `meta_analysis/sufficiency/seed_*/curves/sufficiency_median_recon_vs_split_by_max_data.png` — median test recon RMSD and Q vs training split (≥2 splits), viridis **Max Structures** colorbar under both panels. (`meta_analysis.py`, `DATA_SUFFICIENCY_META_ANALYSIS.md`, `dashboard.py` manifest + Meta-Analysis view, `STYLE_GUIDE.md`)
+- **Generative capacity convergence:** `analysis/generative_capacity/convergence_median_vs_n_rmsd_q.png` when both RMSD and Q GC blocks are enabled; both lines use **`COLOR_GEN`**; resume/backfill from per-`n` NPZ or full re-run when needed; overwrite deletes shared PNG/PDF; `all_present` requires this file when both blocks on. (`generative_capacity.py`, `run.py`, `GENERATIVE_CAPACITY_ANALYSIS.md`, `dashboard.py`, `STYLE_GUIDE.md`)
+- **Plot labels:** Removed ångström assumptions from sufficiency distribution x-labels and titles (Title Case **Test Recon …**); stacked GC RMSD x-label unchanged string but spec/docs note user units. Synthetic sandbox aligned (`generate_synthetic_plots.py`).
+
 ## 2026-03-22
+
+- **Plot titles removed:** Reconstruction statistics and gen variance no longer use figure suptitles; pairwise-distance-by-lag figures drop suptitles and per-panel `k = …` titles; clustering figures drop all suptitles and panel titles (dendrogram y-labels, legends, and mixing line text remain). Removed unused helpers/imports. (`plotting.py`, `clustering.py`, `README.md`, `STYLE_GUIDE.md`)
+
+- **Synthetic plot sandbox:** Sufficiency **curve** figure (`curves/sufficiency_median_recon_vs_split_by_max_data.png`) — median test recon RMSD/Q vs training split, one line per `max_data`. Gen-cap **convergence** figure (`convergence_median_vs_n_rmsd_q.png`) — median min RMSD / max Q vs N (**linear** axes; **`COLOR_GEN`** when using `plot_config`). (`dev/synthetic_plot_sandbox/generate_synthetic_plots.py`, `README.md`)
 
 - **Sufficiency vertical layout:** `sufficiency_*_*_frac` blend legacy figure-fraction margins with inch-based targets; blend weight is `max(height-based, row-count-based)` (`SUFFICIENCY_LAYOUT_INCH_BLEND_*`) so default grids keep legacy proportions while very tall figures **or** many stacked rows favor inch targets (avoids huge whitespace on large grids, tight bars on small ones). Helpers take split/heatmap row count; heatmap `labelpad=12` on “Max Structures”. (`plot_config.py`, `meta_analysis.py`, sandbox, spec, STYLE_GUIDE)
 

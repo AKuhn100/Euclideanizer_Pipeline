@@ -6,7 +6,14 @@ Writes a minimal fake ``seed_*`` tree with **recon** NPZ (``test_recon_rmsd`` /
 ``test_recon_q``), then builds sufficiency figures using the **same layout rules** as
 ``Pipeline/src/meta_analysis.py`` (constants from ``plot_config`` when importable).
 
-Generative capacity plots are synthetic (no torch); stacked rows use
+**Curve figures** (mirrors the main pipeline):
+
+- **Sufficiency:** median test recon RMSD (or Q) vs **training split**, one line per
+  ``max_data`` — family of curves for how much data / split affects recon saturation.
+- **Generative capacity:** median per-structure **min RMSD** / **max Q** vs **N**
+  (linear axes); curve color matches **`plot_config.COLOR_GEN`** (generated structures).
+
+Generative capacity density/stacked plots are synthetic (no torch); stacked rows use
 ``GEN_CAP_STACKED_*`` from ``plot_config`` when available.
 
 Use ``--no-clean --reuse-fake-base`` to skip rewriting ``fake_base/`` when
@@ -29,12 +36,19 @@ if (_PIPELINE_ROOT / "src" / "plot_config.py").is_file():
 
 try:
     from src.plot_config import (
+        COLOR_GEN,
         FONT_FAMILY,
         FONT_SIZE_AXIS,
+        FONT_SIZE_SMALL,
         FONT_SIZE_TITLE,
         FONT_SIZE_TICK,
         GEN_CAP_STACKED_FIGWIDTH,
         GEN_CAP_STACKED_ROW_HEIGHT,
+        GEN_CAP_CONVERGENCE_FIGSIZE,
+        GEN_CAP_CONVERGENCE_LINEWIDTH,
+        GEN_CAP_CONVERGENCE_MARKER_SIZE,
+        GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH,
+        GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR,
         HIST_BINS_DEFAULT,
         META_CBAR_HEIGHT_FRAC,
         META_CBAR_WIDTH_FRAC,
@@ -43,6 +57,7 @@ try:
         PLOT_DPI,
         SUFFICIENCY_DIST_CB_GAP_EXTRA,
         SUFFICIENCY_DIST_FIG_WIDTH,
+        SUFFICIENCY_CURVES_FIG_HEIGHT,
         SUFFICIENCY_DIST_FIGH_EXTRA,
         SUFFICIENCY_DIST_ROW_HEIGHT,
         SUFFICIENCY_HEATMAP_CELL_IN,
@@ -60,6 +75,7 @@ try:
     META_DIST_CBAR_GAP_BELOW_AXIS = META_DIST_CB_GAP
     HEATMAP_CBAR_BELOW_AXES_FRAC = META_HEATMAP_CB_GAP
 except ImportError:
+    COLOR_GEN = "#D42248"
     PLOT_DPI = 150
     HIST_BINS_DEFAULT = 50
     FONT_FAMILY = "sans-serif"
@@ -87,6 +103,12 @@ except ImportError:
     FONT_SIZE_TINY = 6
     GEN_CAP_STACKED_FIGWIDTH = 11.0
     GEN_CAP_STACKED_ROW_HEIGHT = 3.05
+    GEN_CAP_CONVERGENCE_FIGSIZE = (12.0, 4.8)
+    GEN_CAP_CONVERGENCE_LINEWIDTH = 2.2
+    GEN_CAP_CONVERGENCE_MARKER_SIZE = 6
+    GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH = 1.2
+    GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR = "white"
+    SUFFICIENCY_CURVES_FIG_HEIGHT = 5.2
     _INCH_H_LO, _INCH_H_SPAN = 16.0, 26.0
     _INCH_R_LO, _INCH_R_SPAN = 8.0, 8.0
 
@@ -462,6 +484,157 @@ def _norm01_per_grid(grid: np.ndarray) -> np.ma.MaskedArray:
     return np.ma.array(out, mask=mask)
 
 
+def _max_data_colorbar_tick_label(md: int | None) -> str:
+    """Short label for colorbar ticks (Title Case friendly)."""
+    return "Full" if md is None else f"{int(md):,}"
+
+
+def _curves_colorbar_max_structures_below(
+    fig,
+    ax_left,
+    ax_right,
+    *,
+    cmap,
+    n_curves: int,
+    tick_labels: list[str],
+    gap_frac: float = 0.11,
+) -> None:
+    """Horizontal viridis strip under both axes; tick marks = one per curve / max_data."""
+    fig.canvas.draw()
+    p0, p1 = ax_left.get_position(), ax_right.get_position()
+    row_bottom = min(p0.y0, p1.y0)
+    y = max(0.02, row_bottom - gap_frac - CBAR_META_HEIGHT_FRAC)
+    cax = _horizontal_cbar_axes_in_span(fig, p0.x0, p1.x1, y, CBAR_META_HEIGHT_FRAC)
+    vmax = float(max(n_curves - 1, 1))
+    sm = cm.ScalarMappable(norm=Normalize(vmin=0.0, vmax=vmax), cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, cax=cax, orientation="horizontal")
+    if n_curves <= 1:
+        cbar.set_ticks([0.5 * vmax])
+        cbar.set_ticklabels(tick_labels[:1])
+    else:
+        ticks = np.arange(n_curves, dtype=float)
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels(tick_labels[:n_curves])
+    cbar.ax.tick_params(labelsize=max(6, FONT_SIZE_SMALL - 1))
+    cbar.ax.xaxis.set_ticks_position("bottom")
+    cbar.ax.xaxis.set_label_position("top")
+    cbar.set_label("Max Structures", fontsize=FONT_SIZE_TICK, family=FONT_FAMILY, labelpad=4)
+
+
+def _save_sufficiency_split_curve_figures(
+    seed_out: str,
+    points: list[SufficiencyPoint],
+    save_pdf_copy: bool,
+) -> bool:
+    """Median test recon RMSD / Q vs training split; one curve per ``max_data`` (sandbox exploration)."""
+    split_set = sorted({p.training_split for p in points})
+    if len(split_set) < 2:
+        return False
+    max_data_set = sorted({p.max_data for p in points}, key=lambda x: (-1 if x is None else x))
+    n_md = len(max_data_set)
+    if n_md < 1:
+        return False
+
+    curves_dir = os.path.join(seed_out, "curves")
+    os.makedirs(curves_dir, exist_ok=True)
+    cmap = _get_cmap("viridis")
+    norm_idx = Normalize(vmin=0.0, vmax=float(max(n_md - 1, 1)))
+
+    fig, (ax_r, ax_q) = plt.subplots(
+        1, 2, figsize=(SUFFICIENCY_DIST_FIG_WIDTH, SUFFICIENCY_CURVES_FIG_HEIGHT)
+    )
+    for j, md in enumerate(max_data_set):
+        subset = [p for p in points if p.max_data == md]
+        if not subset:
+            continue
+        by_split = {p.training_split: p for p in subset}
+        xs = sorted(by_split.keys())
+        if len(xs) < 1:
+            continue
+        med_r = [float(np.median(by_split[s].rmsd_values)) for s in xs]
+        med_q = [float(np.median(by_split[s].q_values)) for s in xs]
+        color = cmap(norm_idx(j))
+        ax_r.plot(xs, med_r, "o-", color=color, lw=2.0, ms=5, alpha=0.9)
+        ax_q.plot(xs, med_q, "o-", color=color, lw=2.0, ms=5, alpha=0.9)
+
+    tick_lbls = [_max_data_colorbar_tick_label(m) for m in max_data_set]
+    for ax, ylab in (
+        (ax_r, "Median Test Recon RMSD"),
+        (ax_q, "Median Test Recon Q"),
+    ):
+        ax.set_xlabel("Training Split", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.set_ylabel(ylab, fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+        ax.set_xlim(min(split_set) - 0.02, max(split_set) + 0.02)
+        _apply_plain_number_axes(ax)
+
+    fig.subplots_adjust(left=0.07, right=0.99, top=0.94, bottom=0.20, wspace=0.28)
+    _curves_colorbar_max_structures_below(
+        fig,
+        ax_r,
+        ax_q,
+        cmap=cmap,
+        n_curves=n_md,
+        tick_labels=tick_lbls,
+    )
+    png_path = os.path.join(curves_dir, "sufficiency_median_recon_vs_split_by_max_data.png")
+    fig.savefig(png_path, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.18)
+    _save_pdf_if_enabled(fig, png_path, save_pdf_copy)
+    plt.close(fig)
+    return True
+
+
+def _save_generative_capacity_median_convergence(
+    gc_dir: Path,
+    by_r: dict[int, np.ndarray],
+    by_q: dict[int, np.ndarray],
+    *,
+    save_pdf: bool,
+) -> None:
+    """Median min RMSD / median max Q vs N (linear axes); synthetic gen-cap exploration."""
+    n_sorted = sorted(by_r.keys())
+    if len(n_sorted) < 2:
+        return
+    med_r = [float(np.median(by_r[n])) for n in n_sorted]
+    med_q = [float(np.median(by_q[n])) for n in n_sorted]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=GEN_CAP_CONVERGENCE_FIGSIZE)
+    ax1.plot(
+        n_sorted,
+        med_r,
+        "o-",
+        color=COLOR_GEN,
+        lw=GEN_CAP_CONVERGENCE_LINEWIDTH,
+        ms=GEN_CAP_CONVERGENCE_MARKER_SIZE,
+        markerfacecolor=GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR,
+        markeredgewidth=GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH,
+    )
+    ax1.set_xlabel("Number Of Gen Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax1.set_ylabel("Median Min RMSD To Nearest Gen", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    _apply_plain_number_axes(ax1)
+
+    ax2.plot(
+        n_sorted,
+        med_q,
+        "o-",
+        color=COLOR_GEN,
+        lw=GEN_CAP_CONVERGENCE_LINEWIDTH,
+        ms=GEN_CAP_CONVERGENCE_MARKER_SIZE,
+        markerfacecolor=GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR,
+        markeredgewidth=GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH,
+    )
+    ax2.set_xlabel("Number Of Gen Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    ax2.set_ylabel("Median Max Q To Nearest Gen", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+    _apply_plain_number_axes(ax2)
+
+    fig.subplots_adjust(left=0.09, right=0.98, top=0.94, bottom=0.16, wspace=0.3)
+    p = gc_dir / "convergence_median_vs_n_rmsd_q.png"
+    fig.savefig(str(p), dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.15)
+    if save_pdf:
+        _save_pdf_next_to_png(fig, str(p))
+    plt.close(fig)
+
+
 def run_sufficiency_plots_sandbox(
     *,
     base_output_dir: str,
@@ -558,10 +731,10 @@ def run_sufficiency_plots_sandbox(
                 for ax in col_axes:
                     ax.set_ylim(0, ymax * 1.05)
 
-            axes[0, 0].set_title(f"Test recon RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            axes[0, 1].set_title(f"Test recon Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
-            axes[-1, 0].set_xlabel("Test recon RMSD (Å)", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
-            axes[-1, 1].set_xlabel("Test recon Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[0, 0].set_title(f"Test Recon RMSD | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[0, 1].set_title(f"Test Recon Q | Max Data={md}", fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
+            axes[-1, 0].set_xlabel("Test Recon RMSD", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
+            axes[-1, 1].set_xlabel("Test Recon Q", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
 
             fig.subplots_adjust(left=0.1, right=0.97, top=0.92, bottom=dist_bottom)
             _cbar_hfrac = CBAR_META_HEIGHT_FRAC * 6.2 / fig_h
@@ -581,6 +754,9 @@ def run_sufficiency_plots_sandbox(
             fig.savefig(png_path, dpi=PLOT_DPI, bbox_inches="tight", pad_inches=0.15)
             _save_pdf_if_enabled(fig, png_path, save_pdf_copy)
             plt.close(fig)
+            made_any = True
+
+        if _save_sufficiency_split_curve_figures(seed_out, points, save_pdf_copy):
             made_any = True
 
         md_vals = [m for m in max_data_set if m is not None]
@@ -619,7 +795,7 @@ def run_sufficiency_plots_sandbox(
         ax_q.imshow(q_plot, aspect="equal", cmap="viridis", vmin=0.0, vmax=1.0, origin="lower")
         split_labels = [f"{int(round(s * 100))}%" for s in split_set]
         md_labels = [str(v) for v in md_vals]
-        for ax, title in ((ax_r, "Median test recon RMSD"), (ax_q, "Median test recon Q")):
+        for ax, title in ((ax_r, "Median Test Recon RMSD"), (ax_q, "Median Test Recon Q")):
             ax.set_title(title, fontsize=FONT_SIZE_TITLE, family=FONT_FAMILY)
             ax.set_xlabel("Max Structures", fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY, labelpad=12)
             ax.set_xticks(np.arange(len(md_vals)))
@@ -673,7 +849,7 @@ def _add_n_colorbar_below_ax(fig, main_ax, *, norm, cmap, n_min: int, n_max: int
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation="horizontal")
     cbar.ax.xaxis.set_ticks_position("bottom")
     cbar.set_label(
-        "Number Of Generated Structures",
+        "Number Of Gen Structures",
         fontsize=FONT_SIZE_TICK,
         family=FONT_FAMILY,
         labelpad=0,
@@ -709,7 +885,7 @@ def _add_n_colorbar_right_of_stacked(
     cbar = fig.colorbar(sm, cax=cbar_ax, orientation="vertical")
     cbar.ax.yaxis.set_ticks_position("right")
     cbar.set_label(
-        "Number Of Generated Structures",
+        "Number Of Gen Structures",
         fontsize=FONT_SIZE_TICK,
         family=FONT_FAMILY,
         labelpad=-6,
@@ -793,7 +969,7 @@ def _add_horizontal_n_colorbar_top(fig, cbar_ax, *, norm, cmap, n_min: int, n_ma
     cbar.ax.xaxis.set_label_position("top")
     cbar.ax.xaxis.set_ticks_position("bottom")
     cbar.set_label(
-        "Number Of Generated Structures",
+        "Number Of Gen Structures",
         fontsize=FONT_SIZE_AXIS,
         labelpad=4,
         family=FONT_FAMILY,
@@ -906,6 +1082,7 @@ def run_generative_capacity_plots(
 
     by_r = synthetic_generative_capacity_by_n(rng, n_values, kind="rmsd")
     by_q = synthetic_generative_capacity_by_n(rng, n_values, kind="q")
+    _save_generative_capacity_median_convergence(gc_dir, by_r, by_q, save_pdf=save_pdf)
 
     def save_overlay_bottom_cbar(by_n: dict, x_label: str, stem: str) -> None:
         fig, ax = _figure_generative_capacity_overlay_bottom_cbar(len(n_values) >= 2)
@@ -933,22 +1110,22 @@ def run_generative_capacity_plots(
 
     save_overlay_bottom_cbar(
         by_r,
-        "Min RMSD To Nearest Generated Structure (Å)",
+        "Min RMSD To Nearest Gen Structure",
         "generative_capacity_rmsd",
     )
     save_overlay_bottom_cbar(
         by_q,
-        "Max Q To Nearest Generated Structure",
+        "Max Q To Nearest Gen Structure",
         "generative_capacity_q",
     )
     save_overlay_top_cbar_reference(
         by_r,
-        "Min RMSD To Nearest Generated Structure (Å)",
+        "Min RMSD To Nearest Gen Structure",
         "rmsd",
     )
     save_overlay_top_cbar_reference(
         by_q,
-        "Max Q To Nearest Generated Structure",
+        "Max Q To Nearest Gen Structure",
         "q",
     )
 
@@ -994,9 +1171,9 @@ def run_generative_capacity_plots(
             _apply_plain_number_axes(ax)
 
         x_lab = (
-            "Min RMSD To Nearest Generated Structure (Å)"
+            "Min RMSD To Nearest Gen Structure"
             if metric == "rmsd"
-            else "Max Q To Nearest Generated Structure"
+            else "Max Q To Nearest Gen Structure"
         )
         axes[-1].set_xlabel(x_lab, fontsize=FONT_SIZE_AXIS, family=FONT_FAMILY)
         ymax = max(ax.get_ylim()[1] for ax in axes)

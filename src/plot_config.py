@@ -51,6 +51,12 @@ LINEWIDTH_SCALING_LOGLOG = 2.4
 # Generative capacity (stacked filled): one row per n_structures; vertical colorbar on the right.
 GEN_CAP_STACKED_FIGWIDTH = 11.0
 GEN_CAP_STACKED_ROW_HEIGHT = 3.05
+# Two-panel linear plot: median vs N (RMSD and Q); both curves use COLOR_GEN.
+GEN_CAP_CONVERGENCE_FIGSIZE = (12.0, 4.8)
+GEN_CAP_CONVERGENCE_LINEWIDTH = 2.2
+GEN_CAP_CONVERGENCE_MARKER_SIZE = 6
+GEN_CAP_CONVERGENCE_MARKER_EDGELINEWIDTH = 1.2
+GEN_CAP_CONVERGENCE_MARKER_FACE_COLOR = "white"
 
 # Legacy overlay layout (tests / reference only; main pipeline uses stacked filled).
 GEN_CAP_FIGSIZE = (8.0, 3.7)
@@ -65,6 +71,8 @@ META_DIST_CB_GAP = 0.075
 META_HEATMAP_CB_GAP = 0.21
 SUFFICIENCY_DIST_FIG_WIDTH = 14.0
 SUFFICIENCY_DIST_ROW_HEIGHT = 3.05
+# Median recon vs training_split curves (two panels); width matches distribution stack.
+SUFFICIENCY_CURVES_FIG_HEIGHT = 5.2
 # Distribution stack: few rows (training splits) → extra slack via small-step terms below.
 # Tall stacks use inch-based bottom + cbar gap (``sufficiency_dist_*_frac``) so fixed
 # figure fractions do not reserve huge bands (e.g. 22% of a 40" figure).
