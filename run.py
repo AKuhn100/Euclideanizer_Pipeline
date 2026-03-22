@@ -1004,11 +1004,10 @@ def _try_load_stats_only(
         seed, training_split, max_data = _entry_seed_split_max(entry)
         output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
         expected_n = num_structures if max_data is None else min(num_structures, int(max_data))
-        train_s, test_s = _load_exp_stats_split_cache(
+        if not _exp_stats_split_cache_meta_files_ok(
             output_dir, data_path, expected_n, num_atoms, seed, training_split,
             max_train=max_train, max_test=max_test,
-        )
-        if train_s is None or test_s is None:
+        ):
             return None, None, None
     return exp_stats, num_atoms, num_structures
 
@@ -1029,6 +1028,61 @@ def _save_exp_stats_cache(output_dir: str, data_path: str, num_structures: int, 
     np.savez_compressed(npz_path, **_compress_exp_stats_for_cache(exp_stats))
 
 
+def _exp_stats_split_cache_meta_files_ok(
+    output_dir: str,
+    data_path: str,
+    num_structures: int,
+    num_atoms: int,
+    split_seed: int,
+    training_split: float,
+    max_train: int | None = None,
+    max_test: int | None = None,
+) -> bool:
+    """True if split cache files exist and split_meta.json matches (no NPZ load). Used for fast startup checks."""
+    cache_dir = _exp_stats_cache_dir(output_dir)
+    meta_path = os.path.join(cache_dir, EXP_STATS_SPLIT_META)
+    train_path = os.path.join(cache_dir, EXP_STATS_TRAIN_NPZ)
+    test_path = os.path.join(cache_dir, EXP_STATS_TEST_NPZ)
+    if not os.path.isfile(meta_path) or not os.path.isfile(train_path) or not os.path.isfile(test_path):
+        return False
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        if meta.get("data_path") != os.path.abspath(data_path):
+            return False
+        if meta.get("num_structures") != num_structures or meta.get("num_atoms") != num_atoms:
+            return False
+        if meta.get("split_seed") != split_seed or meta.get("training_split") != training_split:
+            return False
+        cached_mt = meta.get("max_train")
+        cached_mc = meta.get("max_test")
+        if cached_mt != max_train or cached_mc != max_test:
+            return False
+    except (json.JSONDecodeError, OSError, UnicodeError):
+        return False
+    return True
+
+
+def _exp_stats_split_arrays_match_counts(
+    train_stats: dict,
+    test_stats: dict,
+    expected_n_train: int,
+    expected_n_test: int,
+) -> bool:
+    """True if exp_distmaps first dimension matches expected train/test structure counts."""
+    try:
+        tr = train_stats.get("exp_distmaps")
+        te = test_stats.get("exp_distmaps")
+        if tr is None or te is None:
+            return False
+        return (
+            int(np.asarray(tr).shape[0]) == int(expected_n_train)
+            and int(np.asarray(te).shape[0]) == int(expected_n_test)
+        )
+    except Exception:
+        return False
+
+
 def _load_exp_stats_split_cache(
     output_dir: str,
     data_path: str,
@@ -1038,9 +1092,12 @@ def _load_exp_stats_split_cache(
     training_split: float,
     max_train: int | None = None,
     max_test: int | None = None,
+    expected_n_train: int | None = None,
+    expected_n_test: int | None = None,
 ) -> tuple[dict | None, dict | None]:
     """Load train and test exp stats from seed output_dir if cache valid. Returns (train_stats, test_stats) or (None, None).
-    max_train/max_test must match cached meta (None = use all)."""
+    max_train/max_test must match cached meta (None = use all).
+    If expected_n_train and expected_n_test are set, loaded exp_distmaps leading dimensions must match or cache is rejected."""
     cache_dir = _exp_stats_cache_dir(output_dir)
     meta_path = os.path.join(cache_dir, EXP_STATS_SPLIT_META)
     train_path = os.path.join(cache_dir, EXP_STATS_TRAIN_NPZ)
@@ -1064,8 +1121,13 @@ def _load_exp_stats_split_cache(
             train_stats = _materialize_exp_stats_distmaps({k: data[k] for k in data.files})
         with np.load(test_path, allow_pickle=False) as data:
             test_stats = _materialize_exp_stats_distmaps({k: data[k] for k in data.files})
+        if expected_n_train is not None and expected_n_test is not None:
+            if not _exp_stats_split_arrays_match_counts(
+                train_stats, test_stats, expected_n_train, expected_n_test,
+            ):
+                return None, None
         return train_stats, test_stats
-    except (json.JSONDecodeError, OSError, KeyError, zlib.error, zipfile.BadZipFile):
+    except (json.JSONDecodeError, OSError, KeyError, zlib.error, zipfile.BadZipFile, ValueError):
         return None, None
 
 
@@ -3726,9 +3788,15 @@ def _run_one_seed(
     _pe_run_label = os.path.basename(output_dir)
     _pe_prefix = _plot_exp_stats_precompute_prefix(_pe_run_label, run_entry_idx, run_entry_n)
     if data_path and (do_plot or do_rmsd or do_q or do_q_recon) and (coords is not None or (num_structures is not None and num_atoms is not None)):
+        _exp_nt = _exp_ne = None
+        if coords is not None:
+            _exp_nt, _exp_ne = utils.capped_train_test_index_counts(
+                coords, training_split, split_seed, plot_max_train, plot_max_test,
+            )
         train_stats, test_stats = _load_exp_stats_split_cache(
             output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
             max_train=plot_max_train, max_test=plot_max_test,
+            expected_n_train=_exp_nt, expected_n_test=_exp_ne,
         )
         if train_stats is None or test_stats is None:
             if coords is not None:
@@ -3891,10 +3959,14 @@ def _worker(
             if data_path and (shared_args["do_plot"] or shared_args["do_rmsd"] or shared_args.get("do_q") or shared_args.get("do_q_recon")):
                 plot_mt = shared_args.get("plot_max_train")
                 plot_mc = shared_args.get("plot_max_test")
+                _w_nt, _w_ne = utils.capped_train_test_index_counts(
+                    coords_run, training_split, seed, plot_mt, plot_mc,
+                )
                 train_stats, test_stats = _load_exp_stats_split_cache(
                     output_dir, data_path, num_structures_run, num_atoms_run,
                     seed, training_split,
                     max_train=plot_mt, max_test=plot_mc,
+                    expected_n_train=_w_nt, expected_n_test=_w_ne,
                 )
                 if train_stats is None or test_stats is None:
                     train_ds, test_ds = utils.get_train_test_split(
@@ -4064,26 +4136,26 @@ def _run_multi_gpu_tasks(
         if data_path and coords is not None and (do_plot or do_rmsd or do_q or do_q_recon):
             plot_mt = plot_cfg["max_train"]
             plot_mc = plot_cfg["max_test"]
-            train_stats, test_stats = _load_exp_stats_split_cache(
+            if _exp_stats_split_cache_meta_files_ok(
                 output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                 max_train=plot_mt, max_test=plot_mc,
+            ):
+                continue
+            train_ds, test_ds = utils.get_train_test_split(coords_run.cpu(), training_split, seed)
+            train_indices = np.array(train_ds.indices)
+            test_indices = np.array(test_ds.indices)
+            if plot_mt is not None:
+                train_indices = train_indices[: plot_mt]
+            if plot_mc is not None:
+                test_indices = test_indices[: plot_mc]
+            data_cfg = cfg["data"]
+            train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+            test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
+            _save_exp_stats_split_cache(
+                output_dir, data_path, num_structures_run, num_atoms_run,
+                seed, training_split, train_stats, test_stats,
+                max_train=plot_mt, max_test=plot_mc,
             )
-            if train_stats is None or test_stats is None:
-                train_ds, test_ds = utils.get_train_test_split(coords_run.cpu(), training_split, seed)
-                train_indices = np.array(train_ds.indices)
-                test_indices = np.array(test_ds.indices)
-                if plot_mt is not None:
-                    train_indices = train_indices[: plot_mt]
-                if plot_mc is not None:
-                    test_indices = test_indices[: plot_mc]
-                data_cfg = cfg["data"]
-                train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
-                test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
-                _save_exp_stats_split_cache(
-                    output_dir, data_path, num_structures_run, num_atoms_run,
-                    seed, training_split, train_stats, test_stats,
-                    max_train=plot_mt, max_test=plot_mc,
-                )
     # Round-robin task assignment
     tasks_by_device = [list() for _ in range(n_gpus)]
     for i, t in enumerate(tasks):
@@ -4775,67 +4847,66 @@ def main():
                 max_data=max_data,
             )
             coords_np_run = _apply_max_data_subset(coords_np, max_data, seed)
-            coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
             num_structures_run = len(coords_np_run)
-            num_atoms_run = coords_run.size(1)
-            train_stats, test_stats = _load_exp_stats_split_cache(
+            num_atoms_run = int(coords_np_run.shape[1])
+            if _exp_stats_split_cache_meta_files_ok(
                 output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                 max_train=plot_mt, max_test=plot_mc,
-            )
-            if train_stats is None or test_stats is None:
-                train_ds, test_ds = utils.get_train_test_split(coords_run, training_split, seed)
-                train_indices = np.array(train_ds.indices)
-                test_indices = np.array(test_ds.indices)
-                if plot_mt is not None:
-                    train_indices = train_indices[: plot_mt]
-                if plot_mc is not None:
-                    test_indices = test_indices[: plot_mc]
-                data_cfg = cfg["data"]
-                if exp_stats is not None and "exp_distmaps" in exp_stats:
-                    how = "slice global experimental distance maps (derive train/test stats)"
-                    _log(
-                        f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: computing ({how}).",
-                        since_start=time.time() - pipeline_start,
-                        style="info",
-                    )
-                    subset_idx = _max_data_indices(np.asarray(exp_stats["exp_distmaps"]).shape[0], max_data, seed)
-                    train_stats = _derive_stats_from_global_exp(
-                        exp_stats, subset_idx[train_indices],
-                        max_sep=min(num_atoms_run - 1, 999),
-                        avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
-                    )
-                    test_stats = _derive_stats_from_global_exp(
-                        exp_stats, subset_idx[test_indices],
-                        max_sep=min(num_atoms_run - 1, 999),
-                        avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
-                    )
-                else:
-                    how = (
-                        "full compute_exp_statistics on train/test indices (global exp stats not loaded or missing exp_distmaps)"
-                    )
-                    _log(
-                        f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: computing ({how}).",
-                        since_start=time.time() - pipeline_start,
-                        style="info",
-                    )
-                    train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
-                    test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
-                _save_exp_stats_split_cache(
-                    output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
-                    train_stats, test_stats,
-                    max_train=plot_mt, max_test=plot_mc,
-                )
-                _log(
-                    f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: saved split cache under {EXP_STATS_CACHE_DIR}/.",
-                    since_start=time.time() - pipeline_start,
-                    style="success",
-                )
-            else:
+            ):
                 _log(
                     f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: using existing split cache.",
                     since_start=time.time() - pipeline_start,
                     style="skip",
                 )
+                continue
+            coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
+            train_ds, test_ds = utils.get_train_test_split(coords_run, training_split, seed)
+            train_indices = np.array(train_ds.indices)
+            test_indices = np.array(test_ds.indices)
+            if plot_mt is not None:
+                train_indices = train_indices[: plot_mt]
+            if plot_mc is not None:
+                test_indices = test_indices[: plot_mc]
+            data_cfg = cfg["data"]
+            if exp_stats is not None and "exp_distmaps" in exp_stats:
+                how = "slice global experimental distance maps (derive train/test stats)"
+                _log(
+                    f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: computing ({how}).",
+                    since_start=time.time() - pipeline_start,
+                    style="info",
+                )
+                subset_idx = _max_data_indices(np.asarray(exp_stats["exp_distmaps"]).shape[0], max_data, seed)
+                train_stats = _derive_stats_from_global_exp(
+                    exp_stats, subset_idx[train_indices],
+                    max_sep=min(num_atoms_run - 1, 999),
+                    avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                )
+                test_stats = _derive_stats_from_global_exp(
+                    exp_stats, subset_idx[test_indices],
+                    max_sep=min(num_atoms_run - 1, 999),
+                    avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
+                )
+            else:
+                how = (
+                    "full compute_exp_statistics on train/test indices (global exp stats not loaded or missing exp_distmaps)"
+                )
+                _log(
+                    f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: computing ({how}).",
+                    since_start=time.time() - pipeline_start,
+                    style="info",
+                )
+                train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
+                test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
+            _save_exp_stats_split_cache(
+                output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
+                train_stats, test_stats,
+                max_train=plot_mt, max_test=plot_mc,
+            )
+            _log(
+                f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: saved split cache under {EXP_STATS_CACHE_DIR}/.",
+                since_start=time.time() - pipeline_start,
+                style="success",
+            )
         # Precompute all seed-level analysis caches (RMSD, Q, coord_clustering, distmap_clustering) so workers only read (avoid concurrent write corruption).
         for spec in ANALYSIS_METRICS:
             do_gen = analysis_cfg[spec.gen_key]["enabled"]

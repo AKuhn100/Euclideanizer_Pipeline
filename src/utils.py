@@ -143,3 +143,45 @@ def get_train_test_split(
     generator = torch.Generator().manual_seed(split_seed)
     train_ds, test_ds = random_split(coords, [train_size, test_size], generator=generator)
     return train_ds, test_ds
+
+
+def capped_train_test_index_counts(
+    coords: torch.Tensor,
+    training_split: float,
+    split_seed: int,
+    max_train: int | None,
+    max_test: int | None,
+) -> tuple[int, int]:
+    """Train/test structure counts after split and optional max_train/max_test caps (same convention as run.py)."""
+    train_ds, test_ds = get_train_test_split(coords, training_split, split_seed)
+    tr = np.array(train_ds.indices)
+    te = np.array(test_ds.indices)
+    if max_train is not None:
+        tr = tr[:max_train]
+    if max_test is not None:
+        te = te[:max_test]
+    return int(tr.shape[0]), int(te.shape[0])
+
+
+def cached_test_to_train_rows_match_capped_split(
+    per_test_metric: np.ndarray,
+    train_coords_np: np.ndarray,
+    test_coords_np: np.ndarray,
+    coords: torch.Tensor,
+    training_split: float,
+    split_seed: int,
+    max_train: int | None,
+    max_test: int | None,
+) -> bool:
+    """After loading a seed-level test→train cache, verify row counts match capped train/test sizes."""
+    n_train, n_test = capped_train_test_index_counts(
+        coords, training_split, split_seed, max_train, max_test,
+    )
+    try:
+        return (
+            int(np.asarray(train_coords_np).shape[0]) == n_train
+            and int(np.asarray(test_coords_np).shape[0]) == n_test
+            and int(np.asarray(per_test_metric).shape[0]) == n_test
+        )
+    except Exception:
+        return False

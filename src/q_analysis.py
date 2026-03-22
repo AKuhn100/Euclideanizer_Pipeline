@@ -13,7 +13,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-from .utils import display_path, get_train_test_split
+from .utils import cached_test_to_train_rows_match_capped_split, display_path, get_train_test_split
 from .plotting import _save_pdf_copy
 from .plot_config import (
     GEN_PANEL_COLORS,
@@ -122,9 +122,12 @@ def get_or_compute_test_to_train_q(
                 np.asarray(loaded["test_coords_np"], dtype=np.float32),
             )
             loaded.close()
-            if display_root is not None:
-                print(f"  Loaded seed-level test→train max Q cache: {display_path(cache_path, display_root)}")
-            return out
+            if cached_test_to_train_rows_match_capped_split(
+                out[0], out[1], out[2], coords_tensor, training_split, split_seed, max_train, max_test,
+            ):
+                if display_root is not None:
+                    print(f"  Loaded seed-level test→train max Q cache: {display_path(cache_path, display_root)}")
+                return out
         except Exception:
             pass
     if display_root is not None:
