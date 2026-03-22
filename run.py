@@ -760,6 +760,13 @@ def _log(msg: str, since_start: float | None = None, since_phase: float | None =
                 _LOG_LOCK.release()
 
 
+def _plot_exp_stats_precompute_prefix(run_label: str, idx: int | None, n: int | None) -> str:
+    """Log prefix for per-run plot train/test experimental statistics (single- and multi-GPU precompute)."""
+    if idx is not None and n is not None:
+        return f"Precompute plot exp stats [{idx}/{n}] {run_label}"
+    return f"Precompute plot exp stats {run_label}"
+
+
 def _warn_calibration_reserve_if_low(cfg: dict, pipeline_start: float) -> None:
     """If CUDA is available, warn when calibration reserve (safety_margin_gb) < 15 GB on any GPU."""
     if not torch.cuda.is_available():
@@ -2702,10 +2709,24 @@ def run_one_hpo_trial(
                     key = (mt, mc)
                     if key not in seed_test_to_train_cache[cache_key]:
                         _cache_path = os.path.join(seed_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                        _run_label = os.path.basename(seed_dir)
+                        _had_disk = os.path.isfile(_cache_path)
+                        if not _had_disk:
+                            _log(
+                                f"Analysis seed cache [{spec.id}] {_run_label}: computing {os.path.basename(_cache_path)} (test→train / feats).",
+                                since_start=time.time() - pipeline_start,
+                                style="info",
+                            )
                         seed_test_to_train_cache[cache_key][key] = spec.get_or_compute_test_to_train(
                             _cache_path, coords_np, coords, training_split, seed, base_output_dir,
                             **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                         )
+                        if not _had_disk:
+                            _log(
+                                f"Analysis seed cache [{spec.id}] {_run_label}: saved {os.path.basename(_cache_path)}.",
+                                since_start=time.time() - pipeline_start,
+                                style="success",
+                            )
                     return seed_test_to_train_cache[cache_key][key]
 
                 if do_gen:
@@ -3473,10 +3494,24 @@ def _run_one_distmap_group(
                                     key = (mt, mc)
                                     if key not in _cache[cache_key]:
                                         _cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, mt, mc))
+                                        _run_label = os.path.basename(output_dir)
+                                        _had_disk = os.path.isfile(_cache_path)
+                                        if not _had_disk:
+                                            _log(
+                                                f"Analysis seed cache [{spec.id}] {_run_label}: computing {os.path.basename(_cache_path)} (test→train / feats).",
+                                                since_start=time.time() - pipeline_start,
+                                                style="info",
+                                            )
                                         _cache[cache_key][key] = spec.get_or_compute_test_to_train(
                                             _cache_path, coords_np, coords, training_split, split_seed, base_output_dir,
                                             **spec.kwargs_for_cache(analysis_cfg, mt, mc),
                                         )
+                                        if not _had_disk:
+                                            _log(
+                                                f"Analysis seed cache [{spec.id}] {_run_label}: saved {os.path.basename(_cache_path)}.",
+                                                since_start=time.time() - pipeline_start,
+                                                style="success",
+                                            )
                                     return _cache[cache_key][key]
 
                                 if do_gen:
@@ -3657,6 +3692,8 @@ def _run_one_seed(
     make_distmap_epoch_hook=None,
     make_euclideanizer_epoch_hook=None,
     assemble_video_fn=None,
+    run_entry_idx: int | None = None,
+    run_entry_n: int | None = None,
 ) -> None:
     """Run the full pipeline for a single (seed, training_split): DistMap segments, Euclideanizer segments, plotting, analysis."""
     output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
@@ -3686,6 +3723,8 @@ def _run_one_seed(
     _log(f"Seed {seed}  output_dir={output_dir}", since_start=time.time() - pipeline_start, style="info")
 
     train_stats = test_stats = None
+    _pe_run_label = os.path.basename(output_dir)
+    _pe_prefix = _plot_exp_stats_precompute_prefix(_pe_run_label, run_entry_idx, run_entry_n)
     if data_path and (do_plot or do_rmsd or do_q or do_q_recon) and (coords is not None or (num_structures is not None and num_atoms is not None)):
         train_stats, test_stats = _load_exp_stats_split_cache(
             output_dir, data_path, num_structures, num_atoms, split_seed, training_split,
@@ -3703,7 +3742,11 @@ def _run_one_seed(
                     test_indices = test_indices[: plot_max_test]
                 data_cfg = cfg["data"]
                 if exp_stats is not None and subset_indices_global is not None:
-                    _log("Deriving train/test experimental statistics from global cache...", since_start=time.time() - pipeline_start, style="info")
+                    _log(
+                        f"{_pe_prefix}: computing (slice global experimental distance maps (derive train/test stats)).",
+                        since_start=time.time() - pipeline_start,
+                        style="info",
+                    )
                     train_global_idx = subset_indices_global[train_indices]
                     test_global_idx = subset_indices_global[test_indices]
                     train_stats = _derive_stats_from_global_exp(
@@ -3717,7 +3760,11 @@ def _run_one_seed(
                         avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
                     )
                 else:
-                    _log("Computing train/test experimental statistics...", since_start=time.time() - pipeline_start, style="info")
+                    _log(
+                        f"{_pe_prefix}: computing (full compute_exp_statistics on train/test indices (global exp stats not loaded or missing exp_distmaps)).",
+                        since_start=time.time() - pipeline_start,
+                        style="info",
+                    )
                     train_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
                     test_stats = compute_exp_statistics(coords_np, device, utils.get_distmaps, min(num_atoms - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
@@ -3725,10 +3772,19 @@ def _run_one_seed(
                     train_stats, test_stats,
                     max_train=plot_max_train, max_test=plot_max_test,
                 )
+                _log(
+                    f"{_pe_prefix}: saved split cache under {EXP_STATS_CACHE_DIR}/.",
+                    since_start=time.time() - pipeline_start,
+                    style="success",
+                )
             else:
                 _log("Train/test statistics not in cache (stats-only run); skipping recon_statistics/gen_variance for this seed.", since_start=time.time() - pipeline_start, style="skip")
         else:
-            _log("Reused train/test experimental statistics from cache.", since_start=time.time() - pipeline_start, style="skip")
+            _log(
+                f"{_pe_prefix}: using existing split cache.",
+                since_start=time.time() - pipeline_start,
+                style="skip",
+            )
 
     seed_test_to_train_holder = [None]
     gen_decode_batch_size_holder = [gen_decode_batch_size]
@@ -4697,11 +4753,19 @@ def main():
         or do_distmap_clustering_gen or do_distmap_clustering_recon_cfg
     )
     if use_multi_gpu and data_path and coords is not None and _need_precompute_caches:
+        _pre_t0 = time.time() - pipeline_start
+        n_pre_entries = len(run_entries)
+        _log(
+            f"Multi-GPU precompute: {n_pre_entries} run entries — plot train/test experimental statistics, then seed-level analysis caches.",
+            since_start=_pre_t0,
+            style="info",
+        )
         plot_mt = plot_cfg["max_train"]
         plot_mc = plot_cfg["max_test"]
-        for entry in run_entries:
+        for plot_i, entry in enumerate(run_entries, start=1):
             seed, training_split, max_data = _entry_seed_split_max(entry)
             output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+            run_label = os.path.basename(output_dir)
             _ensure_per_seed_pipeline_config(
                 need_train=need_train,
                 output_dir=output_dir,
@@ -4728,6 +4792,12 @@ def main():
                     test_indices = test_indices[: plot_mc]
                 data_cfg = cfg["data"]
                 if exp_stats is not None and "exp_distmaps" in exp_stats:
+                    how = "slice global experimental distance maps (derive train/test stats)"
+                    _log(
+                        f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: computing ({how}).",
+                        since_start=time.time() - pipeline_start,
+                        style="info",
+                    )
                     subset_idx = _max_data_indices(np.asarray(exp_stats["exp_distmaps"]).shape[0], max_data, seed)
                     train_stats = _derive_stats_from_global_exp(
                         exp_stats, subset_idx[train_indices],
@@ -4740,12 +4810,31 @@ def main():
                         avg_map_sample=data_cfg["exp_stats_avg_map_sample"],
                     )
                 else:
+                    how = (
+                        "full compute_exp_statistics on train/test indices (global exp stats not loaded or missing exp_distmaps)"
+                    )
+                    _log(
+                        f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: computing ({how}).",
+                        since_start=time.time() - pipeline_start,
+                        style="info",
+                    )
                     train_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=train_indices)
                     test_stats = compute_exp_statistics(coords_np_run, device, utils.get_distmaps, min(num_atoms_run - 1, 999), data_cfg["exp_stats_chunk_size"], data_cfg["exp_stats_avg_map_sample"], indices=test_indices)
                 _save_exp_stats_split_cache(
                     output_dir, data_path, num_structures_run, num_atoms_run, seed, training_split,
                     train_stats, test_stats,
                     max_train=plot_mt, max_test=plot_mc,
+                )
+                _log(
+                    f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: saved split cache under {EXP_STATS_CACHE_DIR}/.",
+                    since_start=time.time() - pipeline_start,
+                    style="success",
+                )
+            else:
+                _log(
+                    f"{_plot_exp_stats_precompute_prefix(run_label, plot_i, n_pre_entries)}: using existing split cache.",
+                    since_start=time.time() - pipeline_start,
+                    style="skip",
                 )
         # Precompute all seed-level analysis caches (RMSD, Q, coord_clustering, distmap_clustering) so workers only read (avoid concurrent write corruption).
         for spec in ANALYSIS_METRICS:
@@ -4757,9 +4846,12 @@ def main():
             _ref_mc = analysis_cfg[f"{spec.id}_max_test"]
             if spec.requires_reference_bounds and (_ref_mt is None or _ref_mc is None):
                 continue
-            for entry in run_entries:
+            n_analysis_skip = 0
+            n_analysis_comp = 0
+            for entry_i, entry in enumerate(run_entries, start=1):
                 seed, training_split, max_data = _entry_seed_split_max(entry)
                 output_dir = os.path.join(base_output_dir, _seed_split_dir_name(seed, training_split, max_data, training_splits, None))
+                run_label = os.path.basename(output_dir)
                 _ensure_per_seed_pipeline_config(
                     need_train=need_train,
                     output_dir=output_dir,
@@ -4772,11 +4864,29 @@ def main():
                 coords_run = torch.tensor(coords_np_run, dtype=torch.float32).to(device)
                 cache_path = os.path.join(output_dir, EXP_STATS_CACHE_DIR, spec.cache_filename(analysis_cfg, _ref_mt, _ref_mc))
                 if os.path.isfile(cache_path):
+                    n_analysis_skip += 1
                     continue
+                cache_name = os.path.basename(cache_path)
+                _log(
+                    f"Precompute analysis [{spec.id}] [{entry_i}/{n_pre_entries}] {run_label}: computing {cache_name} (test→train / feats).",
+                    since_start=time.time() - pipeline_start,
+                    style="info",
+                )
                 spec.get_or_compute_test_to_train(
                     cache_path, coords_np_run, coords_run, training_split, seed, base_output_dir,
                     **spec.kwargs_for_cache(analysis_cfg, _ref_mt, _ref_mc),
                 )
+                _log(
+                    f"Precompute analysis [{spec.id}] [{entry_i}/{n_pre_entries}] {run_label}: saved {cache_name}.",
+                    since_start=time.time() - pipeline_start,
+                    style="success",
+                )
+                n_analysis_comp += 1
+            _log(
+                f"Precompute analysis [{spec.id}]: {n_analysis_comp} computed, {n_analysis_skip} skipped (cache already present).",
+                since_start=time.time() - pipeline_start,
+                style="info",
+            )
         _log("Freed main-process data before spawning workers (multi-GPU).", since_start=time.time() - pipeline_start, style="info")
         coords_np = coords = exp_stats = None
         gc.collect()
@@ -4791,7 +4901,14 @@ def main():
                 defer_sufficiency_inputs=bool(meta_suff_enabled),
             )
     elif not use_multi_gpu:
-        for entry in run_entries:
+        n_run_entries = len(run_entries)
+        if data_path and coords is not None and _need_precompute_caches:
+            _log(
+                f"Single-GPU: {n_run_entries} run entr{'y' if n_run_entries == 1 else 'ies'} — plot train/test experimental statistics per entry; seed-level analysis caches when analysis runs.",
+                since_start=time.time() - pipeline_start,
+                style="info",
+            )
+        for run_i, entry in enumerate(run_entries, start=1):
             seed, training_split, max_data = _entry_seed_split_max(entry)
             _run_one_seed(
             seed=seed,
@@ -4854,6 +4971,8 @@ def main():
             make_distmap_epoch_hook=make_dm_hook,
             make_euclideanizer_epoch_hook=make_eu_hook,
             assemble_video_fn=assemble_video_fn,
+            run_entry_idx=run_i,
+            run_entry_n=n_run_entries,
         )
     elif use_multi_gpu:
         _run_multi_gpu_tasks(

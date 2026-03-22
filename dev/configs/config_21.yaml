@@ -12,7 +12,7 @@ data:
   exp_stats_avg_map_sample: 3000   # number of structures to average for avg_exp_map in experimental statistics
   max_data: null
 
-output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-21/RANGE/Chrom_21"
+output_dir: "/scratch/amk19/Euclideanizer/Outputs/3-21/RANGE/Chrom_21/MSE_Kabsch_Sweep"
 
 distmap:
   latent_dim: 512
@@ -38,7 +38,7 @@ euclideanizer:
   lambda_w_diag_recon: 0.2578154525014001
   lambda_w_diag_gen: 0.016316750110319248
   num_diags: 498
-  lambda_kabsch_mse: 0.01136410492655878
+  lambda_kabsch_mse: [0.01136410492655878, 0.025, 0.05, 0.1, 0.25, 0.5, 0.75, 1]
   memory_efficient: false
   save_final_models_per_stretch: false
   early_stopping: true

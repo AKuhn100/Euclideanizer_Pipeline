@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-21
+
+- **Multi-GPU precompute logging:** Main-process precompute (before worker spawn) now logs an overview line, per–run-entry plot split-cache progress (hit vs slice vs full recompute, then saved), per-metric analysis cache compute lines with filenames, and per-metric computed/skipped summaries. (`run.py`, `README.md` § Multi-GPU, `STYLE_GUIDE.md` checklist)
+
+- **Single-GPU parity:** Same plot split-cache log lines (shared `_plot_exp_stats_precompute_prefix`), a single-GPU overview line when precompute-style work applies, and **Analysis seed cache** lines when test→train/feats caches are built during analysis (including HPO trial path). (`run.py`, `README.md`, `STYLE_GUIDE.md`)
+
 ## 2026-03-23
 
 - **HPO dashboard:** Remove **Vary Aspect** from the View menu when the manifest includes `hpo_trial` runs (hyperparameter trials are not a single swept axis). `dashboard.js` embedded in `dashboard.py`.
