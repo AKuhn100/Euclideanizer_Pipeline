@@ -207,6 +207,7 @@ analysis:
 scoring:
   enabled: true   # set true to compute per-run scores after analysis
   overwrite_existing: false   # if true, re-run score even when scores.json exists
+  tau_config: scoring_tau_sample.yaml   # per-component τ for s = exp(−d/τ); required (see samples/scoring_tau_sample.yaml)
   save_pdf_copy: false   # if true, save a PDF copy of the scores spider plot (dashboard) when built
 
 meta_analysis:

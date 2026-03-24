@@ -125,7 +125,7 @@ REQUIRED_KEYS = {
         "delete_frames_after_video",
     ],
     "dashboard": ["enabled"],
-    "scoring": ["enabled", "overwrite_existing", "save_pdf_copy"],
+    "scoring": ["enabled", "overwrite_existing", "tau_config", "save_pdf_copy"],
     "meta_analysis": ["sufficiency"],
 }
 # Required keys inside analysis.latent (latent is its own block: one plot per run; uses analysis.latent_max_train / latent_max_test).
@@ -313,9 +313,27 @@ def _validate_config(cfg: Dict[str, Any]) -> None:
             )
 
 
-def validate_config(cfg: Dict[str, Any]) -> None:
-    """Validate that cfg has all required pipeline keys. Raises KeyError or ValueError if not. Use for in-memory configs (e.g. HPO trial config)."""
+def _validate_scoring_tau_config(cfg: Dict[str, Any], pipeline_config_path: str) -> None:
+    """Resolve scoring.tau_config, validate the YAML, and store the absolute path back in cfg."""
+    from . import scoring
+
+    raw = cfg["scoring"]["tau_config"]
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("scoring.tau_config must be a non-empty string (path to per-component tau YAML).")
+    abs_tau = scoring.resolve_scoring_tau_config_path(raw.strip(), pipeline_config_path)
+    scoring.load_scoring_tau_dict(abs_tau)
+    cfg["scoring"]["tau_config"] = abs_tau
+
+
+def validate_config(cfg: Dict[str, Any], *, pipeline_config_path: Optional[str] = None) -> None:
+    """Validate that cfg has all required pipeline keys. Raises KeyError or ValueError if not. Use for in-memory configs (e.g. HPO trial config).
+
+    When pipeline_config_path is set, scoring.tau_config is resolved relative to that file's directory,
+    the tau YAML is validated, and cfg['scoring']['tau_config'] is replaced with its absolute path.
+    """
     _validate_config(cfg)
+    if pipeline_config_path is not None:
+        _validate_scoring_tau_config(cfg, pipeline_config_path)
 
 
 def _ensure_list(x: Any) -> List[Any]:
@@ -341,6 +359,7 @@ def load_config(path: Optional[str], overrides: Optional[Dict[str, Any]] = None)
     if overrides:
         cfg = _deep_merge(cfg, overrides)
     _validate_config(cfg)
+    _validate_scoring_tau_config(cfg, path)
     return cfg
 
 

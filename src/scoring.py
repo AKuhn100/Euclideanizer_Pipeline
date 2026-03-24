@@ -1,23 +1,26 @@
 """
 Per-run scoring: reads pipeline NPZ outputs and config, computes 30-component
 scores per SCORING_SPEC.md (z-score normalization, MAE/Wasserstein, ratio formulas,
-geometric mean). Does not run training or analysis.
+geometric mean). Per-component τ for exp(−d/τ) comes from the YAML at
+cfg["scoring"]["tau_config"] (required; validated at config load). Does not run training or analysis.
 """
 from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Mapping
 
 import numpy as np
+
+try:
+    import yaml
+except ImportError:
+    yaml = None
 
 try:
     from scipy.stats import wasserstein_distance
 except ImportError:
     wasserstein_distance = None
-
-# Fixed tau = 1 for exponential kernel score = exp(-d)
-TAU = 1.0
 
 # Generation data used for scoring must come from sample_variance == 1 (prior); other variances give incomparable scores.
 SCORING_VARIANCE = 1.0
@@ -91,6 +94,56 @@ CLUSTERING_KEY_TO_COMPONENT = {
 }
 
 
+def resolve_scoring_tau_config_path(raw: str, pipeline_config_path: str) -> str:
+    """Resolve scoring.tau_config to an absolute path (relative paths use the pipeline YAML's directory)."""
+    raw = (raw or "").strip()
+    if not raw:
+        raise ValueError("scoring.tau_config is empty.")
+    if os.path.isabs(raw):
+        return os.path.normpath(raw)
+    base = os.path.dirname(os.path.abspath(pipeline_config_path))
+    return os.path.normpath(os.path.join(base, raw))
+
+
+def load_scoring_tau_dict(path: str) -> dict[str, float]:
+    """
+    Load per-component τ from YAML. File must define exactly the keys in EXPECTED_COMPONENTS;
+    each value must be a finite number > 0.
+    """
+    if yaml is None:
+        raise RuntimeError("PyYAML is required to load scoring tau config. pip install pyyaml")
+    if not path or not os.path.isfile(path):
+        raise FileNotFoundError(f"Scoring tau config not found: {path}")
+    with open(path, "r") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Scoring tau YAML must be a mapping of component_id -> tau: {path}")
+    loaded_keys = set(data.keys())
+    expected = set(EXPECTED_COMPONENTS)
+    if loaded_keys != expected:
+        missing = sorted(expected - loaded_keys)
+        extra = sorted(loaded_keys - expected)
+        parts = []
+        if missing:
+            parts.append(f"missing keys: {missing}")
+        if extra:
+            parts.append(f"unknown keys: {extra}")
+        raise ValueError(
+            f"Scoring tau YAML keys must match EXPECTED_COMPONENTS exactly ({path}): " + "; ".join(parts)
+        )
+    out: dict[str, float] = {}
+    for comp in EXPECTED_COMPONENTS:
+        v = data[comp]
+        try:
+            t = float(v)
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"scoring tau {comp!r} must be a finite number > 0, got {v!r}") from e
+        if not np.isfinite(t) or t <= 0:
+            raise ValueError(f"scoring tau {comp!r} must be finite and > 0, got {t!r}")
+        out[comp] = t
+    return out
+
+
 def zscore_combined(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Z-score normalize using combined pool: mu, sigma from concatenated (a, b)."""
     pool = np.concatenate([np.asarray(a).ravel(), np.asarray(b).ravel()])
@@ -151,8 +204,8 @@ def _pairwise_wasserstein_mean_from_lags(
     return float(np.mean(w1_vals))
 
 
-def exp_score(d: float, tau: float = TAU) -> float:
-    """score = exp(-d/tau); tau=1. Negative d yields score > 1 (finite)."""
+def exp_score(d: float, tau: float) -> float:
+    """score = exp(-d/tau). Caller supplies τ from scoring tau config (no default)."""
     if not np.isfinite(d):
         return float("nan")
     return float(np.exp(-d / tau))
@@ -205,29 +258,30 @@ def _recon_components(
     recon_avgmap_test: np.ndarray | None,
     pairwise_wasserstein_train: float | None,
     pairwise_wasserstein_test: float | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Compute Recon (8) component scores. Missing data -> component omitted from returned dict."""
     out = {}
     if exp_scaling_train is not None and recon_scaling_train is not None:
         a, b = zscore_combined(exp_scaling_train, recon_scaling_train)
-        out["recon_scaling_train"] = exp_score(mae(a, b))
+        out["recon_scaling_train"] = exp_score(mae(a, b), taus["recon_scaling_train"])
     if exp_scaling_test is not None and recon_scaling_test is not None:
         a, b = zscore_combined(exp_scaling_test, recon_scaling_test)
-        out["recon_scaling_test"] = exp_score(mae(a, b))
+        out["recon_scaling_test"] = exp_score(mae(a, b), taus["recon_scaling_test"])
     if exp_rg_train is not None and recon_rg_train is not None:
-        out["recon_rg_train"] = exp_score(wasserstein_on_zscored(exp_rg_train, recon_rg_train))
+        out["recon_rg_train"] = exp_score(wasserstein_on_zscored(exp_rg_train, recon_rg_train), taus["recon_rg_train"])
     if exp_rg_test is not None and recon_rg_test is not None:
-        out["recon_rg_test"] = exp_score(wasserstein_on_zscored(exp_rg_test, recon_rg_test))
+        out["recon_rg_test"] = exp_score(wasserstein_on_zscored(exp_rg_test, recon_rg_test), taus["recon_rg_test"])
     if pairwise_wasserstein_train is not None and np.isfinite(pairwise_wasserstein_train):
-        out["recon_pairwise_train"] = exp_score(pairwise_wasserstein_train)
+        out["recon_pairwise_train"] = exp_score(pairwise_wasserstein_train, taus["recon_pairwise_train"])
     if pairwise_wasserstein_test is not None and np.isfinite(pairwise_wasserstein_test):
-        out["recon_pairwise_test"] = exp_score(pairwise_wasserstein_test)
+        out["recon_pairwise_test"] = exp_score(pairwise_wasserstein_test, taus["recon_pairwise_test"])
     if exp_avgmap_train is not None and recon_avgmap_train is not None:
         a, b = zscore_combined(exp_avgmap_train, recon_avgmap_train)
-        out["recon_avgmap_train"] = exp_score(mae(a, b))
+        out["recon_avgmap_train"] = exp_score(mae(a, b), taus["recon_avgmap_train"])
     if exp_avgmap_test is not None and recon_avgmap_test is not None:
         a, b = zscore_combined(exp_avgmap_test, recon_avgmap_test)
-        out["recon_avgmap_test"] = exp_score(mae(a, b))
+        out["recon_avgmap_test"] = exp_score(mae(a, b), taus["recon_avgmap_test"])
     return out
 
 
@@ -239,19 +293,20 @@ def _gen_components(
     gen_avgmap: np.ndarray | None,
     exp_avgmap_composite: np.ndarray | None,
     pairwise_wasserstein_mean: float | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Compute Gen (4) component scores."""
     out = {}
     if gen_rg is not None and exp_rg_composite is not None:
-        out["gen_rg"] = exp_score(wasserstein_on_zscored(gen_rg, exp_rg_composite))
+        out["gen_rg"] = exp_score(wasserstein_on_zscored(gen_rg, exp_rg_composite), taus["gen_rg"])
     if gen_scaling is not None and exp_scaling_composite is not None:
         a, b = zscore_combined(gen_scaling, exp_scaling_composite)
-        out["gen_scaling"] = exp_score(mae(a, b))
+        out["gen_scaling"] = exp_score(mae(a, b), taus["gen_scaling"])
     if pairwise_wasserstein_mean is not None and np.isfinite(pairwise_wasserstein_mean):
-        out["gen_pairwise"] = exp_score(pairwise_wasserstein_mean)
+        out["gen_pairwise"] = exp_score(pairwise_wasserstein_mean, taus["gen_pairwise"])
     if gen_avgmap is not None and exp_avgmap_composite is not None:
         a, b = zscore_combined(gen_avgmap, exp_avgmap_composite)
-        out["gen_avgmap"] = exp_score(mae(a, b))
+        out["gen_avgmap"] = exp_score(mae(a, b), taus["gen_avgmap"])
     return out
 
 
@@ -259,15 +314,20 @@ def _gen_rmsd_components(
     gen_train_rmsd: np.ndarray | None,
     gen_test_rmsd: np.ndarray | None,
     test_to_train_rmsd: np.ndarray | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Gen RMSD (2): Wasserstein on z-scored vs test->train."""
     out = {}
     if test_to_train_rmsd is None:
         return out
     if gen_train_rmsd is not None:
-        out["gen_rmsd_train_vs_tt"] = exp_score(wasserstein_on_zscored(gen_train_rmsd, test_to_train_rmsd))
+        out["gen_rmsd_train_vs_tt"] = exp_score(
+            wasserstein_on_zscored(gen_train_rmsd, test_to_train_rmsd), taus["gen_rmsd_train_vs_tt"]
+        )
     if gen_test_rmsd is not None:
-        out["gen_rmsd_test_vs_tt"] = exp_score(wasserstein_on_zscored(gen_test_rmsd, test_to_train_rmsd))
+        out["gen_rmsd_test_vs_tt"] = exp_score(
+            wasserstein_on_zscored(gen_test_rmsd, test_to_train_rmsd), taus["gen_rmsd_test_vs_tt"]
+        )
     return out
 
 
@@ -275,6 +335,7 @@ def _recon_rmsd_components(
     recon_train_rmsd: np.ndarray | None,
     recon_test_rmsd: np.ndarray | None,
     test_to_train_rmsd: np.ndarray | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Recon RMSD (2): ratio median(recon)/median(tt)."""
     out = {}
@@ -283,10 +344,10 @@ def _recon_rmsd_components(
     med_tt = float(np.median(test_to_train_rmsd))
     if recon_train_rmsd is not None and len(recon_train_rmsd):
         d = recon_rmsd_d(float(np.median(recon_train_rmsd)), med_tt)
-        out["recon_rmsd_train"] = exp_score(d)
+        out["recon_rmsd_train"] = exp_score(d, taus["recon_rmsd_train"])
     if recon_test_rmsd is not None and len(recon_test_rmsd):
         d = recon_rmsd_d(float(np.median(recon_test_rmsd)), med_tt)
-        out["recon_rmsd_test"] = exp_score(d)
+        out["recon_rmsd_test"] = exp_score(d, taus["recon_rmsd_test"])
     return out
 
 
@@ -295,15 +356,16 @@ def _latent_components(
     mean_test: np.ndarray | None,
     std_train: np.ndarray | None,
     std_test: np.ndarray | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Latent (2): MAE on z-scored means and stds (across dimensions)."""
     out = {}
     if mean_train is not None and mean_test is not None:
         a, b = zscore_combined(mean_train, mean_test)
-        out["latent_means"] = exp_score(mae(a, b))
+        out["latent_means"] = exp_score(mae(a, b), taus["latent_means"])
     if std_train is not None and std_test is not None:
         a, b = zscore_combined(std_train, std_test)
-        out["latent_stds"] = exp_score(mae(a, b))
+        out["latent_stds"] = exp_score(mae(a, b), taus["latent_stds"])
     return out
 
 
@@ -311,15 +373,16 @@ def _gen_q_components(
     gen_train_q: np.ndarray | None,
     gen_test_q: np.ndarray | None,
     test_to_train_q: np.ndarray | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Gen Q (2): Wasserstein on z-scored vs test->train."""
     out = {}
     if test_to_train_q is None:
         return out
     if gen_train_q is not None:
-        out["gen_q_train_vs_tt"] = exp_score(wasserstein_on_zscored(gen_train_q, test_to_train_q))
+        out["gen_q_train_vs_tt"] = exp_score(wasserstein_on_zscored(gen_train_q, test_to_train_q), taus["gen_q_train_vs_tt"])
     if gen_test_q is not None:
-        out["gen_q_test_vs_tt"] = exp_score(wasserstein_on_zscored(gen_test_q, test_to_train_q))
+        out["gen_q_test_vs_tt"] = exp_score(wasserstein_on_zscored(gen_test_q, test_to_train_q), taus["gen_q_test_vs_tt"])
     return out
 
 
@@ -327,6 +390,7 @@ def _recon_q_components(
     recon_train_q: np.ndarray | None,
     recon_test_q: np.ndarray | None,
     test_to_train_q: np.ndarray | None,
+    taus: Mapping[str, float],
 ) -> dict[str, float]:
     """Recon Q (2): ratio (1-median(recon))/(1-median(tt))."""
     out = {}
@@ -335,19 +399,29 @@ def _recon_q_components(
     med_tt = float(np.median(test_to_train_q))
     if recon_train_q is not None and len(recon_train_q):
         d = recon_q_d(float(np.median(recon_train_q)), med_tt)
-        out["recon_q_train"] = exp_score(d)
+        out["recon_q_train"] = exp_score(d, taus["recon_q_train"])
     if recon_test_q is not None and len(recon_test_q):
         d = recon_q_d(float(np.median(recon_test_q)), med_tt)
-        out["recon_q_test"] = exp_score(d)
+        out["recon_q_test"] = exp_score(d, taus["recon_q_test"])
     return out
 
 
-def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
+def compute_scores_from_data(
+    data: dict[str, Any],
+    tau_by_component: Mapping[str, float],
+) -> dict[str, Any]:
     """
     Compute all component scores from a data dict (arrays and scalars).
     data keys are the same as the keyword args expected by _recon_components, _gen_components, etc.
+    tau_by_component: per-component τ for exp(−d/τ); must contain every id in EXPECTED_COMPONENTS.
     Returns dict with: overall_score, component_scores, present, missing.
     """
+    for c in EXPECTED_COMPONENTS:
+        if c not in tau_by_component:
+            raise KeyError(f"tau_by_component missing required component {c!r}")
+        t = float(tau_by_component[c])
+        if not np.isfinite(t) or t <= 0:
+            raise ValueError(f"tau for {c!r} must be finite and > 0, got {t!r}")
     component_scores: dict[str, float] = {}
     # Recon (8)
     component_scores.update(
@@ -366,6 +440,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("recon_avgmap_test"),
             data.get("pairwise_wasserstein_train"),
             data.get("pairwise_wasserstein_test"),
+            tau_by_component,
         )
     )
     # Gen (4)
@@ -378,6 +453,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("gen_avgmap"),
             data.get("exp_avgmap_composite"),
             data.get("gen_pairwise_wasserstein_mean"),
+            tau_by_component,
         )
     )
     # Gen RMSD (2)
@@ -386,6 +462,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("gen_train_rmsd"),
             data.get("gen_test_rmsd"),
             data.get("test_to_train_rmsd"),
+            tau_by_component,
         )
     )
     # Recon RMSD (2)
@@ -394,6 +471,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("recon_train_rmsd"),
             data.get("recon_test_rmsd"),
             data.get("test_to_train_rmsd"),
+            tau_by_component,
         )
     )
     # Latent (2)
@@ -403,6 +481,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("latent_mean_test"),
             data.get("latent_std_train"),
             data.get("latent_std_test"),
+            tau_by_component,
         )
     )
     # Gen Q (2)
@@ -411,6 +490,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("gen_train_q"),
             data.get("gen_test_q"),
             data.get("test_to_train_q"),
+            tau_by_component,
         )
     )
     # Recon Q (2)
@@ -419,6 +499,7 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
             data.get("recon_train_q"),
             data.get("recon_test_q"),
             data.get("test_to_train_q"),
+            tau_by_component,
         )
     )
     # Clustering (8): from mixing_ratio dict keyed by e.g. "coord_Train+Gen", "distmap_Test+Test Recon"
@@ -437,7 +518,9 @@ def compute_scores_from_data(data: dict[str, Any]) -> dict[str, Any]:
         for key, ratio in mixing.items():
             d = clustering_d(ratio)
             comp_name = _mix_key_to_component.get(key, "clustering_" + key.replace("+", "_").replace(" ", "_"))
-            component_scores[comp_name] = exp_score(d)
+            if comp_name not in tau_by_component:
+                raise KeyError(f"tau_by_component missing clustering component {comp_name!r} (from mixing key {key!r})")
+            component_scores[comp_name] = exp_score(d, tau_by_component[comp_name])
 
     # Fill all 30 expected keys so spider and JSON always have a full set; missing = nan
     for c in EXPECTED_COMPONENTS:
@@ -641,13 +724,27 @@ def _variance_lists_from_config(cfg: dict[str, Any]) -> dict[str, list[float]]:
     }
 
 
-def validate_hpo_pipeline_config(cfg: dict[str, Any]) -> tuple[bool, list[str]]:
+def validate_hpo_pipeline_config(
+    cfg: dict[str, Any],
+    pipeline_config_path: str | None = None,
+) -> tuple[bool, list[str]]:
     """
     Validate that the pipeline config is suitable for HPO: scoring enabled and all
     score-relevant blocks enabled with sample_variance containing 1 (so scoring can compute full scores).
+    When pipeline_config_path is set, scoring.tau_config must resolve to a valid tau YAML.
     Returns (True, []) if valid; (False, [error messages]) otherwise.
     """
     errors = []
+    sc = cfg.get("scoring") or {}
+    tc = sc.get("tau_config")
+    if not isinstance(tc, str) or not tc.strip():
+        errors.append("scoring.tau_config must be a non-empty string (path to per-component tau YAML).")
+    elif pipeline_config_path:
+        try:
+            abs_tau = resolve_scoring_tau_config_path(tc, pipeline_config_path)
+            load_scoring_tau_dict(abs_tau)
+        except Exception as e:
+            errors.append(f"scoring.tau_config invalid or unreadable: {e}")
     if not (cfg.get("scoring") and cfg["scoring"].get("enabled")):
         errors.append("scoring.enabled must be true for HPO (scoring is the objective).")
     plot_cfg = (cfg.get("plotting") or {})
@@ -867,8 +964,13 @@ def compute_and_save(
         if key_ratios:
             data["clustering_mixing"] = key_ratios
 
+    tau_path = cfg["scoring"]["tau_config"]
+    if not isinstance(tau_path, str) or not tau_path.strip():
+        raise ValueError("scoring.tau_config must be a non-empty path (absolute, or resolve via load_config / validate_config).")
+    taus = load_scoring_tau_dict(os.path.normpath(tau_path))
+
     print("  Scoring: computing component scores...", flush=True)
-    result = compute_scores_from_data(data)
+    result = compute_scores_from_data(data, taus)
 
     scoring_dir = os.path.join(run_dir, SCORING_DIR)
     os.makedirs(scoring_dir, exist_ok=True)

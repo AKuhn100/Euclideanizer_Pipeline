@@ -1,11 +1,11 @@
-output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs_Slurm_Better_Coord_Clustering/3-17"
+output_dir: "/scratch/amk19/Euclideanizer/HPO_Outputs_Chrom21_Slurm/3-24"
 
 data_path: /scratch/amk19/Euclideanizer/Data/Interpolated_Data/DataProcess/chromosome21.npz
 seed: 15
 
 epoch_cap: 500
 
-pipeline_config: "/scratch/amk19/Euclideanizer/Pipeline/samples/config_sample_hpo.yaml"
+pipeline_config: "/scratch/amk19/Euclideanizer/Pipeline/dev/configs/config_hpo.yaml"
 
 search_space:
   distmap:

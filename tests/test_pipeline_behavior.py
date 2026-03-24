@@ -1264,7 +1264,9 @@ def test_validate_config_rejects_invalid_plot_dpi():
 
 def test_scoring_compute_scores_from_data_empty_reports_missing():
     """With no data, compute_scores_from_data returns structure with empty present and nan overall."""
-    result = scoring_module.compute_scores_from_data({})
+    tau_path = os.path.join(_TEST_DIR, "..", "samples", "scoring_tau_sample.yaml")
+    taus = scoring_module.load_scoring_tau_dict(os.path.normpath(tau_path))
+    result = scoring_module.compute_scores_from_data({}, taus)
     assert "overall_score" in result
     assert "component_scores" in result
     assert "present" in result

@@ -25,18 +25,18 @@ where μ and σ are computed over the **combined pool** (e.g. exp + recon togeth
 
 Use z-scoring rather than min/max normalization. Min/max is sensitive to outlier structures that collapse the scale; z-scoring is robust to these.
 
-### 2.2 Exponential kernel scoring (τ = 1)
+### 2.2 Exponential kernel scoring (per-component τ)
 
 All components (except Recon RMSD, Recon Q, and Clustering — see §4.4, §4.7, §4.8) use:
 
 ```
-score = e^{-d}
+score = e^{-d/\tau}
 
 ```
 
-where `d` is the discrepancy on z-scored data and τ = 1. Because all discrepancies are in the same σ-units after z-scoring, a single τ = 1 applies everywhere without per-metric tuning.
+where `d` is the discrepancy on z-scored data and **τ is set per scoring component** in a dedicated YAML file. The pipeline config must set `scoring.tau_config` to that file (required key; no code default). The sample `samples/scoring_tau_sample.yaml` sets every component’s τ to 1 so behavior matches the former fixed τ = 1. Because discrepancies are in σ-units after z-scoring, τ = 1 everywhere is a reasonable default; different τ per component allows sensitivity tuning without changing the metric definitions.
 
-**Interpretation:** a discrepancy of 1σ gives score ≈ 0.37; 0σ gives score = 1.
+**Interpretation:** with τ = 1, a discrepancy of 1σ gives score ≈ 0.37; 0σ gives score = 1.
 
 > **Note on Wasserstein sample noise:** Wasserstein-1 between finite samples of the same distribution is not exactly 0. Estimate this noise floor empirically (compute W1 between two subsamples of the same set) and confirm it is well below 1σ for your typical sample sizes.
 

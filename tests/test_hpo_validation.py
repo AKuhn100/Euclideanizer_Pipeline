@@ -19,11 +19,13 @@ if _PIPELINE_ROOT not in sys.path:
 
 from src.scoring import validate_hpo_pipeline_config
 
+_SAMPLES_PIPELINE_HPO = os.path.join(_PIPELINE_ROOT, "samples", "config_sample_hpo.yaml")
+
 
 def _hpo_valid_cfg():
     """Minimal pipeline config that passes HPO validation."""
     return {
-        "scoring": {"enabled": True},
+        "scoring": {"enabled": True, "tau_config": "scoring_tau_sample.yaml"},
         "plotting": {"enabled": True, "sample_variance": [1.0]},
         "analysis": {
             "rmsd_gen": {"enabled": True, "sample_variance": [1.0]},
@@ -35,14 +37,22 @@ def _hpo_valid_cfg():
 
 
 def test_validate_hpo_pipeline_config_valid():
-    ok, errors = validate_hpo_pipeline_config(_hpo_valid_cfg())
+    ok, errors = validate_hpo_pipeline_config(_hpo_valid_cfg(), _SAMPLES_PIPELINE_HPO)
     assert ok is True and errors == []
+
+
+def test_validate_hpo_pipeline_config_rejects_missing_tau_config():
+    cfg = _hpo_valid_cfg()
+    del cfg["scoring"]["tau_config"]
+    ok, errors = validate_hpo_pipeline_config(cfg, _SAMPLES_PIPELINE_HPO)
+    assert ok is False
+    assert any("tau_config" in e for e in errors)
 
 
 def test_validate_hpo_pipeline_config_scoring_disabled():
     cfg = _hpo_valid_cfg()
     cfg["scoring"]["enabled"] = False
-    ok, errors = validate_hpo_pipeline_config(cfg)
+    ok, errors = validate_hpo_pipeline_config(cfg, _SAMPLES_PIPELINE_HPO)
     assert ok is False
     assert any("scoring" in e for e in errors)
 
@@ -50,7 +60,7 @@ def test_validate_hpo_pipeline_config_scoring_disabled():
 def test_validate_hpo_pipeline_config_missing_variance_one():
     cfg = _hpo_valid_cfg()
     cfg["plotting"]["sample_variance"] = [2.0]  # no 1
-    ok, errors = validate_hpo_pipeline_config(cfg)
+    ok, errors = validate_hpo_pipeline_config(cfg, _SAMPLES_PIPELINE_HPO)
     assert ok is False
     assert any("plotting" in e and "sample_variance" in e for e in errors)
 
@@ -58,7 +68,7 @@ def test_validate_hpo_pipeline_config_missing_variance_one():
 def test_validate_hpo_pipeline_config_analysis_block_disabled():
     cfg = _hpo_valid_cfg()
     cfg["analysis"]["rmsd_gen"]["enabled"] = False
-    ok, errors = validate_hpo_pipeline_config(cfg)
+    ok, errors = validate_hpo_pipeline_config(cfg, _SAMPLES_PIPELINE_HPO)
     assert ok is False
     assert any("rmsd_gen" in e for e in errors)
 

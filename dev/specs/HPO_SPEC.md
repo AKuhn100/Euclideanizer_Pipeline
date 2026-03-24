@@ -80,6 +80,7 @@
 - **HPO config file:** A separate config schema (e.g. `hpo_config.yaml` or a section in a shared config) defines:
   - Fixed pipeline settings: data path, output root, single seed, `learning_rate`, `batch_size`, `epochs` (cap), and any other fixed pipeline options.
   - Analysis: all analysis blocks are enabled and mandatory; generation variance for scoring is 1 (for plotting and all gen-based analysis).
+  - Scoring: the pipeline template must set **`scoring.tau_config`** to a valid YAML (per-component τ; see `samples/scoring_tau_sample.yaml`). Startup validation resolves the path relative to the template file and checks the file.
   - Search space: for each tuned DistMap and Euclideanizer parameter, the range or choices (e.g. `latent_dim`: [64, 128, 256, 512], `beta_kl`: log-uniform from 1e-3 to 0.1).
   - Optuna settings: `n_trials`, pruner type and arguments. The same `seed` (top-level) is used for the Optuna TPE sampler. Study storage defaults to `output_dir/hpo_study.db` so the path identifies the run; optional `storage` override in config.
 - **No grid expansion:** The HPO entry point does not use the existing grid expansion (lists in distmap/euclideanizer). It generates a single (DistMap, Euclideanizer) config per trial from Optuna suggestions and runs the pipeline once per trial (in-process or via subprocess, as chosen in implementation).

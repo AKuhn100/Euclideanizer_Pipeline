@@ -200,7 +200,7 @@ analysis:
 scoring:
   enabled: true
   overwrite_existing: false
-  tau_config: scoring_tau_sample.yaml
+  tau_config: /scratch/amk19/Euclideanizer/Pipeline/dev/configs/tau_hpo.yaml
   save_pdf_copy: false
 
 meta_analysis:

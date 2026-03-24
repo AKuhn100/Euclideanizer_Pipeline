@@ -477,7 +477,7 @@ def main() -> int:
         return 1
     base_cfg = _load_yaml(str(base_config_path))
     from src.scoring import validate_hpo_pipeline_config
-    valid, validation_errors = validate_hpo_pipeline_config(base_cfg)
+    valid, validation_errors = validate_hpo_pipeline_config(base_cfg, str(base_config_path))
     if not valid:
         print("HPO pipeline config must have scoring enabled and all score-centric analysis/plotting enabled with gen variance 1.", file=sys.stderr)
         for msg in validation_errors:
@@ -559,7 +559,7 @@ def main() -> int:
         trial_params = _suggest_params(trial, search_space)
         trial_dir = str((Path(output_root) / f"trial_{trial.number}").resolve())
         cfg = _build_trial_config(base_cfg, trial_params, trial_dir, data_path, seed, epoch_cap=epoch_cap)
-        config_module.validate_config(cfg)  # fail fast if trial config is missing required pipeline keys
+        config_module.validate_config(cfg, pipeline_config_path=str(base_config_path))
         Path(trial_dir).mkdir(parents=True, exist_ok=True)
         config_out = Path(trial_dir) / PIPELINE_CONFIG_FILENAME
         with open(config_out, "w") as f:

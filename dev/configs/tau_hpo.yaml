@@ -1,0 +1,34 @@
+# Per-component τ for exponential score s = exp(−d/τ). Required keys: all 30 scoring components
+# (see EXPECTED_COMPONENTS in src/scoring.py). Pipeline configs must set scoring.tau_config to this
+# file or another YAML with the same key set.
+
+recon_scaling_train: 1.0
+recon_scaling_test: 1.0
+recon_rg_train: 1.0
+recon_rg_test: 1.0
+recon_pairwise_train: 1.0
+recon_pairwise_test: 1.0
+recon_avgmap_train: 1.0
+recon_avgmap_test: 1.0
+gen_rg: 1.0
+gen_scaling: 1.0
+gen_pairwise: 1.0
+gen_avgmap: 1.0
+gen_rmsd_train_vs_tt: 1.0
+gen_rmsd_test_vs_tt: 1.0
+recon_rmsd_train: 0.5
+recon_rmsd_test: 0.5
+latent_means: 1.0
+latent_stds: 1.0
+gen_q_train_vs_tt: 1.0
+gen_q_test_vs_tt: 1.0
+recon_q_train: 0.5
+recon_q_test: 0.5
+clustering_coord_gen_train: 1.0
+clustering_coord_gen_test: 1.0
+clustering_coord_recon_train: 1.0
+clustering_coord_recon_test: 1.0
+clustering_distmap_gen_train: 1.0
+clustering_distmap_gen_test: 1.0
+clustering_distmap_recon_train: 1.0
+clustering_distmap_recon_test: 1.0

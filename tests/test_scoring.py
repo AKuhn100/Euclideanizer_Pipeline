@@ -26,7 +26,7 @@ from src.scoring import (
     clustering_d,
     compute_scores_from_data,
     EXPECTED_COMPONENTS,
-    TAU,
+    load_scoring_tau_dict,
     SCORING_VARIANCE,
     _variance_equals_scoring,
     _run_name_has_scoring_variance,
@@ -35,6 +35,12 @@ from src.scoring import (
     _pairwise_wasserstein_mean_from_lags,
     compute_and_save,
 )
+
+_SCORING_TAU_SAMPLE = os.path.join(_PIPELINE_ROOT, "samples", "scoring_tau_sample.yaml")
+
+
+def _unit_taus() -> dict[str, float]:
+    return load_scoring_tau_dict(_SCORING_TAU_SAMPLE)
 
 
 def test_zscore_combined_zero_mean_unit_var():
@@ -97,18 +103,18 @@ def test_pairwise_wasserstein_empty_returns_nan():
 
 def test_exp_score_zero_d_is_one():
     """d=0 -> score = 1."""
-    assert exp_score(0.0) == 1.0
+    assert exp_score(0.0, 1.0) == 1.0
 
 
 def test_exp_score_one_sigma():
     """d=1, tau=1 -> score approx 0.37."""
-    s = exp_score(1.0, tau=TAU)
+    s = exp_score(1.0, 1.0)
     assert 0.35 < s < 0.40
 
 
 def test_exp_score_negative_d_clamped():
     """Negative d should still return finite score (exp(-d) > 1 possible; spec uses d>=0)."""
-    s = exp_score(-0.5, tau=TAU)
+    s = exp_score(-0.5, 1.0)
     assert np.isfinite(s) and s > 0
 
 
@@ -116,21 +122,21 @@ def test_recon_rmsd_d_better_than_baseline():
     """Recon median < tt median -> d < 1 -> score > 0.37."""
     d = recon_rmsd_d(0.5, 1.0)
     assert d == 0.5
-    assert exp_score(d) > 0.37
+    assert exp_score(d, 1.0) > 0.37
 
 
 def test_recon_rmsd_d_equal_baseline():
     """Recon median = tt median -> d = 1 -> score approx 0.37."""
     d = recon_rmsd_d(1.0, 1.0)
     assert d == 1.0
-    assert 0.35 < exp_score(d) < 0.40
+    assert 0.35 < exp_score(d, 1.0) < 0.40
 
 
 def test_recon_q_d_ideal():
     """Recon Q = 1 -> d = 0 -> score = 1."""
     d = recon_q_d(1.0, 0.5)
     assert d == 0.0
-    assert exp_score(d) == 1.0
+    assert exp_score(d, 1.0) == 1.0
 
 
 def test_recon_q_d_baseline():
@@ -143,7 +149,7 @@ def test_clustering_ratio_ge_one():
     """ratio >= 1 -> d = 0 -> score = 1."""
     assert clustering_d(1.0) == 0.0
     assert clustering_d(1.5) == 0.0
-    assert exp_score(clustering_d(1.0)) == 1.0
+    assert exp_score(clustering_d(1.0), 1.0) == 1.0
 
 
 def test_clustering_ratio_less_one():
@@ -181,7 +187,7 @@ def test_compute_scores_from_data_minimal():
         "recon_train_rmsd": np.array([0.3, 0.4]),
         "recon_test_rmsd": np.array([0.5, 0.6]),
     }
-    result = compute_scores_from_data(data)
+    result = compute_scores_from_data(data, _unit_taus())
     assert "overall_score" in result
     assert "recon_rmsd_train" in result["component_scores"]
     assert "recon_rmsd_test" in result["component_scores"]
@@ -206,7 +212,7 @@ def test_compute_scores_from_data_clustering():
             "distmap_Test+Test Recon": 1.0,
         },
     }
-    result = compute_scores_from_data(data)
+    result = compute_scores_from_data(data, _unit_taus())
     assert "clustering_coord_gen_train" in result["component_scores"]
     assert "clustering_distmap_gen_test" in result["component_scores"]
     assert "clustering_distmap_gen_test" in result["present"]
@@ -225,7 +231,7 @@ def test_compute_scores_from_data_latent():
         "latent_std_train": np.array([1.0, 1.0, 1.0]),
         "latent_std_test": np.array([1.0, 1.0, 1.0]),
     }
-    result = compute_scores_from_data(data)
+    result = compute_scores_from_data(data, _unit_taus())
     assert "latent_means" in result["component_scores"]
     assert "latent_stds" in result["component_scores"]
     assert result["component_scores"]["latent_means"] == 1.0  # identical -> MAE 0 -> score 1
@@ -331,7 +337,7 @@ def test_compute_and_save_uses_only_variance_one_gen_variance(tmp_path):
     cfg = {
         "plotting": {"sample_variance": [0.5, 1.0, 2.0]},
         "analysis": {"rmsd_gen": {"sample_variance": [1.0]}, "q_gen": {"sample_variance": [1.0]}, "coord_clustering_gen": {"sample_variance": [1.0]}, "distmap_clustering_gen": {"sample_variance": [1.0]}, "rmsd_recon": {}, "q_recon": {}, "coord_clustering_recon": {}, "distmap_clustering_recon": {}},
-        "scoring": {"save_pdf_copy": False},
+        "scoring": {"save_pdf_copy": False, "tau_config": _SCORING_TAU_SAMPLE},
     }
     out = compute_and_save(str(run_dir), str(seed_dir), cfg)
     assert out is not None
@@ -361,7 +367,7 @@ def test_compute_and_save_gen_variance_missing_when_one_absent_from_config(tmp_p
     cfg = {
         "plotting": {"sample_variance": [2.0]},
         "analysis": {"rmsd_gen": {"sample_variance": []}, "q_gen": {"sample_variance": []}, "coord_clustering_gen": {"sample_variance": []}, "distmap_clustering_gen": {"sample_variance": []}, "rmsd_recon": {}, "q_recon": {}, "coord_clustering_recon": {}, "distmap_clustering_recon": {}},
-        "scoring": {"save_pdf_copy": False},
+        "scoring": {"save_pdf_copy": False, "tau_config": _SCORING_TAU_SAMPLE},
     }
     out = compute_and_save(str(run_dir), str(seed_dir), cfg)
     assert out is not None
@@ -396,7 +402,7 @@ def test_compute_and_save_rmsd_gen_only_from_variance_one_path(tmp_path):
     cfg = {
         "plotting": {"sample_variance": [1.0]},
         "analysis": {"rmsd_gen": {"sample_variance": [1.0, 2.0]}, "q_gen": {"sample_variance": [1.0]}, "coord_clustering_gen": {"sample_variance": [1.0]}, "distmap_clustering_gen": {"sample_variance": [1.0]}, "rmsd_recon": {}, "q_recon": {}, "coord_clustering_recon": {}, "distmap_clustering_recon": {}},
-        "scoring": {"save_pdf_copy": False},
+        "scoring": {"save_pdf_copy": False, "tau_config": _SCORING_TAU_SAMPLE},
     }
     out = compute_and_save(str(run_dir), str(seed_dir), cfg)
     assert out is not None
@@ -467,7 +473,7 @@ def test_compute_and_save_all_components_present_when_all_data_saved(tmp_path):
             "coord_clustering_gen": {"sample_variance": [1.0]}, "coord_clustering_recon": {},
             "distmap_clustering_gen": {"sample_variance": [1.0]}, "distmap_clustering_recon": {},
         },
-        "scoring": {"save_pdf_copy": False},
+        "scoring": {"save_pdf_copy": False, "tau_config": _SCORING_TAU_SAMPLE},
     }
     out = compute_and_save(str(run_dir), str(seed_dir), cfg)
     assert out is not None

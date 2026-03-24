@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-03-24
+
+- **Per-component scoring τ:** Removed fixed `τ = 1` in `src/scoring.py`. Added required `scoring.tau_config` (path to YAML) listing all 30 `EXPECTED_COMPONENTS` with finite τ > 0; sample `samples/scoring_tau_sample.yaml` (all 1.0). `load_config` and `validate_config(..., pipeline_config_path=...)` resolve relative paths, validate the file, and store an absolute path in cfg. `compute_scores_from_data(data, tau_by_component)`; `exp_score(d, tau)` has no default τ. Updated `validate_hpo_pipeline_config(cfg, pipeline_config_path)`, `run_hpo.py`, all sample/dev/test YAMLs, `SCORING_SPEC.md`, `STYLE_GUIDE.md`, and tests (`test_scoring.py`, `test_hpo_validation.py`, `test_pipeline_behavior.py`).
+
 ## 2026-03-21
 
 - **Multi-GPU precompute logging:** Main-process precompute (before worker spawn) now logs an overview line, per–run-entry plot split-cache progress (hit vs slice vs full recompute, then saved), per-metric analysis cache compute lines with filenames, and per-metric computed/skipped summaries. (`run.py`, `README.md` § Multi-GPU, `STYLE_GUIDE.md` checklist)
