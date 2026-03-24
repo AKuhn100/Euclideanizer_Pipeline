@@ -10,6 +10,8 @@
 
 ## 2026-03-23
 
+- **`latent_2d_vae_visualize.py`:** After each β, writes a 2D scatter of the latent-2D VAE encoder means (DistMap μ → `encode` μ in ℝ²), train vs test in distinct colors (`OUTPUT_LATENT2D_MU_SCATTER_PATH`, `SCATTER_COLOR_TRAIN` / `SCATTER_COLOR_TEST`); empty scatter path skips the figure.
+
 - **HPO dashboard:** Remove **Vary Aspect** from the View menu when the manifest includes `hpo_trial` runs (hyperparameter trials are not a single swept axis). `dashboard.js` embedded in `dashboard.py`.
 
 - **Dashboard `<title>` / `<h1>` placeholder fix:** `_html_content` applied `.replace("__PAGE_TITLE__", …)` only to the last string segment (`a + b + c.replace` precedence). Wrapped the full HTML concatenation in parentheses so the tab title and header substitute correctly. `dashboard.py`.
