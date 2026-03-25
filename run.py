@@ -60,6 +60,8 @@ from src.config import (
     run_config_section_matches_allow_calibrated,
     pipeline_config_path,
     TRAINING_CRITICAL_KEYS,
+    finalize_scoring_tau_config,
+    peek_output_dir,
 )
 from src.metrics import (
     compute_exp_statistics,
@@ -803,6 +805,32 @@ def _log_raw(line: str, style: str | None = None) -> None:
         finally:
             if _LOG_LOCK is not None:
                 _LOG_LOCK.release()
+
+
+def _append_preinit_fatal_traceback(traceback_text: str) -> None:
+    """If startup failed before :func:`_init_log_file`, append the traceback to ``output_dir/pipeline.log`` when discoverable."""
+    try:
+        args = _parse_args()
+        if getattr(args, "worker_from_pickle", None):
+            return
+        od = peek_output_dir(args.config, _args_to_overrides(args))
+        if not od:
+            return
+        os.makedirs(od, exist_ok=True)
+        log_path = os.path.join(od, PIPELINE_LOG_FILENAME)
+        with open(log_path, "a", encoding="utf-8") as lf:
+            lf.write("\n")
+            lf.write("=" * 60 + "\n")
+            lf.write(
+                f"PIPELINE ERROR (before pipeline.log init) — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+            lf.write("=" * 60 + "\n")
+            lf.write(traceback_text)
+            if not traceback_text.endswith("\n"):
+                lf.write("\n")
+            lf.flush()
+    except Exception:
+        pass
 
 
 # Output layout: run_root/model/ (model.pt or euclideanizer.pt), run_root/plots/<type>/ (PNG and optional data/*.npz)
@@ -4290,7 +4318,7 @@ def main():
         return
     overrides = _args_to_overrides(args)
     config_path = args.config
-    cfg = load_config(path=config_path, overrides=overrides)
+    cfg = load_config(path=config_path, overrides=overrides, validate_scoring_tau=False)
     data_path = get_data_path(cfg)
     base_output_dir = get_output_dir(cfg)
     resume = cfg["resume"]
@@ -4305,6 +4333,7 @@ def main():
         sys.stdout = _StyledStdout(_pipeline_real_stdout)
     if _pipeline_real_stderr.isatty():
         sys.stderr = _StyledStderr(_pipeline_real_stderr)
+    finalize_scoring_tau_config(cfg, config_path)
     # Save full run config in output root for reproducibility (can re-run with: run.py --config <base_output_dir>/pipeline_config.yaml)
     root_run_cfg = {**cfg, "output_dir": base_output_dir}
     save_pipeline_config(root_run_cfg, base_output_dir)
@@ -5146,6 +5175,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:
+        tb = traceback.format_exc()
         if _pipeline_real_stdout is not None:
             sys.stdout = _pipeline_real_stdout
             _pipeline_real_stdout = None
@@ -5157,6 +5187,10 @@ if __name__ == "__main__":
             _LOG_FILE.write("=" * 60 + "\n")
             _LOG_FILE.write("PIPELINE ERROR\n")
             _LOG_FILE.write("=" * 60 + "\n")
-            _LOG_FILE.write(traceback.format_exc())
+            _LOG_FILE.write(tb)
+            if not tb.endswith("\n"):
+                _LOG_FILE.write("\n")
             _LOG_FILE.flush()
+        else:
+            _append_preinit_fatal_traceback(tb)
         raise

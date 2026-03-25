@@ -516,10 +516,12 @@ def compute_scores_from_data(
     mixing = data.get("clustering_mixing")
     if isinstance(mixing, dict):
         for key, ratio in mixing.items():
+            # clustering_data.npz can include extra mixing labels for plots only (e.g. Train+Test on gen).
+            # Score only the eight canonical comparisons (see SCORING_SPEC §4.8).
+            if key not in _mix_key_to_component:
+                continue
+            comp_name = _mix_key_to_component[key]
             d = clustering_d(ratio)
-            comp_name = _mix_key_to_component.get(key, "clustering_" + key.replace("+", "_").replace(" ", "_"))
-            if comp_name not in tau_by_component:
-                raise KeyError(f"tau_by_component missing clustering component {comp_name!r} (from mixing key {key!r})")
             component_scores[comp_name] = exp_score(d, tau_by_component[comp_name])
 
     # Fill all 30 expected keys so spider and JSON always have a full set; missing = nan

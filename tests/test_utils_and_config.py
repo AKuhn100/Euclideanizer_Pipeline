@@ -13,7 +13,15 @@ import torch
 from scipy.spatial.transform import Rotation
 
 from conftest import assert_exact_or_numerical
-from src.config import config_diff, configs_match_exactly, expand_distmap_grid, expand_euclideanizer_grid, load_config
+from src.config import (
+    config_diff,
+    configs_match_exactly,
+    expand_distmap_grid,
+    expand_euclideanizer_grid,
+    finalize_scoring_tau_config,
+    load_config,
+    peek_output_dir,
+)
 from src.gro_io import write_structures_gro
 from src.metrics import distmap_bond_lengths, distmap_rg, distmap_scaling, compute_exp_statistics
 from src.rmsd import _rmsd_matrix_batch, _recon_rmsd_one_to_one
@@ -107,6 +115,25 @@ def test_batch_size_zero_raises():
     cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
     with pytest.raises(ValueError, match="batch_size must be null \\(auto-calibrate\\) or a positive integer"):
         load_config(cfg_path, {"distmap": {"batch_size": 0}})
+
+
+def test_peek_output_dir_and_override():
+    """peek_output_dir reads output_dir from YAML; merges CLI-style output_dir override."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    assert peek_output_dir(cfg_path) is not None
+    override_dir = os.path.join(_TEST_DIR, "peek_override_out")
+    got = peek_output_dir(cfg_path, {"output_dir": override_dir})
+    assert got == os.path.abspath(override_dir)
+
+
+def test_load_config_skips_tau_when_requested():
+    """validate_scoring_tau=False skips tau file I/O; finalize_scoring_tau_config still enforces it."""
+    cfg_path = os.path.join(_TEST_DIR, "config_test.yaml")
+    bad_tau = "/nonexistent/scoring_tau_bad.yaml"
+    cfg = load_config(cfg_path, {"scoring": {"tau_config": bad_tau}}, validate_scoring_tau=False)
+    assert bad_tau in cfg["scoring"]["tau_config"]
+    with pytest.raises(FileNotFoundError, match="Scoring tau config not found"):
+        finalize_scoring_tau_config(cfg, cfg_path)
 
 
 def test_configs_match_exactly_equal():

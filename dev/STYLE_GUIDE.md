@@ -9,6 +9,7 @@ This document is for developers working on the Euclideanizer pipeline. It summar
 A core goal of this project is to produce useful codebases for scientific inquiry. A major source of frustration in scientific software is when users cannot replicate results or generalize use to other projects in a way that would be reasonable to expect from the publication. To reduce that risk:
 
 - **Fail-safe where possible.** Design so that misuse is hard and failure modes are clear and informative. Avoid situations where a user concludes the software "doesn't work" because of hidden requirements or opaque behavior.
+- **Fatal errors and `pipeline.log`:** The main process writes uncaught tracebacks to `output_dir/pipeline.log` when the log file is already open. Errors before log init (e.g. invalid config structure) still attempt an append to `pipeline.log` using `peek_output_dir` from the config path + CLI overrides. `scoring.tau_config` is validated only after the log file is created so missing tau files appear in the run log as well as Slurm stderr.
 - **Transparent and reproducible.** Prefer no magic numbers and no hidden behavior. The config and saved `run_config.yaml` should tell you exactly what was used, so that results are reproducible and choices are explicit.
 - **Expose what matters, hide what doesn't.** Not every option should be configurable — low-level implementation details add complexity without helping most users. Expose what affects scientific outcomes, reproducibility, or resource use; keep the rest simple and stable.
 

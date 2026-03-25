@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-03-25
+
+- **Startup errors vs `pipeline.log`:** `scoring.tau_config` validation runs after `pipeline.log` is opened (`finalize_scoring_tau_config` in `run.py`); uncaught exceptions still append a full traceback to the log. Failures before log init use `peek_output_dir` to append a **before pipeline.log init** traceback block to `output_dir/pipeline.log` when the output directory can be read from the YAML + CLI overrides. `load_config(..., validate_scoring_tau=False)` plus `peek_output_dir` / `finalize_scoring_tau_config` in `src/config.py`. Tests in `tests/test_utils_and_config.py`.
+
+- **Scoring / clustering:** `compute_scores_from_data` ignores mixing keys not in the eight canonical clustering comparisons (e.g. `coord_Train+Test` saved for plots only). Prevents scoring failures when `clustering_data.npz` lists extra labels. `SCORING_SPEC.md` §4.8 note; test `test_compute_scores_from_data_clustering_ignores_non_scoring_mixing_keys` in `tests/test_scoring.py`.
+
 ## 2026-03-24
 
 - **Per-component scoring τ:** Removed fixed `τ = 1` in `src/scoring.py`. Added required `scoring.tau_config` (path to YAML) listing all 30 `EXPECTED_COMPONENTS` with finite τ > 0; sample `samples/scoring_tau_sample.yaml` (all 1.0). `load_config` and `validate_config(..., pipeline_config_path=...)` resolve relative paths, validate the file, and store an absolute path in cfg. `compute_scores_from_data(data, tau_by_component)`; `exp_score(d, tau)` has no default τ. Updated `validate_hpo_pipeline_config(cfg, pipeline_config_path)`, `run_hpo.py`, all sample/dev/test YAMLs, `SCORING_SPEC.md`, `STYLE_GUIDE.md`, and tests (`test_scoring.py`, `test_hpo_validation.py`, `test_pipeline_behavior.py`).

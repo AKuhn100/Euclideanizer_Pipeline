@@ -223,6 +223,28 @@ def test_compute_scores_from_data_clustering():
     assert np.isnan(result["overall_score"])
 
 
+def test_compute_scores_from_data_clustering_ignores_non_scoring_mixing_keys():
+    """NPZ-style extra keys (e.g. coord_Train+Test for plots) must not affect scoring or require tau entries."""
+    data = {
+        "clustering_mixing": {
+            "coord_Train+Test": 0.5,
+            "coord_Train+Test+Gen": 0.3,
+            "coord_Train+Gen": 1.2,
+            "coord_Test+Gen": 1.0,
+            "coord_Train+Train Recon": 0.9,
+            "coord_Test+Test Recon": 1.1,
+            "distmap_Train+Gen": 1.0,
+            "distmap_Test+Gen": 0.8,
+            "distmap_Train+Train Recon": 1.3,
+            "distmap_Test+Test Recon": 1.0,
+        },
+    }
+    result = compute_scores_from_data(data, _unit_taus())
+    assert result["component_scores"]["clustering_coord_gen_train"] == 1.0
+    assert len(result["present"]) == 8
+    assert np.isnan(result["overall_score"])
+
+
 def test_compute_scores_from_data_latent():
     """Latent means/stds -> latent_means and latent_stds components; overall nan (not all 30)."""
     data = {

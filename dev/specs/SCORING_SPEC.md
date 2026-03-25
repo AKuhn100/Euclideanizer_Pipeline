@@ -175,6 +175,8 @@ d = max(0, 1 − ratio)
 
 8 components total: coord and distmap for each of gen+train, gen+test, recon train, recon test.
 
+**NPZ vs score:** `clustering_data.npz` may store **additional** mixing keys used only for figures (e.g. Train+Test, Train+Test+Gen on the gen workflow). When scoring loads merged mixing data, **only** the eight comparisons above are used; other keys are ignored so they do not affect component scores or the tau YAML.
+
 ---
 
 ## 5. Summary Table

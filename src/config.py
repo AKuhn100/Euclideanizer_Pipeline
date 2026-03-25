@@ -325,6 +325,39 @@ def _validate_scoring_tau_config(cfg: Dict[str, Any], pipeline_config_path: str)
     cfg["scoring"]["tau_config"] = abs_tau
 
 
+def finalize_scoring_tau_config(cfg: Dict[str, Any], pipeline_config_path: str) -> None:
+    """Resolve ``scoring.tau_config`` to an absolute path and validate the tau YAML.
+
+    Call after ``pipeline.log`` is initialized (e.g. in ``run.main``) so missing or invalid tau files
+    are recorded in the run log as well as stderr.
+    """
+    _validate_scoring_tau_config(cfg, pipeline_config_path)
+
+
+def peek_output_dir(config_path: str, overrides: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Best-effort ``output_dir`` from YAML plus CLI-style overrides, without full config validation.
+
+    Used only for emergency logging when startup fails before the log file is opened.
+    """
+    if not config_path or not os.path.isfile(config_path):
+        return None
+    if yaml is None:
+        return None
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        if not isinstance(cfg, dict):
+            return None
+        if overrides:
+            cfg = _deep_merge(cfg, overrides)
+        od = cfg.get("output_dir")
+        if not od or not isinstance(od, str):
+            return None
+        return os.path.abspath(os.path.expanduser(od.strip()))
+    except Exception:
+        return None
+
+
 def validate_config(cfg: Dict[str, Any], *, pipeline_config_path: Optional[str] = None) -> None:
     """Validate that cfg has all required pipeline keys. Raises KeyError or ValueError if not. Use for in-memory configs (e.g. HPO trial config).
 
@@ -344,22 +377,32 @@ def _ensure_list(x: Any) -> List[Any]:
     return [x]
 
 
-def load_config(path: Optional[str], overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Load config from YAML. Path is required; file must exist. Overrides (e.g. from CLI) are merged. Validates required keys."""
+def load_config(
+    path: Optional[str],
+    overrides: Optional[Dict[str, Any]] = None,
+    *,
+    validate_scoring_tau: bool = True,
+) -> Dict[str, Any]:
+    """Load config from YAML. Path is required; file must exist. Overrides (e.g. from CLI) are merged. Validates required keys.
+
+    When ``validate_scoring_tau`` is False, ``scoring.tau_config`` is not resolved or checked; call
+    :func:`finalize_scoring_tau_config` after ``pipeline.log`` exists (see ``run.main``).
+    """
     if not path or not os.path.isfile(path):
         raise FileNotFoundError(
             "Config file is required. Use --config path/to/config.yaml (e.g. samples/config_sample.yaml)."
         )
     if yaml is None:
         raise RuntimeError("PyYAML is required. pip install pyyaml")
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
     if not isinstance(cfg, dict):
         raise ValueError("Config file must define a YAML object (key-value).")
     if overrides:
         cfg = _deep_merge(cfg, overrides)
     _validate_config(cfg)
-    _validate_scoring_tau_config(cfg, path)
+    if validate_scoring_tau:
+        _validate_scoring_tau_config(cfg, path)
     return cfg
 
 
